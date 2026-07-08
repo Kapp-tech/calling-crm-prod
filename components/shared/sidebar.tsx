@@ -334,7 +334,10 @@ export function Sidebar({ onClose, collapsed = false, onCollapse }: SidebarProps
       onMouseEnter={() => { if (collapsed) setHovered(true); }}
       onMouseLeave={() => setHovered(false)}
       className={cn(
-        'flex h-screen flex-col bg-card border-r overflow-hidden',
+        // h-dvh (not h-screen) — 100vh doesn't shrink for the mobile browser's
+        // address bar, so the footer/sign-out button ends up rendered below
+        // the visible fold with no way to scroll to it.
+        'flex h-dvh flex-col bg-card border-r overflow-hidden',
         'transition-all duration-300 ease-in-out',
         isExpanded ? 'w-64' : 'w-[64px]',
         // Drop shadow when hover-expanded so it reads as an overlay
