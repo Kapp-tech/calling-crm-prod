@@ -1138,7 +1138,7 @@ export default function AllLeadsPage() {
               Advanced Filters
             </DialogTitle>
             <p className="text-xs text-muted-foreground mt-0.5">
-              Select the filters you want to use. They'll appear below the filter bar.
+              Select the filters you want to use. They&apos;ll appear below the filter bar.
             </p>
           </DialogHeader>
 

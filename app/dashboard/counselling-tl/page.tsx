@@ -1784,7 +1784,7 @@ export default function CounsellingTLPage() {
               Filters
             </DialogTitle>
             <p className="text-xs text-muted-foreground mt-0.5">
-              Select the filters you want to use. They'll appear below the toolbar.
+              Select the filters you want to use. They&apos;ll appear below the toolbar.
             </p>
           </DialogHeader>
 
