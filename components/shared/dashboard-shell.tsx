@@ -5,6 +5,7 @@ import { usePathname } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Sidebar } from './sidebar';
 import { Header } from './header';
+import { PwaInstallPrompt } from './pwa-install-prompt';
 import { cn } from '@/lib/utils';
 
 export function DashboardShell({ children }: { children: React.ReactNode }) {
@@ -87,6 +88,8 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
           </AnimatePresence>
         </main>
       </div>
+
+      <PwaInstallPrompt />
     </div>
   );
 }
