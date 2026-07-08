@@ -1,0 +1,32 @@
+name: Deploy to AWS
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: SSH and deploy
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          # The server has 1GB RAM — cap Node's heap during build so it
+          # swaps instead of OOM-killing the build process (see next.config.js
+          # for the matching single-worker/timeout settings).
+          #
+          # Deliberately does NOT run `prisma db push` — that command can
+          # silently drop columns/data on a destructive schema change, so it
+          # stays a manual, reviewed step rather than something that runs
+          # unattended on every push.
+          script: |
+            set -e
+            cd ~/app
+            git pull origin main
+            npm install
+            npx prisma generate
+            NODE_OPTIONS='--max-old-space-size=1536' npm run build
+            pm2 restart crm
