@@ -8,6 +8,9 @@ const nextConfig = {
     // page prerendering OOMs it. Harmless on bigger machines, just slower.
     cpus: 1,
   },
+  // The 1GB server prerenders slowly under swap pressure; the default 60s
+  // per-page timeout is too strict there.
+  staticPageGenerationTimeout: 300,
   async headers() {
     return [
       {
