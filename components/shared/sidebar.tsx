@@ -554,7 +554,7 @@ export function Sidebar({ onClose, collapsed = false, onCollapse }: SidebarProps
 
       {/* ── Footer ── */}
       {isExpanded ? (
-        <div className="p-4 space-y-3">
+        <div className="p-4 space-y-3 pb-[max(1rem,env(safe-area-inset-bottom))]">
           <div className="flex items-center gap-3">
             <Avatar className="h-8 w-8 shrink-0">
               <AvatarFallback className="text-xs bg-primary text-primary-foreground">

@@ -900,7 +900,7 @@ export function LeadDetailDrawer({ leadId, onClose, canSubmitFeedback = false }:
 
           <motion.div
             key="drawer-panel"
-            className="fixed right-0 top-0 z-40 h-full w-full max-w-[500px] border-l border-border bg-background shadow-2xl flex flex-col"
+            className="fixed right-0 top-0 z-40 h-dvh w-full max-w-[500px] border-l border-border bg-background shadow-2xl flex flex-col"
             initial={{ x: '100%' }}
             animate={{ x: 0 }}
             exit={{ x: '100%' }}

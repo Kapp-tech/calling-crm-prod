@@ -41,20 +41,20 @@ export function Header({ onMenuClick }: { onMenuClick?: () => void }) {
   const isDark = resolvedTheme === 'dark';
 
   return (
-    <header className="flex h-16 items-center justify-between border-b bg-background px-4 md:px-6">
-      <div className="flex items-center gap-3">
+    <header className="flex h-14 md:h-16 items-center justify-between gap-2 border-b bg-background px-3 md:px-6">
+      <div className="flex items-center gap-2 md:gap-3 min-w-0">
         {/* Hamburger — mobile only */}
         <button
           onClick={onMenuClick}
           aria-label="Open navigation menu"
-          className="flex h-9 w-9 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground transition-colors md:hidden"
+          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground transition-colors md:hidden"
         >
           <Menu className="h-5 w-5" />
         </button>
-        <h1 className="text-lg md:text-xl font-semibold truncate">{title}</h1>
+        <h1 className="text-base md:text-xl font-semibold truncate">{title}</h1>
       </div>
 
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-1.5 md:gap-3 shrink-0">
         <PunchClockWidget />
         <NotificationBell />
 

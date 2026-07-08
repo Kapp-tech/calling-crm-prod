@@ -182,13 +182,13 @@ function MultiSelectFilter({
   }, [selected, options]);
 
   return (
-    <div ref={ref} className="relative">
+    <div ref={ref} className="relative flex-1 min-w-[calc(50%-0.25rem)] sm:flex-none sm:min-w-0">
       {/* Trigger button */}
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
         className={cn(
-          'h-8 rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-1 focus:ring-ring flex items-center gap-1.5 min-w-[120px] max-w-[200px]',
+          'h-8 w-full sm:w-auto rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-1 focus:ring-ring flex items-center gap-1.5 sm:min-w-[120px] sm:max-w-[200px]',
           selected.length > 0 ? 'text-foreground border-primary/50' : 'text-muted-foreground'
         )}
       >
@@ -209,7 +209,7 @@ function MultiSelectFilter({
 
       {/* Dropdown */}
       {open && (
-        <div className="absolute left-0 top-full mt-1 z-50 w-64 rounded-md border border-border bg-background shadow-lg flex flex-col">
+        <div className="absolute left-0 top-full mt-1 z-50 w-64 max-w-[calc(100vw-2.5rem)] rounded-md border border-border bg-background shadow-lg flex flex-col">
           {/* Search */}
           <div className="flex items-center gap-1.5 border-b border-border px-2.5 py-1.5 shrink-0">
             <Search className="h-3 w-3 text-muted-foreground shrink-0" />
@@ -687,7 +687,7 @@ export default function AllLeadsPage() {
       </div>
 
       {/* Feedback filter capsules — All/Fresh are mutually exclusive; categories and options are multi-selectable */}
-      <div className="flex gap-1.5 flex-wrap mb-4 overflow-x-auto pb-1 -mx-1 px-1">
+      <div className="flex gap-1.5 flex-nowrap sm:flex-wrap mb-4 overflow-x-auto pb-1 -mx-1 px-1 [&>button]:shrink-0 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:[scrollbar-width:auto]">
         {(['all', 'fresh'] as const).map((mode) => (
           <button
             key={mode}

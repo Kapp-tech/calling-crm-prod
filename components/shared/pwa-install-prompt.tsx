@@ -79,7 +79,7 @@ export function PwaInstallPrompt() {
   return (
     <div
       className={cn(
-        'fixed bottom-5 right-5 z-[200] w-[320px] animate-fade-in-up rounded-2xl border border-border/60',
+        'fixed bottom-4 right-4 z-[200] w-[320px] max-w-[calc(100vw-2rem)] animate-fade-in-up rounded-2xl border border-border/60',
         'bg-background/95 p-4 shadow-2xl shadow-black/15 backdrop-blur-sm',
       )}
     >
