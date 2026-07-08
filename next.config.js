@@ -4,6 +4,9 @@ const nextConfig = {
     serverActions: {
       allowedOrigins: ['localhost:3000'],
     },
+    // Single build worker — the production server has 1GB RAM and parallel
+    // page prerendering OOMs it. Harmless on bigger machines, just slower.
+    cpus: 1,
   },
   async headers() {
     return [
