@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm run *)",
+      "Bash(mkdir -p \"/Users/himanshurathore/Downloads/Counselling CRM/app/api/leads/[id]/schedule\" \"/Users/himanshurathore/Downloads/Counselling CRM/app/api/notifications/stream\" \"/Users/himanshurathore/Downloads/Counselling CRM/app/api/notifications/[id]\" \"/Users/himanshurathore/Downloads/Counselling CRM/components/notifications\")",
+      "Skill(run)",
+      "Skill(run:*)",
+      "Bash(lsof -iTCP:3000 -sTCP:LISTEN)",
+      "Bash(/usr/libexec/ApplicationFirewall/socketfilterfw --getglobalstate)",
+      "Bash(npx --no-install playwright --version)",
+      "Bash(npm ls *)"
+    ],
+    "additionalDirectories": [
+      "/Users/himanshurathore/Downloads/Counselling CRM/app/api/leads/[id]"
+    ]
+  }
+}

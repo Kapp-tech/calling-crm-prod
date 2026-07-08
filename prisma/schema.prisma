@@ -1,0 +1,631 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Enums ────────────────────────────────────────────────────────────────────
+
+enum Role {
+  SUPER_ADMIN
+  REPORTS
+  OPERATIONS
+  COUNSELLING_TL
+  COUNSELLING_AGENT
+}
+
+enum Feature {
+  VIEW_REPORTS
+  DOWNLOAD_DATA
+  MASK_UNMASK_DATA
+  UPLOAD_LEADS
+  APPROVE_LEADS
+  ASSIGN_LEADS
+  VIEW_LEADS
+  SUBMIT_FEEDBACK
+}
+
+enum LeadStatus {
+  PENDING
+  APPROVED
+  DISAPPROVED
+}
+
+enum DropdownType {
+  COLLEGE
+  LEAD_TYPE
+  LEAD_ORIGIN
+  ZONE
+  LEAD_CONFIRMATION
+  LEAD_VERIFICATION
+  DATA_CALLING_TYPE
+}
+
+enum BatchStatus {
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+enum ScheduledCallStatus {
+  PENDING
+  DONE
+  CANCELLED
+}
+
+enum NotificationType {
+  LEAD_ASSIGNED
+  CALL_REMINDER
+  CALL_NOW
+}
+
+enum AnnouncementPriority {
+  LOW
+  NORMAL
+  HIGH
+  URGENT
+}
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+  PENDING_APPROVAL  // TL-requested agents awaiting SA approval
+}
+
+enum ReceiptType {
+  APPLICATION
+  ADMISSION
+}
+
+enum WorkType {
+  WFH
+  WFO
+}
+
+enum BreakType {
+  LUNCH
+  BIO
+  TEA
+}
+
+enum ActivityAction {
+  USER_CREATED
+  USER_UPDATED
+  USER_DEACTIVATED
+  USER_APPROVED
+  USER_REJECTED
+  LEAD_ASSIGNED
+  LEAD_APPROVED
+  LEAD_DISAPPROVED
+  LEAD_DELETED
+  FEEDBACK_SUBMITTED
+  PERMISSION_CHANGED
+  CSV_UPLOADED
+  TEAM_CREATED
+  TEAM_UPDATED
+  AGENT_TRANSFER
+  TL_TRANSFER
+  PASSWORD_CHANGED
+  BATCH_APPROVED
+  BATCH_DISAPPROVED
+  REFERRAL_ADDED
+}
+
+// ─── Core Models ──────────────────────────────────────────────────────────────
+
+model User {
+  id           String     @id @default(cuid())
+  name         String
+  email        String     @unique
+  password     String
+  role         Role
+  status       UserStatus @default(ACTIVE)
+  isActive     Boolean    @default(true)
+  employeeCode String     @unique
+  phone        String?
+  workType     WorkType   @default(WFO)
+  joiningDate  DateTime   @default(now())
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  @@index([role])
+  @@index([teamId])
+  @@index([isActive])
+  @@index([role, isActive])
+
+  // Generic manager link (SA → TL, TL → Agent, SA → Operations)
+  managerId String?
+  manager   User?   @relation("UserManager", fields: [managerId], references: [id])
+  reports   User[]  @relation("UserManager")
+
+  // Legacy TL→Agent relation kept for compatibility
+  managedById String?
+  managedBy   User?   @relation("TLAgents", fields: [managedById], references: [id])
+  agents      User[]  @relation("TLAgents")
+
+  // Team membership (TL is teamLead, Agents are members)
+  teamId   String?
+  team     Team?   @relation("TeamMembers", fields: [teamId], references: [id])
+
+  // Teams this user leads
+  ledTeams Team[] @relation("TeamLead")
+
+  // Operations group membership
+  operationsGroupId String?
+  operationsGroup   OperationsGroup? @relation("GroupMembers", fields: [operationsGroupId], references: [id])
+
+  // Teams created by SA
+  createdTeams            Team[]            @relation("TeamCreator")
+  createdOperationsGroups OperationsGroup[] @relation("GroupCreator")
+  managedGroups           OperationsGroup[] @relation("GroupManager")
+
+  // Lead relations
+  uploadedLeads    Lead[]         @relation("UploadedBy")
+  approvedLeads    Lead[]         @relation("ApprovedBy")
+  disapprovedLeads Lead[]         @relation("DisapprovedBy")
+  assignedLeads      Lead[]         @relation("AssignedTo")
+  assignedByLeads    Lead[]         @relation("AssignedBy")
+  assignedFromLeads  Lead[]         @relation("AssignedFrom")
+  prevAssignee2Leads Lead[]         @relation("PrevAssignee2")
+  feedbacks        LeadFeedback[]
+  uploadBatches    UploadBatch[]
+
+  scheduledCalls ScheduledCall[] @relation("AgentSchedules")
+  notifications  Notification[]
+  uploadedReceipts LeadReceipt[] @relation("ReceiptUploadedBy")
+  attendances    Attendance[]
+
+  // Feedback options created by this user (SA)
+  createdFeedbackOptions FeedbackOption[] @relation("FeedbackOptionCreator")
+
+  // Feedback categories (Hot/Warm/Cold etc.) created by this user (SA)
+  createdFeedbackCategories FeedbackCategory[] @relation("FeedbackCategoryCreator")
+
+  // Dropdown options created by this user (SA)
+  createdDropdownOptions DropdownOption[] @relation("DropdownOptionCreator")
+
+  // Activity log
+  activityLogs ActivityLog[]
+
+  // Announcements authored by this user (SA)
+  announcements Announcement[]
+
+  // Rejection reason when SA rejects a TL-requested agent
+  rejectionReason String?
+
+  // Daily upload limit (null = unlimited). Only meaningful for OPERATIONS role.
+  uploadLimit Int?
+}
+
+model Team {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  description String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  teamLeadId String?
+  teamLead   User?   @relation("TeamLead", fields: [teamLeadId], references: [id])
+
+  createdById String
+  createdBy   User   @relation("TeamCreator", fields: [createdById], references: [id])
+
+  members User[] @relation("TeamMembers")
+  leads   Lead[] @relation("TeamLeads")
+}
+
+model OperationsGroup {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  description String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  managerId String
+  manager   User   @relation("GroupManager", fields: [managerId], references: [id])
+
+  createdById String
+  createdBy   User   @relation("GroupCreator", fields: [createdById], references: [id])
+
+  members User[] @relation("GroupMembers")
+}
+
+model Permission {
+  id        String  @id @default(cuid())
+  role      Role
+  feature   Feature
+  canAccess Boolean @default(false)
+
+  @@unique([role, feature])
+}
+
+model Lead {
+  id         String     @id @default(dbgenerated("('LID' || nextval('lead_id_seq'::regclass))"))
+  name       String
+  email      String
+  phone      String
+  city       String?
+  state      String?
+  course     String?
+  college       String?
+  kappCollegeId String?
+  campaign      String?
+  leadType   String?
+  leadOrigin String?
+  leadZone   String?
+  status     LeadStatus @default(PENDING)
+
+  uploadedById String
+  uploadedBy   User   @relation("UploadedBy", fields: [uploadedById], references: [id])
+
+  approvedById String?
+  approvedBy   User?     @relation("ApprovedBy", fields: [approvedById], references: [id])
+  approvedAt   DateTime?
+
+  disapprovedById   String?
+  disapprovedBy     User?     @relation("DisapprovedBy", fields: [disapprovedById], references: [id])
+  disapprovedAt     DateTime?
+  disapprovalReason String?
+
+  assignedToId String?
+  assignedTo   User?     @relation("AssignedTo", fields: [assignedToId], references: [id])
+  assignedAt   DateTime?
+
+  assignedById String?
+  assignedBy   User?   @relation("AssignedBy", fields: [assignedById], references: [id])
+
+  assignedFromId String?
+  assignedFrom   User?   @relation("AssignedFrom", fields: [assignedFromId], references: [id])
+
+  prevAssignee2Id String?
+  prevAssignee2   User?   @relation("PrevAssignee2", fields: [prevAssignee2Id], references: [id])
+
+  batchId String?
+  batch   UploadBatch? @relation(fields: [batchId], references: [id])
+
+  // Team the lead is assigned to (set when TL assigns to agent)
+  teamId String?
+  team   Team?   @relation("TeamLeads", fields: [teamId], references: [id])
+
+  feedbacks      LeadFeedback[]
+  profile        LeadProfile?
+  scheduledCalls ScheduledCall[]
+  receipts       LeadReceipt[]
+
+  // Extra upload fields
+  primaryApplicationConfirm String?
+  primaryAdmissionConfirm   String?
+  leadConfirmation          String?
+  leadStage                 String?
+  leadVerification          String?
+  dataCallingType           String?
+  uploadedAt                DateTime?
+
+  // Referral chain — a lead can refer any number of new leads; the referred
+  // lead is auto-assigned to the agent handling the referring lead
+  referredById String?
+  referredBy   Lead?   @relation("LeadReferrals", fields: [referredById], references: [id])
+  referrals    Lead[]  @relation("LeadReferrals")
+
+  // Tracks the most recent feedback option — updated on every feedback submit
+  currentFeedbackOptionId String?
+
+  // Verified / corrected student contact details (filled by counsellor)
+  altEmail1   String?
+  altEmail2   String?
+  altPhone1   String?
+  altPhone2   String?
+  correctCity  String?
+  correctState String?
+
+  // Basic student info captured on the Lead Profile page
+  parentName   String?
+  parentMobile String?
+  gender       String?
+  classYear    String?
+  category     String? // General, SC/ST, OBC, EWS
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status])
+  @@index([assignedToId])
+  @@index([teamId])
+  @@index([uploadedById])
+  @@index([batchId])
+  @@index([status, teamId])
+  @@index([status, assignedToId])
+  @@index([kappCollegeId])
+  @@index([referredById])
+}
+
+model LeadProfile {
+  id                  String   @id @default(cuid())
+  leadId              String   @unique
+  lead                Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  budget              String?
+  preferredCourseIds  Json?    // number[] — references CourseList.csv course_id
+  preferredCollegeIds Json?    // number[] — references CollegeList.csv college_id
+  preferredCityNames  Json?    // string[]
+  preferredStateNames Json?    // string[]
+  courseType          String?  // "Regular" | "Online"
+  collegeType         String?  // "Government" | "Private" | "Government+Private"
+  specialisation      String?
+  entranceExam        Json?    // string[]
+  scholarshipAwareness   String?
+  loanRequirement         String?
+  loanAmount              String?
+  paymentModePreference  String?
+  stayPreference            String?
+  monthlyAccommodationBudget String?
+  roomSharing                String?
+  mealsPreference            String?
+  keyAmenities               Json?    // string[]
+  distanceWillingness        String?
+  genderHostelRequirement    String?
+  class10Percentage   String?
+  class12Percentage   String?
+  board               String?
+  gapYearReason       String?
+  mediumOfInstruction String?
+  updatedAt           DateTime @updatedAt
+}
+
+model FeedbackCategory {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  color     String   @default("#64748b") // hex color chosen via color picker — see lib/feedback-category-colors.ts
+  sortOrder Int      @default(0)
+  createdBy String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  creator         User             @relation("FeedbackCategoryCreator", fields: [createdBy], references: [id])
+  feedbackOptions FeedbackOption[]
+
+  @@index([sortOrder])
+}
+
+model FeedbackOption {
+  id          String   @id @default(cuid())
+  label       String
+  description String?
+  isActive    Boolean  @default(true)
+  sortOrder   Int      @default(0)
+  categoryId  String?
+  createdBy   String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  creator   User              @relation("FeedbackOptionCreator", fields: [createdBy], references: [id])
+  category  FeedbackCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  feedbacks LeadFeedback[]
+
+  @@index([isActive])
+  @@index([isActive, sortOrder])
+  @@index([categoryId])
+}
+
+model DropdownOption {
+  id             String       @id @default(cuid())
+  type           DropdownType
+  value          String
+  kappCollegeId  String?      // only used when type = COLLEGE
+  isActive       Boolean      @default(true)
+  sortOrder      Int          @default(0)
+  createdBy      String
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  creator   User         @relation("DropdownOptionCreator", fields: [createdBy], references: [id])
+
+  @@unique([type, value])
+  @@index([type, isActive])
+  @@index([type, isActive, sortOrder])
+  @@index([kappCollegeId])
+}
+
+model LeadFeedback {
+  id               String         @id @default(cuid())
+  leadId           String
+  lead             Lead           @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  agentId          String
+  agent            User           @relation(fields: [agentId], references: [id])
+  feedbackOptionId String
+  feedbackOption   FeedbackOption @relation(fields: [feedbackOptionId], references: [id])
+  remarks          String?
+  followUpNumber   Int
+  createdAt        DateTime       @default(now())
+
+  @@index([leadId])
+  @@index([agentId])
+  @@index([feedbackOptionId])
+  @@index([createdAt])
+}
+
+model UploadBatch {
+  id               String      @id @default(cuid())
+  fileName         String
+  uploadedById     String
+  uploadedBy       User        @relation(fields: [uploadedById], references: [id])
+  totalRecords     Int
+  insertedRecords  Int         @default(0)
+  duplicateRecords Int         @default(0)
+  errorRecords     Int         @default(0)
+  status           BatchStatus @default(COMPLETED)
+  createdAt        DateTime    @default(now())
+
+  leads Lead[]
+}
+
+model ScheduledCall {
+  id           String              @id @default(cuid())
+  leadId       String
+  lead         Lead                @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  agentId      String
+  agent        User                @relation("AgentSchedules", fields: [agentId], references: [id])
+  scheduledAt  DateTime
+  note         String?
+  status       ScheduledCallStatus @default(PENDING)
+  reminderSent Boolean             @default(false)
+  nowSent      Boolean             @default(false)
+  createdAt    DateTime            @default(now())
+  updatedAt    DateTime            @updatedAt
+
+  @@index([agentId, scheduledAt])
+  @@index([status, scheduledAt])
+  @@index([agentId, status, reminderSent])
+}
+
+model LeadReceipt {
+  id     String      @id @default(cuid())
+  type   ReceiptType
+  leadId String
+  lead   Lead        @relation(fields: [leadId], references: [id], onDelete: Cascade)
+
+  campusName        String
+  couponCodeApplied Boolean @default(false)
+  referralCode      String?
+
+  paidDate      DateTime
+  receiptNumber String // Application Form Number / Admission Number
+  actualAmount  String?
+  amountPaid    String // Final Amount Paid / Admission Amount Paid
+
+  courseId   String
+  courseName String
+
+  studentName String
+  email       String
+  altEmail    String?
+  mobile      String
+  altMobile   String?
+
+  city  String?
+  state String
+
+  fileOriginalName String
+  filePath         String // on-disk path, relative to the private storage root
+  fileMimeType     String
+  fileSize         Int
+
+  uploadedById String
+  uploadedBy   User   @relation("ReceiptUploadedBy", fields: [uploadedById], references: [id])
+
+  createdAt DateTime @default(now())
+
+  @@index([leadId])
+  @@index([type])
+  @@index([uploadedById])
+}
+
+model Notification {
+  id         String           @id @default(cuid())
+  userId     String
+  user       User             @relation(fields: [userId], references: [id])
+  type       NotificationType
+  title      String
+  body       String
+  leadId     String?
+  scheduleId String?
+  read       Boolean          @default(false)
+  createdAt  DateTime         @default(now())
+
+  @@index([userId, read])
+  @@index([userId, createdAt])
+}
+
+model ActivityLog {
+  id          String         @id @default(cuid())
+  userId      String
+  user        User           @relation(fields: [userId], references: [id])
+  action      ActivityAction
+  targetId    String?
+  targetType  String?        // "User" | "Lead" | "Team" | "Permission"
+  description String
+  metadata    Json?
+  createdAt   DateTime       @default(now())
+
+  @@index([userId])
+  @@index([createdAt])
+  @@index([action])
+}
+
+model Announcement {
+  id        String               @id @default(cuid())
+  title     String
+  content   String
+  priority  AnnouncementPriority @default(NORMAL)
+  isActive  Boolean              @default(true)
+  createdBy String
+  author    User                 @relation(fields: [createdBy], references: [id])
+  createdAt DateTime             @default(now())
+  updatedAt DateTime             @updatedAt
+
+  @@index([isActive, createdAt])
+}
+
+model Attendance {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id])
+
+  // Calendar day this shift belongs to, "YYYY-MM-DD" in Asia/Kolkata — a
+  // plain string sidesteps the naive-timestamp/timezone-cast pitfalls this
+  // codebase has already been bitten by (see lib/scheduled-call-notifications.ts).
+  date String
+
+  punchInAt  DateTime
+  punchOutAt DateTime?
+
+  // Active and idle time are BOTH accumulated incrementally from the
+  // client's heartbeat — never derived from (punchOutAt - punchInAt). That
+  // elapsed-time approach would silently keep "working" time running for as
+  // long as a shift stays open, even after the agent closes the CRM tab
+  // entirely. A heartbeat only exists while the tab is open, so time the tab
+  // is closed contributes to neither bucket — it's simply not measured.
+  activeSeconds Int @default(0)
+  idleSeconds   Int @default(0)
+
+  // Last time any attendance action (punch/break/heartbeat) was recorded for
+  // this shift — used to infer a punch-out time if the shift is never
+  // explicitly closed (browser closed, laptop shut, etc).
+  lastHeartbeatAt DateTime?
+
+  // True if punchOutAt was inferred (auto-closed) rather than explicitly clicked.
+  autoClosed Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  breaks AttendanceBreak[]
+
+  @@unique([userId, date])
+  @@index([userId, date])
+  @@index([date])
+}
+
+model AttendanceBreak {
+  id           String     @id @default(cuid())
+  attendanceId String
+  attendance   Attendance @relation(fields: [attendanceId], references: [id], onDelete: Cascade)
+  startAt      DateTime
+  endAt        DateTime?
+
+  // Null on breaks recorded before break categorization existed — those are
+  // bucketed as "Other" in reports rather than guessed into one of the three.
+  type BreakType?
+
+  @@index([attendanceId])
+}
+
+model Setting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
+}

@@ -1,0 +1,52 @@
+{
+  "name": "Counselling CRM",
+  "short_name": "CRM",
+  "description": "Lead management for KollegeApply counselling teams",
+  "start_url": "/dashboard",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#ffffff",
+  "theme_color": "#0d2455",
+  "categories": ["business", "productivity"],
+  "icons": [
+    {
+      "src": "/api/pwa/icon/192",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/api/pwa/icon/192",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/api/pwa/icon/512",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/api/pwa/icon/512",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "My Leads",
+      "short_name": "Leads",
+      "url": "/dashboard/leads",
+      "description": "Open leads list"
+    },
+    {
+      "name": "Scheduled Calls",
+      "short_name": "Calls",
+      "url": "/dashboard/counselling-agent/scheduled-calls",
+      "description": "View scheduled calls"
+    }
+  ]
+}

@@ -1,0 +1,54 @@
+import { withAuth } from 'next-auth/middleware';
+import { NextResponse } from 'next/server';
+import type { Role } from '@prisma/client';
+
+// Role-based route access map — more specific routes take precedence over broader ones
+const ROLE_ROUTES: Record<string, Role[]> = {
+  '/dashboard/super-admin': ['SUPER_ADMIN'],
+  '/dashboard/operations': ['SUPER_ADMIN', 'OPERATIONS'],
+  '/dashboard/reports': ['SUPER_ADMIN', 'REPORTS'],
+  '/dashboard/counselling-tl': ['SUPER_ADMIN', 'COUNSELLING_TL'],
+  '/dashboard/counselling-tl/team': ['SUPER_ADMIN', 'COUNSELLING_TL'],
+  '/dashboard/counselling-agent': ['SUPER_ADMIN', 'COUNSELLING_AGENT'],
+  '/dashboard/counselling-agent/due-today': ['SUPER_ADMIN', 'COUNSELLING_AGENT'],
+  '/dashboard/counselling-agent/scheduled-calls': ['SUPER_ADMIN', 'COUNSELLING_TL', 'COUNSELLING_AGENT'],
+};
+
+export default withAuth(
+  function middleware(req) {
+    const token = req.nextauth.token;
+    const pathname = req.nextUrl.pathname;
+
+    if (!token) {
+      return NextResponse.redirect(new URL('/login', req.url));
+    }
+
+    // Find the most specific (longest) matching route to avoid broad rules
+    // blocking access that a more specific rule would allow.
+    let bestRoute = '';
+    let bestRoles: Role[] = [];
+    for (const [route, allowedRoles] of Object.entries(ROLE_ROUTES)) {
+      if (pathname.startsWith(route) && route.length > bestRoute.length) {
+        bestRoute = route;
+        bestRoles = allowedRoles;
+      }
+    }
+
+    if (bestRoute && !bestRoles.includes(token.role as Role)) {
+      return NextResponse.redirect(new URL('/dashboard', req.url));
+    }
+
+    return NextResponse.next();
+  },
+  {
+    callbacks: {
+      // A token flagged `invalidated` belongs to a user deactivated
+      // mid-session — treat it as logged out.
+      authorized: ({ token }) => !!token && !token.invalidated,
+    },
+  }
+);
+
+export const config = {
+  matcher: ['/dashboard/:path*', '/leads/:path*'],
+};

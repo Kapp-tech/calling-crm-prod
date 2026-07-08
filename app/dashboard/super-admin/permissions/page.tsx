@@ -1,0 +1,134 @@
+'use client';
+
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { Loader2, Lock, Check, X } from 'lucide-react';
+import { Switch } from '@/components/ui/switch';
+import { Badge } from '@/components/ui/badge';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { useToast } from '@/components/ui/use-toast';
+
+const ROLES = [
+  { key: 'SUPER_ADMIN', label: 'Super Admin' },
+  { key: 'REPORTS', label: 'Reports' },
+  { key: 'OPERATIONS', label: 'Operations' },
+  { key: 'COUNSELLING_TL', label: 'Counselling TL' },
+  { key: 'COUNSELLING_AGENT', label: 'Counselling Agent' },
+] as const;
+
+const FEATURES = [
+  { key: 'VIEW_REPORTS', label: 'View Reports' },
+  { key: 'DOWNLOAD_DATA', label: 'Download Data' },
+  { key: 'MASK_UNMASK_DATA', label: 'Mask/Unmask Data' },
+  { key: 'UPLOAD_LEADS', label: 'Upload Leads' },
+  { key: 'APPROVE_LEADS', label: 'Approve Leads' },
+  { key: 'ASSIGN_LEADS', label: 'Assign Leads' },
+  { key: 'VIEW_LEADS', label: 'View Leads' },
+  { key: 'SUBMIT_FEEDBACK', label: 'Submit Feedback' },
+] as const;
+
+type RoleKey = typeof ROLES[number]['key'];
+type FeatureKey = typeof FEATURES[number]['key'];
+
+export default function PermissionsPage() {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+
+  const { data: permissions, isLoading } = useQuery<Record<RoleKey, Record<FeatureKey, boolean>>>({
+    queryKey: ['permissions'],
+    queryFn: () => fetch('/api/permissions').then((r) => r.json()),
+  });
+
+  const updateMutation = useMutation({
+    mutationFn: (data: { role: RoleKey; feature: FeatureKey; canAccess: boolean }) =>
+      fetch('/api/permissions', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      }).then((r) => r.json()),
+    onSuccess: (data) => {
+      if (data.error) {
+        toast({ variant: 'destructive', title: 'Error', description: data.error });
+        return;
+      }
+      queryClient.invalidateQueries({ queryKey: ['permissions'] });
+      toast({ title: 'Permission updated' });
+    },
+  });
+
+  const handleToggle = (role: RoleKey, feature: FeatureKey, current: boolean) => {
+    if (role === 'SUPER_ADMIN') return; // locked
+    updateMutation.mutate({ role, feature, canAccess: !current });
+  };
+
+  return (
+    <div className="space-y-6">
+      <Card>
+        <CardHeader>
+          <CardTitle>Permission Matrix</CardTitle>
+          <CardDescription>
+            Toggle feature access for each role. Super Admin permissions are locked and cannot be changed.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {isLoading ? (
+            <div className="flex justify-center py-8">
+              <Loader2 className="h-6 w-6 animate-spin" />
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b">
+                    <th className="py-3 px-4 text-left font-semibold text-muted-foreground">
+                      Feature
+                    </th>
+                    {ROLES.map((role) => (
+                      <th key={role.key} className="py-3 px-4 text-center font-semibold">
+                        <div className="flex flex-col items-center gap-1">
+                          <span>{role.label}</span>
+                          {role.key === 'SUPER_ADMIN' && (
+                            <Badge variant="secondary" className="text-xs">
+                              <Lock className="mr-1 h-2.5 w-2.5" /> Locked
+                            </Badge>
+                          )}
+                        </div>
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {FEATURES.map((feature, i) => (
+                    <tr key={feature.key} className={i % 2 === 0 ? 'bg-muted/20' : ''}>
+                      <td className="py-3 px-4 font-medium">{feature.label}</td>
+                      {ROLES.map((role) => {
+                        const hasAccess = permissions?.[role.key]?.[feature.key] ?? false;
+                        const isLocked = role.key === 'SUPER_ADMIN';
+                        return (
+                          <td key={role.key} className="py-3 px-4 text-center">
+                            {isLocked ? (
+                              <div className="flex justify-center">
+                                <Check className="h-5 w-5 text-green-500" />
+                              </div>
+                            ) : (
+                              <div className="flex justify-center">
+                                <Switch
+                                  checked={hasAccess}
+                                  onCheckedChange={() => handleToggle(role.key, feature.key, hasAccess)}
+                                  disabled={updateMutation.isPending}
+                                />
+                              </div>
+                            )}
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
