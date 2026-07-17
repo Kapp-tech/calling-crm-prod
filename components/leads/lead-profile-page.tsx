@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Loader2, GraduationCap, Landmark, Wallet, Home, BarChart3,
@@ -472,6 +473,7 @@ export function LeadProfilePage({ leadId, agentName }: { leadId: string; agentNa
   });
   const qc = useQueryClient();
   const { toast } = useToast();
+  const router = useRouter();
 
   const profilingScore = useMemo(() => (lead ? computeProfilingScore(lead) : null), [lead]);
 
@@ -807,7 +809,13 @@ export function LeadProfilePage({ leadId, agentName }: { leadId: string; agentNa
           </div>
         </div>
         <button
-          onClick={() => window.close()}
+          onClick={() => {
+            // Opened in a new tab (drawer's "View Lead Profile") → close the tab.
+            // Reached by in-tab navigation (global search) → window.close() is
+            // blocked by the browser, so go back to the previous page instead.
+            if (window.history.length > 1) router.back();
+            else window.close();
+          }}
           className="flex items-center gap-1.5 rounded-lg border border-input px-3 py-1.5 text-xs font-semibold text-muted-foreground shadow-sm transition-all duration-150 hover:bg-muted/50 hover:text-foreground"
         >
           <X className="h-3.5 w-3.5" />
