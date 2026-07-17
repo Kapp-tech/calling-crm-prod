@@ -1496,9 +1496,9 @@ export default function CounsellingTLPage() {
 
       {/* ── Floating bulk-assign bar ──────────────────────────────────────────── */}
       {canAssign && selectedIds.length > 0 && (
-        <div className="fixed bottom-4 sm:bottom-6 left-1/2 z-50 w-[calc(100%-1.5rem)] sm:w-[calc(100%-2rem)] max-w-5xl -translate-x-1/2">
+        <div className="fixed bottom-4 sm:bottom-6 left-1/2 z-50 w-[calc(100%-1.5rem)] sm:w-[calc(100%-2rem)] max-w-6xl -translate-x-1/2">
           {/* Wraps into stacked rows on phones; single row from sm up */}
-          <div className="flex flex-wrap items-center gap-x-2 gap-y-2.5 sm:gap-3 rounded-2xl bg-[#0f1117] px-3 sm:px-4 py-3 shadow-[0_20px_60px_rgba(0,0,0,0.6)] ring-1 ring-white/[0.08]">
+          <div className="relative flex flex-wrap items-center gap-x-2 gap-y-2.5 sm:gap-x-2.5 rounded-2xl bg-[#0f1117] px-3 sm:px-4 py-3 sm:pr-12 shadow-[0_20px_60px_rgba(0,0,0,0.6)] ring-1 ring-white/[0.08]">
 
             {/* Count + summary — own full row on mobile, with the close button on its right */}
             <div className="flex w-full sm:w-auto items-center gap-2.5 sm:shrink-0">
@@ -1618,10 +1618,11 @@ export default function CounsellingTLPage() {
               </button>
             )}
 
-            {/* Close — desktop only; mobile has its own X in the count row above */}
+            {/* Close — desktop only, pinned to the corner so wrapped rows stay tidy;
+                mobile has its own X in the count row above */}
             <button
               onClick={clearSelection}
-              className="ml-auto hidden sm:flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-white/[0.05] text-slate-500 transition-all hover:bg-white/10 hover:text-slate-200"
+              className="hidden sm:flex absolute right-3 top-1/2 -translate-y-1/2 h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-white/[0.05] text-slate-500 transition-all hover:bg-white/10 hover:text-slate-200"
             >
               <X className="h-3.5 w-3.5" />
             </button>
