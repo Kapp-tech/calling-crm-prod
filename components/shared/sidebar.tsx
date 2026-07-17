@@ -450,6 +450,7 @@ export function Sidebar({ onClose, collapsed = false, onCollapse }: SidebarProps
                     <Link
                       href={entry.href}
                       onClick={onClose}
+                      data-tour={entry.href === '/dashboard/counselling-agent/scheduled-calls' ? 'scheduled-calls' : undefined}
                       className={cn(
                         'group/nav flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-all duration-200 ease-premium hover:translate-x-0.5',
                         active

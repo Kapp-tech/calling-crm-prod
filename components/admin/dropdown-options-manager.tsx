@@ -15,6 +15,7 @@ import { Switch } from '@/components/ui/switch';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { useToast } from '@/components/ui/use-toast';
 import { cn } from '@/lib/utils';
+import { useUndoable } from '@/components/shared/use-undoable';
 
 const TYPE_META: Record<string, { icon: React.ComponentType<{ className?: string }>; color: string; bg: string; ring: string }> = {
   LEAD_TYPE:          { icon: Tag,           color: 'text-indigo-600 dark:text-indigo-400', bg: 'bg-indigo-500/10',  ring: 'from-indigo-500 to-indigo-600' },
@@ -53,6 +54,10 @@ export function DropdownOptionsManager({ type, title, description, placeholder, 
   const { toast } = useToast();
   const qc = useQueryClient();
   const { data: session } = useSession();
+
+  const undoable = useUndoable();
+  // Optimistically hidden while their undo toast is open (Gmail-style delete)
+  const [hiddenIds, setHiddenIds] = useState<Set<string>>(new Set());
 
   const [showDialog, setShowDialog]     = useState(false);
   const [editOption, setEditOption]     = useState<DropdownOption | null>(null);
@@ -145,8 +150,9 @@ export function DropdownOptionsManager({ type, title, description, placeholder, 
     onError: () => toast({ variant: 'destructive', title: 'Failed to delete option' }),
   });
 
-  const activeCount   = options.filter((o) => o.isActive).length;
-  const inactiveCount = options.length - activeCount;
+  const visibleOptions = options.filter((o) => !hiddenIds.has(o.id));
+  const activeCount   = visibleOptions.filter((o) => o.isActive).length;
+  const inactiveCount = visibleOptions.length - activeCount;
   const meta = TYPE_META[type] ?? DEFAULT_META;
   const Icon = meta.icon;
 
@@ -177,7 +183,7 @@ export function DropdownOptionsManager({ type, title, description, placeholder, 
         <div className="group relative overflow-hidden rounded-xl border border-border/60 bg-card px-4 py-3 hover-lift">
           <div className={cn('pointer-events-none absolute -right-6 -top-6 h-20 w-20 rounded-full opacity-0 blur-2xl transition-opacity duration-300 group-hover:opacity-100', meta.bg)} />
           <p className="relative text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Total</p>
-          <p className="relative mt-0.5 text-2xl font-bold tabular-nums">{options.length}</p>
+          <p className="relative mt-0.5 text-2xl font-bold tabular-nums">{visibleOptions.length}</p>
         </div>
         <div className="group relative overflow-hidden rounded-xl border border-border/60 bg-card px-4 py-3 hover-lift">
           <div className="pointer-events-none absolute -right-6 -top-6 h-20 w-20 rounded-full bg-emerald-500/10 opacity-0 blur-2xl transition-opacity duration-300 group-hover:opacity-100" />
@@ -209,7 +215,7 @@ export function DropdownOptionsManager({ type, title, description, placeholder, 
           <div className="flex justify-center py-14">
             <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
           </div>
-        ) : options.length === 0 ? (
+        ) : visibleOptions.length === 0 ? (
           <div className="flex flex-col items-center gap-2.5 py-14 text-center">
             <div className="flex h-11 w-11 items-center justify-center rounded-full bg-muted">
               <Inbox className="h-5 w-5 text-muted-foreground" />
@@ -221,7 +227,7 @@ export function DropdownOptionsManager({ type, title, description, placeholder, 
         ) : (
           <div className="divide-y divide-border/60">
             <AnimatePresence initial={false}>
-              {options.map((opt, idx) => (
+              {visibleOptions.map((opt, idx) => (
                 <motion.div
                   key={opt.id}
                   layout="position"
@@ -282,9 +288,12 @@ export function DropdownOptionsManager({ type, title, description, placeholder, 
                       variant="ghost" size="icon"
                       className="h-7 w-7 text-destructive hover:text-destructive hover:bg-destructive/10"
                       onClick={() => {
-                        if (confirm(`Delete "${opt.value}"? This cannot be undone.`)) {
-                          deleteMutation.mutate(opt.id);
-                        }
+                        setHiddenIds((s) => new Set(s).add(opt.id));
+                        undoable({
+                          title: `Deleted "${opt.value}"`,
+                          onExecute: () => deleteMutation.mutate(opt.id),
+                          onUndo: () => setHiddenIds((s) => { const n = new Set(s); n.delete(opt.id); return n; }),
+                        });
                       }}
                       title="Delete"
                     >

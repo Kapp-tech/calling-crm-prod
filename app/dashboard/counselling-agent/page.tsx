@@ -23,6 +23,31 @@ import { LeadDetailModal } from '@/components/leads/lead-detail-modal';
 import { formatDateTime } from '@/lib/utils';
 import { usePermissions } from '@/lib/usePermissions';
 import { triggerCelebration, isCelebrationFeedback } from '@/lib/celebrate';
+import { OnboardingTour, type TourStep } from '@/components/shared/onboarding-tour';
+
+// First-login walkthrough for new agents — shown once per device
+const AGENT_TOUR_STEPS: TourStep[] = [
+  {
+    target: '[data-tour="leads-table"]',
+    title: 'Your assigned leads',
+    body: 'Every lead assigned to you appears here. Click a name to see full details, call history and contact actions.',
+  },
+  {
+    target: '[data-tour="lead-feedback"]',
+    title: 'Record every call',
+    body: 'After each call, press Feedback to log the outcome and remarks. This keeps your follow-ups and stats accurate.',
+  },
+  {
+    target: '[data-tour="scheduled-calls"]',
+    title: 'Scheduled calls',
+    body: 'Calls you schedule with students show up here so you never miss a follow-up.',
+  },
+  {
+    target: '[data-tour="punch-clock"]',
+    title: 'Punch in & breaks',
+    body: 'Start your day by punching in. Use the same button for lunch, bio and tea breaks — your time is tracked automatically.',
+  },
+];
 
 const feedbackSchema = z.object({
   feedbackOptionId: z.string().min(1, 'Please select a feedback option'),
@@ -115,6 +140,7 @@ export default function CounsellingAgentPage() {
 
   return (
     <div className="space-y-6">
+      <OnboardingTour steps={AGENT_TOUR_STEPS} storageKey="agent-onboarding-tour-v1" />
       <Card>
         <CardHeader>
           <div className="flex items-center gap-3">
@@ -135,7 +161,7 @@ export default function CounsellingAgentPage() {
               <Loader2 className="h-6 w-6 animate-spin" />
             </div>
           ) : (
-            <>
+            <div data-tour="leads-table">
               <Table>
                 <TableHeader>
                   <TableRow>
@@ -191,7 +217,7 @@ export default function CounsellingAgentPage() {
                               <Lock className="h-3 w-3" /> No permission
                             </div>
                           ) : (
-                            <Button size="sm" onClick={() => { setFeedbackLead(lead); reset(); }}>
+                            <Button size="sm" data-tour="lead-feedback" onClick={() => { setFeedbackLead(lead); reset(); }}>
                               <MessageSquarePlus className="mr-1 h-3 w-3" /> Feedback
                             </Button>
                           )}
@@ -218,7 +244,7 @@ export default function CounsellingAgentPage() {
                   </div>
                 </div>
               )}
-            </>
+            </div>
           )}
         </CardContent>
       </Card>

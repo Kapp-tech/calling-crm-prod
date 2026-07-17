@@ -15,6 +15,7 @@ import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@
 import { useToast } from '@/components/ui/use-toast';
 import { cn } from '@/lib/utils';
 import { FEEDBACK_CATEGORY_PRESETS, DEFAULT_CATEGORY_COLOR, HEX_COLOR_RE, feedbackCategoryTone, normalizeCategoryColor } from '@/lib/feedback-category-colors';
+import { useUndoable } from '@/components/shared/use-undoable';
 
 interface FeedbackCategory {
   id: string;
@@ -45,6 +46,11 @@ export default function FeedbackOptionsPage() {
   const [label, setLabel] = useState('');
   const [description, setDescription] = useState('');
   const [categoryId, setCategoryId] = useState<string>(NONE_CATEGORY);
+
+  const undoable = useUndoable();
+  // Optimistically hidden while their undo toast is open (Gmail-style delete)
+  const [hiddenIds, setHiddenIds] = useState<Set<string>>(new Set());
+  const [hiddenCatIds, setHiddenCatIds] = useState<Set<string>>(new Set());
 
   const [showCategoryDialog, setShowCategoryDialog] = useState(false);
   const [editCategory, setEditCategory] = useState<FeedbackCategory | null>(null);
@@ -190,8 +196,10 @@ export default function FeedbackOptionsPage() {
     setShowCategoryDialog(true);
   };
 
-  const activeCount   = options.filter((o) => o.isActive).length;
-  const inactiveCount = options.length - activeCount;
+  const visibleOptions    = options.filter((o) => !hiddenIds.has(o.id));
+  const visibleCategories = categories.filter((c) => !hiddenCatIds.has(c.id));
+  const activeCount   = visibleOptions.filter((o) => o.isActive).length;
+  const inactiveCount = visibleOptions.length - activeCount;
 
   return (
     <div className="mx-auto max-w-3xl space-y-6 py-2">
@@ -232,13 +240,13 @@ export default function FeedbackOptionsPage() {
             <div className="flex justify-center py-4">
               <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
             </div>
-          ) : categories.length === 0 ? (
+          ) : visibleCategories.length === 0 ? (
             <p className="text-sm text-muted-foreground">
               No categories yet. Create one (e.g. &ldquo;Hot&rdquo;) to start grouping feedback values.
             </p>
           ) : (
             <div className="flex flex-wrap gap-2">
-              {categories.map((cat) => {
+              {visibleCategories.map((cat) => {
                 const tone = feedbackCategoryTone(cat.color);
                 return (
                   <div
@@ -260,9 +268,13 @@ export default function FeedbackOptionsPage() {
                     </button>
                     <button
                       onClick={() => {
-                        if (confirm(`Delete category "${cat.name}"? Feedback values in it will become uncategorized.`)) {
-                          deleteCategoryMutation.mutate(cat.id);
-                        }
+                        setHiddenCatIds((s) => new Set(s).add(cat.id));
+                        undoable({
+                          title: `Deleted category "${cat.name}"`,
+                          description: 'Its feedback values become uncategorized.',
+                          onExecute: () => deleteCategoryMutation.mutate(cat.id),
+                          onUndo: () => setHiddenCatIds((s) => { const n = new Set(s); n.delete(cat.id); return n; }),
+                        });
                       }}
                       className="opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity hover:scale-110"
                       title="Delete category"
@@ -281,7 +293,7 @@ export default function FeedbackOptionsPage() {
       <div className="flex flex-wrap gap-2 sm:gap-3">
         <div className="rounded-lg border bg-card px-4 py-2.5 text-sm">
           <span className="text-muted-foreground">Total: </span>
-          <span className="font-semibold">{options.length}</span>
+          <span className="font-semibold">{visibleOptions.length}</span>
         </div>
         <div className="rounded-lg border bg-card px-4 py-2.5 text-sm">
           <span className="text-muted-foreground">Active: </span>
@@ -308,13 +320,13 @@ export default function FeedbackOptionsPage() {
             <div className="flex justify-center py-12">
               <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
             </div>
-          ) : options.length === 0 ? (
+          ) : visibleOptions.length === 0 ? (
             <div className="py-12 text-center text-sm text-muted-foreground">
               No values added yet. Click &ldquo;Add Value&rdquo; to get started.
             </div>
           ) : (
             <div className="divide-y">
-              {options
+              {visibleOptions
                 .sort((a, b) => a.label.localeCompare(b.label))
                 .map((opt) => {
                   const tone = opt.category ? feedbackCategoryTone(opt.category.color) : null;
@@ -368,9 +380,12 @@ export default function FeedbackOptionsPage() {
                           variant="ghost" size="icon"
                           className="h-8 w-8 text-destructive hover:text-destructive hover:bg-destructive/10"
                           onClick={() => {
-                            if (confirm(`Delete "${opt.label}"? This cannot be undone.`)) {
-                              deleteMutation.mutate(opt.id);
-                            }
+                            setHiddenIds((s) => new Set(s).add(opt.id));
+                            undoable({
+                              title: `Deleted "${opt.label}"`,
+                              onExecute: () => deleteMutation.mutate(opt.id),
+                              onUndo: () => setHiddenIds((s) => { const n = new Set(s); n.delete(opt.id); return n; }),
+                            });
                           }}
                           title="Delete"
                         >

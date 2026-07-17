@@ -279,7 +279,7 @@ export function PunchClockWidget() {
   const errorMsg = (punchInMutation.error ?? punchOutMutation.error ?? breakStartMutation.error ?? breakEndMutation.error) as Error | null;
 
   return (
-    <div className="relative" ref={dropdownRef}>
+    <div className="relative" ref={dropdownRef} data-tour="punch-clock">
       <button
         onClick={() => setOpen((v) => !v)}
         className={cn(

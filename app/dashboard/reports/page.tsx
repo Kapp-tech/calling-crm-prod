@@ -20,6 +20,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { useToast } from '@/components/ui/use-toast';
 import { LeadDetailModal } from '@/components/leads/lead-detail-modal';
 import { maskEmail, maskPhone } from '@/lib/csv-parser';
+import { useUndoable } from '@/components/shared/use-undoable';
 import { formatDateTime } from '@/lib/utils';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -336,6 +337,7 @@ function BatchSection({
 
 export default function ReportsPage() {
   const { toast } = useToast();
+  const undoable = useUndoable();
   const qc = useQueryClient();
   const { data: session } = useSession();
   const { can } = usePermissions();
@@ -581,9 +583,11 @@ export default function ReportsPage() {
             size="sm"
             disabled={isAnyPending}
             onClick={() => {
-              if (confirm(`Approve all ${data.total} pending leads${search ? ' matching your search' : ''}? This cannot be undone.`)) {
-                approveAllMutation.mutate();
-              }
+              undoable({
+                title: `Approving ${data.total} pending lead${data.total !== 1 ? 's' : ''}${search ? ' matching your search' : ''}…`,
+                description: 'Starts in 5 seconds — press Undo to cancel.',
+                onExecute: () => approveAllMutation.mutate(),
+              });
             }}
           >
             {approveAllMutation.isPending
