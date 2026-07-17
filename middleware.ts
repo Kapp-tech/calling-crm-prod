@@ -7,6 +7,10 @@ const ROLE_ROUTES: Record<string, Role[]> = {
   '/dashboard/super-admin': ['SUPER_ADMIN'],
   '/dashboard/operations': ['SUPER_ADMIN', 'OPERATIONS'],
   '/dashboard/reports': ['SUPER_ADMIN', 'REPORTS'],
+  // More specific than '/dashboard/reports' above — TLs (and REPORTS/SA) can
+  // view Analytics even though the broader /dashboard/reports/* tree
+  // (Lead Approvals, Org Hierarchy) stays REPORTS/SUPER_ADMIN only.
+  '/dashboard/reports/analytics': ['SUPER_ADMIN', 'COUNSELLING_TL', 'REPORTS'],
   '/dashboard/counselling-tl': ['SUPER_ADMIN', 'COUNSELLING_TL'],
   '/dashboard/counselling-tl/team': ['SUPER_ADMIN', 'COUNSELLING_TL'],
   '/dashboard/counselling-agent': ['SUPER_ADMIN', 'COUNSELLING_AGENT'],
