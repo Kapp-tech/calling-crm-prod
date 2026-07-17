@@ -8,7 +8,10 @@
       "Bash(lsof -iTCP:3000 -sTCP:LISTEN)",
       "Bash(/usr/libexec/ApplicationFirewall/socketfilterfw --getglobalstate)",
       "Bash(npx --no-install playwright --version)",
-      "Bash(npm ls *)"
+      "Bash(npm ls *)",
+      "Bash(NODE_PATH=__TRACKED_VAR__/node_modules node -e ' *)",
+      "Bash(rm -f \"/private/tmp/claude-501/-Users-himanshurathore-Downloads-Counselling-CRM/1a98682f-9053-4fd3-b8b0-d49072276b00/scratchpad/copy-dropdowns.js\")",
+      "Bash(kill %1)"
     ],
     "additionalDirectories": [
       "/Users/himanshurathore/Downloads/Counselling CRM/app/api/leads/[id]"

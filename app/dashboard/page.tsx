@@ -554,7 +554,7 @@ export default function DashboardPage() {
 
   const { data: agentsList } = useQuery<AgentUser[]>({
     queryKey: ['agents-list'],
-    queryFn: () => fetch('/api/users?role=COUNSELLING_AGENT').then((r) => r.json()),
+    queryFn: () => fetch('/api/users?role=COUNSELLING_AGENT').then(async (r) => { const d = await r.json(); return Array.isArray(d) ? d : []; }),
     enabled: role === 'SUPER_ADMIN' || role === 'REPORTS',
     staleTime: 10 * 60 * 1000,
   });

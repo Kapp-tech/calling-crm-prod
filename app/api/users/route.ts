@@ -55,8 +55,10 @@ export async function GET(req: NextRequest) {
     return NextResponse.json(agents);
   }
 
-  // All other non-SA roles: forbidden
-  if (session.user.role !== Role.SUPER_ADMIN) {
+  // REPORTS is read-only but needs this list for TL/agent filter dropdowns
+  // on the dashboard and All Leads pages — same query path as SUPER_ADMIN.
+  // All other non-SA roles: forbidden.
+  if (session.user.role !== Role.SUPER_ADMIN && session.user.role !== Role.REPORTS) {
     return NextResponse.json({ success: false, error: 'Unauthorized', code: 'UNAUTHORIZED' }, { status: 401 });
   }
 
