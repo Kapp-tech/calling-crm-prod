@@ -27,12 +27,21 @@ export function OnboardingTour({ steps, storageKey }: { steps: TourStep[]; stora
   const [rect, setRect] = useState<Rect | null>(null);
   const rafRef = useRef<number | null>(null);
 
-  // Resolve the first visible target at or after `from`; -1 when none remain
+  // Genuinely reachable: rendered, has size, and not translated off-screen
+  // horizontally (the mobile sidebar sits at -100% translate — offsetParent
+  // alone can't catch that). Below-the-fold is fine; we scroll to it.
+  const isReachable = (el: Element): boolean => {
+    if ((el as HTMLElement).offsetParent === null) return false;
+    const r = el.getBoundingClientRect();
+    return r.width > 0 && r.height > 0 && r.right > 0 && r.left < window.innerWidth;
+  };
+
+  // Resolve the first reachable target at or after `from`; null when none remain
   const resolveStep = useCallback(
     (from: number): { index: number; el: Element } | null => {
       for (let i = from; i < steps.length; i++) {
         const el = document.querySelector(steps[i].target);
-        if (el && (el as HTMLElement).offsetParent !== null) return { index: i, el };
+        if (el && isReachable(el)) return { index: i, el };
       }
       return null;
     },
@@ -60,16 +69,27 @@ export function OnboardingTour({ steps, storageKey }: { steps: TourStep[]; stora
     [resolveStep, measure, storageKey],
   );
 
-  // Launch once, shortly after mount so data/layout has rendered
+  // Launch once the first target actually exists. Data (the leads table)
+  // renders asynchronously, so poll for up to ~15s instead of checking once.
   useEffect(() => {
     if (localStorage.getItem(storageKey)) return;
-    const t = setTimeout(() => {
+    let cancelled = false;
+    let attempts = 0;
+    const tryStart = () => {
+      if (cancelled) return;
       const found = resolveStep(0);
-      if (!found) return; // nothing to show — try again next visit
-      setActive(true);
-      goTo(0);
-    }, 900);
-    return () => clearTimeout(t);
+      if (found) {
+        setActive(true);
+        goTo(found.index);
+      } else if (++attempts < 25) {
+        setTimeout(tryStart, 600);
+      }
+    };
+    const t = setTimeout(tryStart, 900);
+    return () => {
+      cancelled = true;
+      clearTimeout(t);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
