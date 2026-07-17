@@ -1,4 +1,7 @@
-const CACHE_NAME = 'counselling-crm-v1';
+// Bump this on any change to this file's caching logic — it's what makes
+// the activate handler below actually purge the old cache. There's no build
+// pipeline for this static file, so the version has to be tracked by hand.
+const CACHE_NAME = 'counselling-crm-v2';
 
 // Static Next.js chunks — safe to cache indefinitely (content-hashed filenames)
 const STATIC_RE = /^\/_next\/static\//;
@@ -73,16 +76,23 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // ── All other requests (pages, fonts, icons): stale-while-revalidate ─────
+  // ── Pages (navigations, fonts, icons): network-first ──────────────────────
+  // Every deploy ships new Server Action IDs baked into the page. Serving a
+  // *cached* page after a redeploy means the browser runs JS that calls
+  // actions the (now-rebuilt) server no longer recognizes — it fails with
+  // "Failed to find Server Action" and the page silently never renders.
+  // Always prefer the network while online; cache is strictly the
+  // last-resort offline fallback, not a performance shortcut.
   event.respondWith(
-    caches.open(CACHE_NAME).then(async (cache) => {
-      const cached = await cache.match(request);
-      const networkFetch = fetch(request).then((response) => {
-        if (response.ok) cache.put(request, response.clone());
-        return response;
-      }).catch(() => cached ?? caches.match('/offline'));
-
-      return cached ?? networkFetch;
-    }),
+    fetch(request).then((response) => {
+      if (response.ok) {
+        caches.open(CACHE_NAME).then((cache) => cache.put(request, response.clone()));
+      }
+      return response;
+    }).catch(() =>
+      caches.open(CACHE_NAME)
+        .then((cache) => cache.match(request))
+        .then((cached) => cached ?? caches.match('/offline')),
+    ),
   );
 });
