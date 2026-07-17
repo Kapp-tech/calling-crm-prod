@@ -4,15 +4,6 @@ on:
   push:
     branches: [main]
 
-# Shared across deploy.yml AND deploy-staging.yml (same group name) — the
-# server is a 1GB-RAM box that cannot run two Next.js builds at once without
-# thrashing into swap. A staging build overlapping a production build once
-# caused a genuine production outage. If one deploy is running, the other
-# now queues and waits instead of racing it for memory.
-concurrency:
-  group: crm-deploy
-  cancel-in-progress: false
-
 jobs:
   deploy:
     runs-on: ubuntu-latest
