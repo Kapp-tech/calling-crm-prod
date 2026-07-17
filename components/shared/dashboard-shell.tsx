@@ -6,6 +6,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Sidebar } from './sidebar';
 import { Header } from './header';
 import { PwaInstallPrompt } from './pwa-install-prompt';
+import { RouteProgress } from './route-progress';
 import { cn } from '@/lib/utils';
 
 export function DashboardShell({ children }: { children: React.ReactNode }) {
@@ -90,6 +91,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
       </div>
 
       <PwaInstallPrompt />
+      <RouteProgress />
     </div>
   );
 }

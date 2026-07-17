@@ -14,6 +14,8 @@ import {
   MapPin, Map, BookOpen, Tag, Globe2, Megaphone, User, MessageSquare,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { Sparkline } from '@/components/shared/sparkline';
+import { Leaderboard } from '@/components/shared/leaderboard';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -31,8 +33,9 @@ interface DashboardStats {
   approvedLeads?: number;
   disapprovedLeads?: number;
   feedbackBreakdown?: { label: string; count: number }[];
-  topAgents?: { name: string; callCount: number }[];
+  topAgents?: { name: string; callCount: number; todayCount: number }[];
   leadsOverTime?: { date: string; count: number }[];
+  sparklines?: { totalLeads?: number[]; assignedLeads?: number[]; connectedLeads?: number[] };
 }
 
 interface FilterOptions {
@@ -158,11 +161,12 @@ function useCountUp(target: number, duration = 750) {
 // ─── StatCard ────────────────────────────────────────────────────────────────
 
 function StatCard({
-  label, value, sub, icon: Icon, iconColor, iconBg, loading, index = 0,
+  label, value, sub, icon: Icon, iconColor, iconBg, loading, index = 0, spark,
 }: {
   label: string; value: number; sub?: string;
   icon: React.ComponentType<{ className?: string }>;
   iconColor: string; iconBg: string; loading?: boolean; index?: number;
+  spark?: number[];
 }) {
   // Hold the last known value while loading so it doesn't snap to 0
   const [animTarget, setAnimTarget] = useState(0);
@@ -179,6 +183,12 @@ function StatCard({
     >
       {/* Soft accent glow that appears on hover */}
       <div className={cn('pointer-events-none absolute -right-8 -top-8 h-24 w-24 rounded-full opacity-0 blur-2xl transition-opacity duration-300 group-hover:opacity-100', iconBg)} />
+      {/* 7-day trend behind the content */}
+      {spark && !loading && (
+        <span className={cn('pointer-events-none absolute inset-x-0 bottom-0 h-8 sm:h-10 opacity-50', iconColor)}>
+          <Sparkline data={spark} />
+        </span>
+      )}
       <div className="relative flex items-start justify-between gap-2">
         <p className="text-xs sm:text-sm text-muted-foreground font-medium leading-tight">{label}</p>
         <div className={cn('rounded-lg p-1.5 sm:p-2 shrink-0 transition-transform duration-200 ease-premium group-hover:scale-110 group-hover:-rotate-6', iconBg)}>
@@ -579,11 +589,11 @@ export default function DashboardPage() {
   // For all roles: connected % is relative to totalLeads (team scope for TL, own for Agent)
   const connectedDenom = s.totalLeads ?? 0;
 
-  const ALL_CARD_DEFS: Record<string, { label: string; value: number; icon: React.ComponentType<{ className?: string }>; iconColor: string; iconBg: string; sub?: string }> = {
+  const ALL_CARD_DEFS: Record<string, { label: string; value: number; icon: React.ComponentType<{ className?: string }>; iconColor: string; iconBg: string; sub?: string; spark?: number[] }> = {
     totalLeads: {
       label: 'Total Leads', value: s.totalLeads ?? 0,
       icon: TrendingUp, iconColor: 'text-blue-500', iconBg: 'bg-blue-500/10',
-      sub: periodLabel,
+      sub: periodLabel, spark: s.sparklines?.totalLeads,
     },
     assignedLeads: {
       label: 'Assigned Leads', value: s.assignedLeads ?? 0,
@@ -591,6 +601,7 @@ export default function DashboardPage() {
       sub: s.totalLeads
         ? `${Math.round(((s.assignedLeads ?? 0) / s.totalLeads) * 100)}% of total`
         : undefined,
+      spark: s.sparklines?.assignedLeads,
     },
     unassignedLeads: {
       label: 'Unassigned Leads', value: s.unassignedLeads ?? 0,
@@ -603,6 +614,7 @@ export default function DashboardPage() {
       sub: connectedDenom
         ? `${Math.round(((s.connectedLeads ?? 0) / connectedDenom) * 100)}% contacted`
         : undefined,
+      spark: s.sparklines?.connectedLeads,
     },
     untouchedLeads: {
       label: 'Untouched Leads', value: s.untouchedLeads ?? 0,
@@ -750,6 +762,7 @@ export default function DashboardPage() {
             iconColor={card.iconColor}
             iconBg={card.iconBg}
             sub={card.sub}
+            spark={card.spark}
             loading={isLoading}
             index={i}
           />
@@ -1014,38 +1027,11 @@ export default function DashboardPage() {
           {showTopAgents && (
             <div className="rounded-xl border border-border/60 bg-card p-5">
               <h2 className="text-sm font-semibold mb-1">Top Performers</h2>
-              <p className="text-xs text-muted-foreground mb-4">Agents by call count</p>
+              <p className="text-xs text-muted-foreground mb-4">Agents by call count{periodLabel ? ` · ${periodLabel}` : ''}</p>
               {isLoading ? (
                 <Skeleton className="h-52" />
               ) : (
-                <ResponsiveContainer width="100%" height={220}>
-                  <BarChart
-                    data={topAgents}
-                    layout="vertical"
-                    margin={{ top: 0, right: 16, left: 90, bottom: 0 }}
-                  >
-                    <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="currentColor" className="text-border/40" />
-                    <XAxis
-                      type="number" tick={{ fontSize: 11 }}
-                      stroke="currentColor" className="text-muted-foreground"
-                      tickLine={false} axisLine={false} allowDecimals={false}
-                    />
-                    <YAxis
-                      type="category" dataKey="name" tick={{ fontSize: 11 }}
-                      stroke="currentColor" className="text-muted-foreground"
-                      tickLine={false} axisLine={false} width={85}
-                    />
-                    <Tooltip content={<ChartTooltip />} />
-                    <Bar dataKey="callCount" name="Calls" fill="#6366f1" radius={[0, 4, 4, 0]} animationDuration={800}>
-                      {topAgents.map((_, i) => (
-                        <Cell
-                          key={i}
-                          fill={i === 0 ? '#6366f1' : i === 1 ? '#8b5cf6' : '#a78bfa'}
-                        />
-                      ))}
-                    </Bar>
-                  </BarChart>
-                </ResponsiveContainer>
+                <Leaderboard agents={topAgents} />
               )}
             </div>
           )}

@@ -17,6 +17,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { useToast } from '@/components/ui/use-toast';
 import { formatDateTime } from '@/lib/utils';
 import { cn } from '@/lib/utils';
+import { ActivityHeatmap } from '@/components/shared/activity-heatmap';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -415,6 +416,9 @@ export default function ProfilePage() {
 
         {/* ── Right column (3 / 5) ────────────────────────────────────────────── */}
         <div className="lg:col-span-3 space-y-4">
+
+          {/* Feedback activity heatmap — renders nothing for users with no activity */}
+          <ActivityHeatmap />
 
           {/* Info rows card */}
           <Card className="overflow-hidden rounded-2xl border-0 shadow-sm">

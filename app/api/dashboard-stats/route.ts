@@ -180,7 +180,7 @@ export async function GET(request: Request) {
       feedbackBreakdown.find((b) => b.label.toLowerCase().includes('admission'))?.count ?? 0;
 
     // ── Top agents ───────────────────────────────────────────────────────────
-    let topAgents: { name: string; callCount: number }[] = [];
+    let topAgents: { name: string; callCount: number; todayCount: number }[] = [];
     if (role !== 'OPERATIONS' && role !== 'COUNSELLING_AGENT') {
       const topFeedbacks = await prisma.leadFeedback.groupBy({
         by: ['agentId'],
@@ -194,17 +194,77 @@ export async function GET(request: Request) {
       });
       if (topFeedbacks.length > 0) {
         const agentIds = topFeedbacks.map((f) => f.agentId);
-        const users = await prisma.user.findMany({
-          where: { id: { in: agentIds } },
-          select: { id: true, name: true },
-        });
+        const todayStart = new Date();
+        todayStart.setHours(0, 0, 0, 0);
+        const [users, todayFeedbacks] = await Promise.all([
+          prisma.user.findMany({
+            where: { id: { in: agentIds } },
+            select: { id: true, name: true },
+          }),
+          // "X today" chip on the leaderboard — makes it feel live
+          prisma.leadFeedback.groupBy({
+            by: ['agentId'],
+            where: { agentId: { in: agentIds }, createdAt: { gte: todayStart } },
+            _count: { id: true },
+          }),
+        ]);
         const nameMap = Object.fromEntries(users.map((u) => [u.id, u.name]));
+        const todayMap = Object.fromEntries(todayFeedbacks.map((f) => [f.agentId, f._count.id]));
         topAgents = topFeedbacks.map((f) => ({
           name: nameMap[f.agentId] ?? 'Unknown',
           callCount: f._count.id,
+          todayCount: todayMap[f.agentId] ?? 0,
         }));
       }
     }
+
+    // ── 7-day sparklines for stat cards (always trailing 7 days, ignores the
+    //    page date filter — they show recent momentum, not the filtered range) ─
+    const sparkStart = new Date();
+    sparkStart.setHours(0, 0, 0, 0);
+    sparkStart.setDate(sparkStart.getDate() - 6);
+    const last7Days = Array.from({ length: 7 }, (_, i) => {
+      const d = new Date(sparkStart);
+      d.setDate(d.getDate() + i);
+      return d.toISOString().split('T')[0];
+    });
+    const toSeries = (dates: Date[]): number[] => {
+      const counts = new Map<string, number>(last7Days.map((d) => [d, 0]));
+      for (const dt of dates) {
+        const key = dt.toISOString().split('T')[0];
+        if (counts.has(key)) counts.set(key, (counts.get(key) ?? 0) + 1);
+      }
+      return last7Days.map((d) => counts.get(d) ?? 0);
+    };
+    const sparkScope = teamScopeWhere ?? scopeWhere;
+    const [sparkCreated, sparkAssigned, sparkFeedbacks] = await Promise.all([
+      prisma.lead.findMany({
+        where: { ...scopeWhere, status: 'APPROVED', createdAt: { gte: sparkStart } },
+        select: { createdAt: true },
+      }),
+      prisma.lead.findMany({
+        where: { ...sparkScope, status: 'APPROVED', assignedAt: { gte: sparkStart } },
+        select: { assignedAt: true },
+      }),
+      prisma.leadFeedback.findMany({
+        where: {
+          createdAt: { gte: sparkStart },
+          ...(role === 'COUNSELLING_AGENT'
+            ? { agentId: userId }
+            : role === 'OPERATIONS'
+              ? { lead: { uploadedById: userId } }
+              : teamAgentIds.length > 0
+                ? { agentId: { in: teamAgentIds } }
+                : {}),
+        },
+        select: { createdAt: true },
+      }),
+    ]);
+    const sparklines = {
+      totalLeads: toSeries(sparkCreated.map((l) => l.createdAt)),
+      assignedLeads: toSeries(sparkAssigned.map((l) => l.assignedAt!).filter(Boolean)),
+      connectedLeads: toSeries(sparkFeedbacks.map((f) => f.createdAt)),
+    };
 
     // ── Leads over time (group by day) ───────────────────────────────────────
     const dayMap = new Map<string, number>();
@@ -230,6 +290,7 @@ export async function GET(request: Request) {
       feedbackBreakdown,
       topAgents,
       leadsOverTime,
+      sparklines,
     });
   } catch (error) {
     console.error('[dashboard-stats GET]', error);
