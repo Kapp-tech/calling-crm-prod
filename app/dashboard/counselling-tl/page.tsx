@@ -339,7 +339,7 @@ function BulkTLSelect({
       </button>
 
       {open && (
-        <div className="absolute bottom-full left-0 z-[60] mb-2 w-60 overflow-hidden rounded-xl border border-border bg-background shadow-2xl">
+        <div className="absolute bottom-full left-0 z-[60] mb-2 w-60 max-w-[calc(100vw-3rem)] overflow-hidden rounded-xl border border-border bg-background shadow-2xl">
           <div className="border-b p-2">
             <div className="relative">
               <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
@@ -457,7 +457,7 @@ function BulkAgentSelect({
       </button>
 
       {open && !disabled && (
-        <div className="absolute bottom-full left-0 z-[60] mb-2 w-72 overflow-hidden rounded-xl border border-border bg-background shadow-2xl">
+        <div className="absolute bottom-full left-0 z-[60] mb-2 w-72 max-w-[calc(100vw-3rem)] overflow-hidden rounded-xl border border-border bg-background shadow-2xl">
           {/* Search */}
           <div className="border-b p-2">
             <div className="relative">
@@ -1496,12 +1496,13 @@ export default function CounsellingTLPage() {
 
       {/* ── Floating bulk-assign bar ──────────────────────────────────────────── */}
       {canAssign && selectedIds.length > 0 && (
-        <div className="fixed bottom-6 left-1/2 z-50 w-[calc(100%-2rem)] max-w-5xl -translate-x-1/2">
-          <div className="flex items-center gap-3 rounded-2xl bg-[#0f1117] px-4 py-3 shadow-[0_20px_60px_rgba(0,0,0,0.6)] ring-1 ring-white/[0.08]">
+        <div className="fixed bottom-4 sm:bottom-6 left-1/2 z-50 w-[calc(100%-1.5rem)] sm:w-[calc(100%-2rem)] max-w-5xl -translate-x-1/2">
+          {/* Wraps into stacked rows on phones; single row from sm up */}
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-2.5 sm:gap-3 rounded-2xl bg-[#0f1117] px-3 sm:px-4 py-3 shadow-[0_20px_60px_rgba(0,0,0,0.6)] ring-1 ring-white/[0.08]">
 
-            {/* Count + summary */}
-            <div className="flex items-center gap-2.5 shrink-0">
-              <div className="flex h-7 w-7 items-center justify-center rounded-full bg-primary text-xs font-bold text-white">
+            {/* Count + summary — own full row on mobile, with the close button on its right */}
+            <div className="flex w-full sm:w-auto items-center gap-2.5 sm:shrink-0">
+              <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary text-xs font-bold text-white">
                 {selectedIds.length}
               </div>
               <div className="leading-tight">
@@ -1510,26 +1511,32 @@ export default function CounsellingTLPage() {
                   {allFilteredSelected ? 'All matching' : `${selUnassigned} unassigned · ${selAssigned} assigned`}
                 </p>
               </div>
+              <button
+                onClick={clearSelection}
+                className="ml-auto flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-white/[0.05] text-slate-500 transition-all hover:bg-white/10 hover:text-slate-200 sm:hidden"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
             </div>
 
-            <div className="h-6 w-px bg-white/[0.08] shrink-0" />
+            <div className="hidden sm:block h-6 w-px bg-white/[0.08] shrink-0" />
 
             {/* TL picker */}
             {showTlPicker && (
               <>
-                <div className="w-36 shrink-0">
+                <div className="flex-1 min-w-[130px] sm:flex-none sm:w-36 sm:shrink-0">
                   <BulkTLSelect
                     tls={tlsList}
                     selected={bulkTlIds}
                     onChange={(ids) => { setBulkTlIds(ids); setBulkAgentIds([]); }}
                   />
                 </div>
-                <ChevronRight className="h-3 w-3 text-slate-600 shrink-0" />
+                <ChevronRight className="hidden sm:block h-3 w-3 text-slate-600 shrink-0" />
               </>
             )}
 
             {/* Agent picker */}
-            <div className="w-44 shrink-0">
+            <div className="flex-1 min-w-[150px] sm:flex-none sm:w-44 sm:shrink-0">
               <BulkAgentSelect
                 agents={bulkAvailableAgents}
                 selected={bulkAgentIds}
@@ -1560,7 +1567,7 @@ export default function CounsellingTLPage() {
               Fresh
             </button>
 
-            <div className="h-6 w-px bg-white/[0.08] shrink-0" />
+            <div className="hidden sm:block h-6 w-px bg-white/[0.08] shrink-0" />
 
             {/* Assign */}
             {bulkAgentIds.length > 0 && (
@@ -1568,7 +1575,7 @@ export default function CounsellingTLPage() {
                 disabled={autoAssignMutation.isPending}
                 onClick={() => autoAssignMutation.mutate({ leadIds: selectedIds, agentIds: bulkAgentIds, resetFeedbacks: bulkFreshAssign })}
                 className={cn(
-                  'flex h-8 shrink-0 items-center gap-1.5 rounded-lg px-3 text-xs font-semibold text-white transition-all hover:brightness-110 disabled:opacity-50',
+                  'flex h-8 flex-1 sm:flex-none justify-center shrink-0 items-center gap-1.5 rounded-lg px-3 text-xs font-semibold text-white transition-all hover:brightness-110 disabled:opacity-50',
                   bulkFreshAssign ? 'bg-red-500' : 'bg-primary',
                 )}
               >
@@ -1582,7 +1589,7 @@ export default function CounsellingTLPage() {
               disabled={rrAgents.length === 0 || autoAssignMutation.isPending}
               onClick={() => setShowRRPreview(true)}
               className={cn(
-                'flex h-8 shrink-0 items-center gap-1.5 rounded-lg px-3 text-xs font-semibold transition-all disabled:opacity-40',
+                'flex h-8 flex-1 sm:flex-none justify-center shrink-0 items-center gap-1.5 rounded-lg px-3 text-xs font-semibold transition-all disabled:opacity-40',
                 bulkAgentIds.length > 0
                   ? 'border border-white/10 bg-white/[0.06] text-slate-300 hover:bg-white/10'
                   : bulkFreshAssign
@@ -1604,17 +1611,17 @@ export default function CounsellingTLPage() {
                     : selectedLeads.filter((l) => l.assignedTo).map((l) => l.id);
                   if (ids.length > 0) unassignMutation.mutate(ids);
                 }}
-                className="flex h-8 shrink-0 items-center gap-1.5 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 text-xs font-semibold text-amber-300 transition-all hover:bg-amber-500/20 disabled:opacity-50"
+                className="flex h-8 flex-1 sm:flex-none justify-center shrink-0 items-center gap-1.5 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 text-xs font-semibold text-amber-300 transition-all hover:bg-amber-500/20 disabled:opacity-50"
               >
                 {unassignMutation.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <UserMinus className="h-3 w-3" />}
                 {allFilteredSelected ? 'Unassign' : `Unassign (${selAssigned})`}
               </button>
             )}
 
-            {/* Close */}
+            {/* Close — desktop only; mobile has its own X in the count row above */}
             <button
               onClick={clearSelection}
-              className="ml-auto flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-white/[0.05] text-slate-500 transition-all hover:bg-white/10 hover:text-slate-200"
+              className="ml-auto hidden sm:flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-white/[0.05] text-slate-500 transition-all hover:bg-white/10 hover:text-slate-200"
             >
               <X className="h-3.5 w-3.5" />
             </button>
