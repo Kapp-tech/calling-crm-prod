@@ -1,8 +1,10 @@
 name: Deploy to AWS
 
+# Manual trigger only — pushing to main no longer auto-deploys. Deploy
+# explicitly via `gh workflow run "Deploy to AWS" --ref main` or the
+# "Run workflow" button on the Actions tab.
 on:
-  push:
-    branches: [main]
+  workflow_dispatch:
 
 jobs:
   deploy:
