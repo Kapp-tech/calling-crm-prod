@@ -17,6 +17,7 @@ import { Button } from '@/components/ui/button';
 import { useToast } from '@/components/ui/use-toast';
 import { cn } from '@/lib/utils';
 import { triggerCelebration, isCelebrationFeedback } from '@/lib/celebrate';
+import { WhatsAppButton } from '@/components/shared/whatsapp-button';
 import { computeProfilingScore, profilingScoreTone } from '@/lib/lead-profiling';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -1017,6 +1018,12 @@ export function LeadDetailDrawer({ leadId, onClose, canSubmitFeedback = false }:
                           <Phone className="h-3.5 w-3.5" /> Call
                         </a>
                       </Button>
+                      <WhatsAppButton
+                        phone={lead.phone}
+                        leadName={lead.name}
+                        agentName={agentName}
+                        course={lead.course}
+                      />
                     </div>
                     <div className="flex flex-wrap gap-2">
                       <span className="inline-flex items-center gap-1 text-xs font-medium rounded-full border px-2.5 py-0.5 text-emerald-600 border-emerald-300/50 bg-emerald-500/10">

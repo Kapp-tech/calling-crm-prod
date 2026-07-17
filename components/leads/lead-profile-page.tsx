@@ -11,6 +11,7 @@ import { cn } from '@/lib/utils';
 import { useToast } from '@/components/ui/use-toast';
 import { ReceiptUploadDialog, type ReceiptKind } from '@/components/leads/receipt-upload-dialog';
 import { computeProfilingScore, profilingScoreTone } from '@/lib/lead-profiling';
+import { WhatsAppButton } from '@/components/shared/whatsapp-button';
 
 const STEP_BY_NAME: Record<string, number> = {
   'Basic Info': 1,
@@ -849,6 +850,16 @@ export function LeadProfilePage({ leadId, agentName }: { leadId: string; agentNa
                 <p className="text-sm font-bold leading-tight">{lead.name}</p>
                 <p className="text-xs text-muted-foreground">{lead.phone}</p>
               </div>
+            </div>
+
+            <div className="flex flex-wrap gap-2">
+              <a
+                href={`tel:${lead.phone}`}
+                className="inline-flex h-9 items-center gap-1.5 rounded-md bg-green-600 px-3 text-xs font-medium text-white shadow-sm transition-colors hover:bg-green-700"
+              >
+                <Phone className="h-3.5 w-3.5" /> Call
+              </a>
+              <WhatsAppButton phone={lead.phone} leadName={lead.name} course={lead.course} />
             </div>
 
             <dl className="hidden sm:block space-y-1.5 border-t border-border/60 pt-3">

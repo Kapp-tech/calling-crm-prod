@@ -6,6 +6,7 @@ import { useEffect, useState } from 'react';
 import { Sun, Moon, Menu } from 'lucide-react';
 import { NotificationBell } from '@/components/notifications/notification-bell';
 import { PunchClockWidget } from '@/components/attendance/punch-clock-widget';
+import { GlobalSearch } from '@/components/shared/global-search';
 
 const PAGE_TITLES: Record<string, string> = {
   '/dashboard': 'Dashboard',
@@ -55,6 +56,7 @@ export function Header({ onMenuClick }: { onMenuClick?: () => void }) {
       </div>
 
       <div className="flex items-center gap-1.5 md:gap-3 shrink-0">
+        <GlobalSearch />
         <PunchClockWidget />
         <NotificationBell />
 
