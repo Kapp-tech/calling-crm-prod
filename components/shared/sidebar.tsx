@@ -554,6 +554,7 @@ export function Sidebar({ onClose, collapsed = false, onCollapse }: SidebarProps
                             <Link
                               href={child.href}
                               onClick={onClose}
+                              data-tour={child.href === '/dashboard/counselling-agent/scheduled-calls' ? 'scheduled-calls' : undefined}
                               className={cn(
                                 'flex items-center gap-2.5 rounded-md px-2.5 py-1.5 text-sm transition-colors',
                                 childActive

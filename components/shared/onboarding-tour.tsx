@@ -27,13 +27,22 @@ export function OnboardingTour({ steps, storageKey }: { steps: TourStep[]; stora
   const [rect, setRect] = useState<Rect | null>(null);
   const rafRef = useRef<number | null>(null);
 
-  // Genuinely reachable: rendered, has size, and not translated off-screen
-  // horizontally (the mobile sidebar sits at -100% translate — offsetParent
-  // alone can't catch that). Below-the-fold is fine; we scroll to it.
+  // Genuinely reachable: rendered with size, and no ancestor container sits
+  // entirely off-screen (the closed mobile sidebar is at -100% translate —
+  // offsetParent alone can't catch that). The element itself may be outside
+  // the viewport inside a scrollable table — scrollIntoView handles that.
   const isReachable = (el: Element): boolean => {
     if ((el as HTMLElement).offsetParent === null) return false;
     const r = el.getBoundingClientRect();
-    return r.width > 0 && r.height > 0 && r.right > 0 && r.left < window.innerWidth;
+    if (r.width === 0 || r.height === 0) return false;
+    for (let node = el.parentElement; node; node = node.parentElement) {
+      // Only a FIXED ancestor parked off-screen is truly unreachable (the mobile
+      // nav drawer). Anything else off-screen is just scrolled away — scrollable.
+      if (getComputedStyle(node).position !== 'fixed') continue;
+      const nr = node.getBoundingClientRect();
+      if (nr.width > 0 && (nr.right <= 0 || nr.left >= window.innerWidth)) return false;
+    }
+    return true;
   };
 
   // Resolve the first reachable target at or after `from`; null when none remain
@@ -62,7 +71,7 @@ export function OnboardingTour({ steps, storageKey }: { steps: TourStep[]; stora
         return;
       }
       setStepIndex(found.index);
-      found.el.scrollIntoView({ block: 'center', behavior: 'instant' as ScrollBehavior });
+      found.el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' as ScrollBehavior });
       // measure after scroll has settled
       rafRef.current = requestAnimationFrame(() => measure(found.el));
     },
