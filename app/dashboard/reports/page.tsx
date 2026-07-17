@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { useSession } from 'next-auth/react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { usePermissions } from '@/lib/usePermissions';
@@ -132,28 +132,37 @@ function DisapproveModal({ open, title, onConfirm, onClose, isPending }: Disappr
 
 // ─── Batch section ────────────────────────────────────────────────────────────
 
+interface BatchSummary { pending: number; approved: number; disapproved: number; total: number }
+
 interface BatchSectionProps {
   batchId: string;
   fileName: string;
   uploadedAt: string;
   uploadedBy: string;
   leads: Lead[];
+  // True counts for the WHOLE batch, independent of pagination — a batch of
+  // 10,000 leads can span 100 pages of the raw lead list, but this always
+  // reflects its real total, not just whatever's loaded on the current page.
+  summary: BatchSummary | undefined;
   canUnmask: boolean;
   canApprove: boolean;
+  canDownload: boolean;
   isSearchActive: boolean;
   onApproveOne: (id: string) => void;
   onDisapproveOne: (id: string) => void;
   onDeleteOne: (id: string) => void;
   onApproveAll: (batchId: string) => void;
   onDisapproveAll: (batchId: string) => void;
+  onDownloadPending: (batchId: string, fileName: string) => void;
+  isDownloadingPending: boolean;
   onViewDetail: (lead: Lead) => void;
   isActionPending: boolean;
 }
 
 function BatchSection({
-  batchId, fileName, uploadedAt, uploadedBy, leads, canUnmask, canApprove,
+  batchId, fileName, uploadedAt, uploadedBy, leads, summary, canUnmask, canApprove, canDownload,
   isSearchActive, onApproveOne, onDisapproveOne, onDeleteOne, onApproveAll, onDisapproveAll,
-  onViewDetail, isActionPending,
+  onDownloadPending, isDownloadingPending, onViewDetail, isActionPending,
 }: BatchSectionProps) {
   const [open, setOpen] = useState(false);
 
@@ -161,16 +170,19 @@ function BatchSection({
   useEffect(() => {
     if (isSearchActive) setOpen(true);
   }, [isSearchActive]);
-  const pendingCount = leads.filter((l) => l.status === 'PENDING').length;
-  const approvedCount = leads.filter((l) => l.status === 'APPROVED').length;
-  const disapprovedCount = leads.filter((l) => l.status === 'DISAPPROVED').length;
 
-  const pendingLeads = leads.filter((l) => l.status === 'PENDING');
+  // Fall back to counting whatever's loaded (e.g. while the summary query is
+  // still in flight) so the header never shows a blank/zero flash.
+  const pendingCount = summary?.pending ?? leads.filter((l) => l.status === 'PENDING').length;
+  const approvedCount = summary?.approved ?? leads.filter((l) => l.status === 'APPROVED').length;
+  const disapprovedCount = summary?.disapproved ?? leads.filter((l) => l.status === 'DISAPPROVED').length;
 
   return (
     <Card className="border-l-4 border-l-primary/30">
-      {/* Batch header */}
-      <div className="flex w-full items-center gap-3 px-4 py-3">
+      {/* Batch header — counts and bulk actions always reflect the batch's
+          TRUE totals (via `summary`), not just whatever page happens to be
+          loaded, and work without expanding the row first. */}
+      <div className="flex w-full flex-wrap items-center gap-3 px-4 py-3">
         <button
           className="flex flex-1 min-w-0 items-center gap-3 text-left"
           onClick={() => setOpen((v) => !v)}
@@ -179,26 +191,44 @@ function BatchSection({
           <div className="flex-1 min-w-0">
             <p className="font-semibold truncate">{fileName}</p>
             <p className="text-xs text-muted-foreground">
-              Uploaded by <span className="font-medium">{uploadedBy}</span> · {formatDateTime(uploadedAt)} · {leads.length} records
+              Uploaded by <span className="font-medium">{uploadedBy}</span> · {formatDateTime(uploadedAt)} · {summary?.total ?? leads.length} records
             </p>
           </div>
         </button>
-        <div className="flex items-center gap-2 shrink-0">
+        <div className="flex flex-wrap items-center gap-2 shrink-0">
           {pendingCount > 0 && <Badge variant="warning">{pendingCount} pending</Badge>}
           {approvedCount > 0 && <Badge variant="success">{approvedCount} approved</Badge>}
           {disapprovedCount > 0 && <Badge variant="destructive">{disapprovedCount} rejected</Badge>}
-          {canApprove && pendingLeads.length > 0 && (
+
+          {canApprove && pendingCount > 0 && (
+            <>
+              <Button size="sm" variant="outline" className="h-7 text-xs gap-1.5 text-green-700 border-green-200 hover:bg-green-50"
+                disabled={isActionPending}
+                onClick={(e) => { e.stopPropagation(); onApproveAll(batchId); }}>
+                <CheckCircle className="h-3.5 w-3.5" /> Approve All ({pendingCount})
+              </Button>
+              <Button size="sm" variant="outline" className="h-7 text-xs gap-1.5 text-red-700 border-red-200 hover:bg-red-50"
+                disabled={isActionPending}
+                onClick={(e) => { e.stopPropagation(); onDisapproveAll(batchId); }}>
+                <XCircle className="h-3.5 w-3.5" /> Disapprove All ({pendingCount})
+              </Button>
+            </>
+          )}
+
+          {canDownload && pendingCount > 0 && (
             <Button
               size="sm" variant="outline"
               className="h-7 text-xs gap-1.5"
-              title="Download pending leads as CSV"
+              title="Download ALL pending leads in this batch as CSV"
+              disabled={isDownloadingPending}
               onClick={(e) => {
                 e.stopPropagation();
-                const safeName = fileName.replace(/[^a-z0-9_\-\.]/gi, '_').replace(/\.csv$/i, '');
-                downloadLeadsAsCSV(pendingLeads, `pending_${safeName}.csv`);
+                onDownloadPending(batchId, fileName);
               }}
             >
-              <Download className="h-3.5 w-3.5" />
+              {isDownloadingPending
+                ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                : <Download className="h-3.5 w-3.5" />}
               Download Pending
             </Button>
           )}
@@ -207,22 +237,6 @@ function BatchSection({
 
       {open && (
         <div className="px-4 pb-4 space-y-3">
-          {/* Batch action buttons */}
-          {pendingCount > 0 && canApprove && (
-            <div className="flex gap-2">
-              <Button size="sm" variant="outline" className="text-green-700 border-green-200 hover:bg-green-50"
-                disabled={isActionPending}
-                onClick={() => onApproveAll(batchId)}>
-                <CheckCircle className="mr-1 h-3.5 w-3.5" /> Approve All ({pendingCount})
-              </Button>
-              <Button size="sm" variant="outline" className="text-red-700 border-red-200 hover:bg-red-50"
-                disabled={isActionPending}
-                onClick={() => onDisapproveAll(batchId)}>
-                <XCircle className="mr-1 h-3.5 w-3.5" /> Disapprove All ({pendingCount})
-              </Button>
-            </div>
-          )}
-
           <div className="overflow-x-auto rounded-md border">
             <Table className="text-xs">
               <TableHeader>
@@ -485,6 +499,31 @@ export default function ReportsPage() {
     }
   }
 
+  // True per-batch counts, independent of pagination — see the route's
+  // comment for why this can't be derived from `leads` above.
+  const batchIds = useMemo(() => Array.from(batchMap.keys()).sort(), [data]);
+  const { data: batchSummaries } = useQuery<Record<string, BatchSummary>>({
+    queryKey: ['leads-batch-summary', batchIds],
+    queryFn: () => fetch(`/api/leads/batch-summary?batchIds=${batchIds.join(',')}`).then((r) => r.json()),
+    enabled: batchIds.length > 0,
+  });
+
+  const [downloadingPendingId, setDownloadingPendingId] = useState<string | null>(null);
+  const handleDownloadPending = async (batchId: string, fileName: string) => {
+    setDownloadingPendingId(batchId);
+    try {
+      const res = await fetch(`/api/leads/batch/${batchId}/pending`);
+      const json = await res.json();
+      if (!json.success) throw new Error(json.error ?? 'Download failed');
+      const safeName = fileName.replace(/[^a-z0-9_\-\.]/gi, '_').replace(/\.csv$/i, '');
+      downloadLeadsAsCSV(json.leads, `pending_${safeName}.csv`);
+    } catch (err) {
+      toast({ variant: 'destructive', title: 'Download failed', description: (err as Error).message });
+    } finally {
+      setDownloadingPendingId(null);
+    }
+  };
+
   const handleDisapproveConfirm = (reason: string) => {
     if (!disapproveTarget) return;
     if (disapproveTarget.type === 'single') {
@@ -612,8 +651,10 @@ export default function ReportsPage() {
               uploadedAt={batch.uploadedAt}
               uploadedBy={batch.uploadedBy}
               leads={batch.leads}
+              summary={batchSummaries?.[batchId]}
               canUnmask={canUnmask}
               canApprove={canApproveleads}
+              canDownload={canDownload}
               isSearchActive={!!search}
               isActionPending={isAnyPending}
               onApproveOne={(id) => approveMutation.mutate({ id, action: 'APPROVE' })}
@@ -621,6 +662,8 @@ export default function ReportsPage() {
               onDeleteOne={(id) => deleteMutation.mutate(id)}
               onApproveAll={(bid) => batchApproveMutation.mutate(bid)}
               onDisapproveAll={(bid) => setDisapproveTarget({ type: 'batch', batchId: bid })}
+              onDownloadPending={handleDownloadPending}
+              isDownloadingPending={downloadingPendingId === batchId}
               onViewDetail={setSelectedLead}
             />
           ))}
