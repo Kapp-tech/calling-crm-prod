@@ -4,6 +4,15 @@ on:
   push:
     branches: [main]
 
+# Shared across deploy.yml AND deploy-staging.yml (same group name) — the
+# server is a 1GB-RAM box that cannot run two Next.js builds at once without
+# thrashing into swap. A staging build overlapping a production build once
+# caused a genuine production outage. If one deploy is running, the other
+# now queues and waits instead of racing it for memory.
+concurrency:
+  group: crm-deploy
+  cancel-in-progress: false
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
@@ -14,6 +23,11 @@ jobs:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
+          # Default is 10m — this 1GB-RAM server's static-generation phase can
+          # run long under memory pressure and blew past that once already
+          # (the SSH client gave up and reported a false failure while the
+          # remote build kept running unattended to completion).
+          command_timeout: 30m
           # The server has 1GB RAM — cap Node's heap during build so it
           # swaps instead of OOM-killing the build process (see next.config.js
           # for the matching single-worker/timeout settings).
