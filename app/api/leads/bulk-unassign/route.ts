@@ -3,6 +3,8 @@ import { getServerSession } from 'next-auth';
 import { z } from 'zod';
 import { authOptions } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
+import { hasPermission } from '@/lib/permissions';
+import { Feature } from '@prisma/client';
 
 const schema = z.object({
   leadIds: z.array(z.string()).min(1).max(500),
@@ -11,7 +13,7 @@ const schema = z.object({
 export async function POST(req: NextRequest) {
   try {
     const session = await getServerSession(authOptions);
-    if (!session || !['SUPER_ADMIN', 'COUNSELLING_TL'].includes(session.user.role)) {
+    if (!session || !(await hasPermission(session.user.role, Feature.ASSIGN_LEADS))) {
       return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
     }
 

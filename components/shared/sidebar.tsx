@@ -5,6 +5,7 @@ import { useSession, signOut } from 'next-auth/react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useUnreadAnnouncements } from '@/lib/hooks/use-unread-announcements';
+import { usePermissions } from '@/lib/usePermissions';
 import {
   LayoutDashboard, List, Upload, Shield, Settings2, MessageSquare,
   Users, Users2, UserCog, BarChart3, Activity, ClipboardCheck,
@@ -27,6 +28,11 @@ interface NavChild {
   icon: React.ComponentType<{ className?: string }>;
   roles: Role[];
   exact?: boolean;
+  // Permission Matrix features (any-of) required to show this entry, on top
+  // of the role check. Lets Manage Permissions toggles actually hide/show
+  // menus — `roles` alone decides which role's page variant an entry points
+  // at, `features` decides whether the feature is currently granted.
+  features?: string[];
 }
 
 interface NavLeaf {
@@ -36,6 +42,7 @@ interface NavLeaf {
   icon: React.ComponentType<{ className?: string }>;
   roles: Role[];
   exact?: boolean;
+  features?: string[];
 }
 
 interface NavGroup {
@@ -66,6 +73,8 @@ const NAV: NavEntry[] = [
     label: 'All Leads',
     icon: List,
     roles: ['SUPER_ADMIN', 'REPORTS', 'COUNSELLING_TL', 'COUNSELLING_AGENT'],
+    // mirrors /api/leads GET, which allows VIEW_LEADS or VIEW_REPORTS
+    features: ['VIEW_LEADS', 'VIEW_REPORTS'],
   },
   {
     type: 'group',
@@ -80,6 +89,7 @@ const NAV: NavEntry[] = [
         icon: Upload,
         roles: ['SUPER_ADMIN', 'OPERATIONS'],
         exact: true,
+        features: ['UPLOAD_LEADS'],
       },
       {
         href: '/dashboard/counselling-tl',
@@ -87,6 +97,7 @@ const NAV: NavEntry[] = [
         icon: UserCheck,
         roles: ['SUPER_ADMIN', 'COUNSELLING_TL'],
         exact: true,
+        features: ['ASSIGN_LEADS'],
       },
       {
         href: '/dashboard/counselling-agent/scheduled-calls',
@@ -224,6 +235,7 @@ const NAV: NavEntry[] = [
     label: 'Analytics',
     icon: BarChart3,
     roles: ['SUPER_ADMIN', 'COUNSELLING_TL', 'REPORTS'],
+    features: ['VIEW_REPORTS'],
   },
   {
     type: 'leaf',
@@ -239,6 +251,7 @@ const NAV: NavEntry[] = [
     icon: BarChart3,
     roles: ['REPORTS'],
     exact: true,
+    features: ['VIEW_REPORTS'],
   },
   {
     type: 'leaf',
@@ -259,6 +272,7 @@ const NAV: NavEntry[] = [
     // a workflow this app supports — approval is REPORTS/SUPER_ADMIN only.
     roles: ['SUPER_ADMIN'],
     exact: true,
+    features: ['APPROVE_LEADS'],
   },
   {
     type: 'leaf',
@@ -303,6 +317,13 @@ export function Sidebar({ onClose, collapsed = false, onCollapse }: SidebarProps
   const showUnread = userRole === 'COUNSELLING_TL' || userRole === 'COUNSELLING_AGENT';
   const { unreadCount } = useUnreadAnnouncements();
   const UNREAD_HREF = '/dashboard/announcements';
+
+  // Permission Matrix gating for feature-mapped entries. While permissions
+  // are still loading, show entries optimistically (role-gated as before) so
+  // the menu doesn't flash — the server enforces real access regardless.
+  const { can, isLoading: permsLoading } = usePermissions();
+  const featureAllowed = (features?: string[]): boolean =>
+    !features || permsLoading || features.some((f) => can(f));
 
   // True when sidebar should visually show expanded state
   const isExpanded = !collapsed || hovered;
@@ -420,6 +441,7 @@ export function Sidebar({ onClose, collapsed = false, onCollapse }: SidebarProps
             // ── Leaf ──
             if (entry.type === 'leaf') {
               if (!entry.roles.includes(userRole)) return null;
+              if (!featureAllowed(entry.features)) return null;
               const active = checkActive(entry.href, entry.exact);
               const hasUnread = showUnread && entry.href === UNREAD_HREF && unreadCount > 0 && !active;
               return (
@@ -472,7 +494,7 @@ export function Sidebar({ onClose, collapsed = false, onCollapse }: SidebarProps
             // ── Group ──
             if (entry.type === 'group') {
               const visibleChildren = entry.children.filter((c) =>
-                c.roles.includes(userRole)
+                c.roles.includes(userRole) && featureAllowed(c.features)
               );
               if (visibleChildren.length === 0) return null;
 

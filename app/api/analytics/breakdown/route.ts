@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
-import { Prisma } from '@prisma/client';
+import { Feature, Prisma } from '@prisma/client';
 import { authOptions } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
+import { hasPermission } from '@/lib/permissions';
 
 export type BreakdownRow = {
   label: string;
@@ -20,7 +21,7 @@ type GroupBy = 'city' | 'state' | 'counsellor' | 'team' | 'college' | 'course' |
 export async function GET(req: NextRequest) {
   try {
     const session = await getServerSession(authOptions);
-    if (!session || !['SUPER_ADMIN', 'REPORTS', 'COUNSELLING_TL'].includes(session.user.role)) {
+    if (!session || !(await hasPermission(session.user.role, Feature.VIEW_REPORTS))) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 

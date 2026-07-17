@@ -9,7 +9,10 @@ const DEFAULT_PERMISSIONS: Record<Role, Feature[]> = {
   SUPER_ADMIN: Object.values(Feature),
   REPORTS: [Feature.VIEW_REPORTS, Feature.DOWNLOAD_DATA, Feature.MASK_UNMASK_DATA, Feature.APPROVE_LEADS],
   OPERATIONS: [Feature.UPLOAD_LEADS],
-  COUNSELLING_TL: [Feature.VIEW_LEADS, Feature.ASSIGN_LEADS],
+  // VIEW_REPORTS included because TLs have always had Analytics/performance
+  // access (previously via hardcoded role lists in those routes) — the matrix
+  // just didn't reflect it. Toggle it off in Manage Permissions to revoke.
+  COUNSELLING_TL: [Feature.VIEW_LEADS, Feature.ASSIGN_LEADS, Feature.VIEW_REPORTS],
   COUNSELLING_AGENT: [Feature.VIEW_LEADS, Feature.SUBMIT_FEEDBACK],
 };
 

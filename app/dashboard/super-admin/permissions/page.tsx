@@ -35,23 +35,35 @@ export default function PermissionsPage() {
 
   const { data: permissions, isLoading } = useQuery<Record<RoleKey, Record<FeatureKey, boolean>>>({
     queryKey: ['permissions'],
-    queryFn: () => fetch('/api/permissions').then((r) => r.json()),
+    queryFn: async () => {
+      const r = await fetch('/api/permissions');
+      // Never cache an error body ({error:'Unauthorized'}) as matrix data —
+      // that used to render every switch as OFF instead of surfacing a failure.
+      if (!r.ok) throw new Error(`Failed to load permissions (HTTP ${r.status})`);
+      return r.json();
+    },
   });
 
   const updateMutation = useMutation({
-    mutationFn: (data: { role: RoleKey; feature: FeatureKey; canAccess: boolean }) =>
-      fetch('/api/permissions', {
+    mutationFn: async (data: { role: RoleKey; feature: FeatureKey; canAccess: boolean }) => {
+      const r = await fetch('/api/permissions', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(data),
-      }).then((r) => r.json()),
-    onSuccess: (data) => {
-      if (data.error) {
-        toast({ variant: 'destructive', title: 'Error', description: data.error });
-        return;
+      });
+      const json = await r.json().catch(() => null);
+      if (!r.ok || json?.error) {
+        const msg = typeof json?.error === 'string' ? json.error : `Save failed (HTTP ${r.status})`;
+        throw new Error(msg);
       }
+      return json;
+    },
+    onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['permissions'] });
       toast({ title: 'Permission updated' });
+    },
+    onError: (err: Error) => {
+      toast({ variant: 'destructive', title: 'Permission not saved', description: err.message });
     },
   });
 

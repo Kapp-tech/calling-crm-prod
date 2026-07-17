@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
+import { hasPermission } from '@/lib/permissions';
+import { Feature } from '@prisma/client';
 
 const ALLOWED_DIMS = ['agent', 'feedback', 'state', 'city', 'college', 'campaign', 'leadType'] as const;
 type Dim = typeof ALLOWED_DIMS[number];
@@ -31,7 +33,7 @@ const DIM_GROUP: Record<Dim, string> = {
 export async function GET(req: NextRequest) {
   try {
     const session = await getServerSession(authOptions);
-    if (!session || !['SUPER_ADMIN', 'COUNSELLING_TL', 'REPORTS'].includes(session.user.role)) {
+    if (!session || !(await hasPermission(session.user.role, Feature.VIEW_REPORTS))) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 

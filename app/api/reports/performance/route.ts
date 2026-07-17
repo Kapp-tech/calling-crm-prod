@@ -2,11 +2,13 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
+import { hasPermission } from '@/lib/permissions';
+import { Feature } from '@prisma/client';
 
 export async function GET(req: NextRequest) {
   try {
   const session = await getServerSession(authOptions);
-  if (!session || !['SUPER_ADMIN', 'COUNSELLING_TL'].includes(session.user.role)) {
+  if (!session || !(await hasPermission(session.user.role, Feature.VIEW_REPORTS))) {
     return NextResponse.json({ success: false, error: 'Unauthorized', code: 'UNAUTHORIZED' }, { status: 401 });
   }
 
