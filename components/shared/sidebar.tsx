@@ -252,7 +252,12 @@ const NAV: NavEntry[] = [
     href: '/dashboard/reports',
     label: 'Lead Approvals',
     icon: ClipboardCheck,
-    roles: ['SUPER_ADMIN', 'OPERATIONS'],
+    // OPERATIONS was listed here but middleware.ts only ever allowed
+    // SUPER_ADMIN/REPORTS onto /dashboard/reports — Operations clicking
+    // this bounced straight back to /dashboard. They were also never
+    // granted APPROVE_LEADS; uploaders reviewing their own uploads isn't
+    // a workflow this app supports — approval is REPORTS/SUPER_ADMIN only.
+    roles: ['SUPER_ADMIN'],
     exact: true,
   },
   {
