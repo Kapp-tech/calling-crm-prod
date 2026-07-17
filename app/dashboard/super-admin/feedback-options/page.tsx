@@ -195,16 +195,16 @@ export default function FeedbackOptionsPage() {
 
   return (
     <div className="mx-auto max-w-3xl space-y-6 py-2">
-      {/* Header */}
-      <div className="flex items-start justify-between gap-4">
+      {/* Header — stacks on phones so the button doesn't squeeze the title */}
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
         <div>
-          <h1 className="text-2xl font-bold">Manage Feedback</h1>
+          <h1 className="text-xl sm:text-2xl font-bold">Manage Feedback</h1>
           <p className="text-sm text-muted-foreground mt-1">
             Define the dropdown choices agents see when submitting feedback for a lead.
             Deactivating an option hides it from new submissions but keeps historical data intact.
           </p>
         </div>
-        <Button onClick={openCreate} className="shrink-0">
+        <Button onClick={openCreate} className="w-full sm:w-auto shrink-0">
           <Plus className="mr-2 h-4 w-4" />
           Add Value
         </Button>
@@ -213,7 +213,7 @@ export default function FeedbackOptionsPage() {
       {/* Categories */}
       <Card>
         <CardHeader className="pb-3">
-          <div className="flex items-start justify-between gap-4">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
             <div>
               <CardTitle className="text-base">Categories</CardTitle>
               <CardDescription>
@@ -221,7 +221,7 @@ export default function FeedbackOptionsPage() {
                 filter pills on the All Leads page.
               </CardDescription>
             </div>
-            <Button variant="outline" size="sm" onClick={openCreateCategory} className="shrink-0">
+            <Button variant="outline" size="sm" onClick={openCreateCategory} className="w-full sm:w-auto shrink-0">
               <Plus className="mr-1.5 h-3.5 w-3.5" />
               Add Category
             </Button>
@@ -253,7 +253,7 @@ export default function FeedbackOptionsPage() {
                     </span>
                     <button
                       onClick={() => openEditCategory(cat)}
-                      className="ml-0.5 opacity-0 group-hover:opacity-100 transition-opacity hover:scale-110"
+                      className="ml-0.5 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity hover:scale-110"
                       title="Edit category"
                     >
                       <Pencil className="h-3 w-3" />
@@ -264,7 +264,7 @@ export default function FeedbackOptionsPage() {
                           deleteCategoryMutation.mutate(cat.id);
                         }
                       }}
-                      className="opacity-0 group-hover:opacity-100 transition-opacity hover:scale-110"
+                      className="opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity hover:scale-110"
                       title="Delete category"
                     >
                       <X className="h-3 w-3" />
@@ -278,7 +278,7 @@ export default function FeedbackOptionsPage() {
       </Card>
 
       {/* Stats strip */}
-      <div className="flex gap-3">
+      <div className="flex flex-wrap gap-2 sm:gap-3">
         <div className="rounded-lg border bg-card px-4 py-2.5 text-sm">
           <span className="text-muted-foreground">Total: </span>
           <span className="font-semibold">{options.length}</span>
@@ -321,11 +321,11 @@ export default function FeedbackOptionsPage() {
                   return (
                     <div
                       key={opt.id}
-                      className={`flex items-center gap-3 px-6 py-3.5 transition-colors hover:bg-muted/30 ${!opt.isActive ? 'opacity-50' : ''}`}
+                      className={`flex items-center gap-2 sm:gap-3 px-4 sm:px-6 py-3.5 transition-colors hover:bg-muted/30 ${!opt.isActive ? 'opacity-50' : ''}`}
                     >
                       <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2">
-                          <p className={`font-medium truncate ${!opt.isActive ? 'line-through text-muted-foreground' : ''}`}>
+                        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                          <p className={`font-medium ${!opt.isActive ? 'line-through text-muted-foreground' : ''}`}>
                             {opt.label}
                           </p>
                           {opt.category && tone && (
@@ -340,7 +340,8 @@ export default function FeedbackOptionsPage() {
                         )}
                       </div>
 
-                      <Badge variant={opt.isActive ? 'default' : 'secondary'} className="shrink-0 text-[10px]">
+                      {/* The toggle icon already conveys state on phones — badge is sm+ only */}
+                      <Badge variant={opt.isActive ? 'default' : 'secondary'} className="hidden sm:inline-flex shrink-0 text-[10px]">
                         {opt.isActive ? 'Active' : 'Inactive'}
                       </Badge>
 

@@ -651,10 +651,14 @@ function TeamLoadSection({ agents, highlightIds }: { agents: Agent[]; highlightI
         onClick={() => setExpanded((v) => !v)}
         className="flex w-full items-center justify-between px-3 py-2 text-xs transition-colors hover:bg-muted/30"
       >
-        <div className="flex items-center gap-2">
-          <BarChart2 className="h-3.5 w-3.5 text-muted-foreground" />
-          <span className="font-semibold uppercase tracking-wider text-muted-foreground">Team Load</span>
-          <span className="text-muted-foreground">
+        <div className="flex min-w-0 items-center gap-2">
+          <BarChart2 className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+          <span className="shrink-0 font-semibold uppercase tracking-wider text-muted-foreground">Team Load</span>
+          {/* Short summary on phones, full detail from sm up */}
+          <span className="truncate text-muted-foreground sm:hidden">
+            · {agents.length} agents · {total} leads
+          </span>
+          <span className="hidden truncate text-muted-foreground sm:inline">
             · {agents.length} counsellors · avg {avg} leads · {total} total assigned
           </span>
         </div>
@@ -1135,14 +1139,14 @@ export default function CounsellingTLPage() {
               />
             </div>
 
-            {/* Assignment status toggle */}
-            <div className="flex overflow-hidden rounded-lg border text-sm shrink-0">
+            {/* Assignment status toggle — full-width segmented control on phones */}
+            <div className="flex w-full sm:w-auto overflow-hidden rounded-lg border text-sm shrink-0">
               {(['all', 'unassigned', 'assigned'] as const).map((v) => (
                 <button
                   key={v}
                   onClick={() => setAssignmentFilter(v)}
                   className={cn(
-                    'px-3 py-1.5 font-medium capitalize transition-colors',
+                    'flex-1 sm:flex-none px-3 py-1.5 font-medium capitalize transition-colors',
                     assignmentFilter === v
                       ? 'bg-primary text-primary-foreground'
                       : 'text-muted-foreground hover:bg-muted/50',
@@ -1156,7 +1160,7 @@ export default function CounsellingTLPage() {
             <Button
               variant="outline" size="sm"
               onClick={openFilterDialog}
-              className={cn(selectedFilters.length > 0 && 'border-primary text-primary')}
+              className={cn('flex-1 sm:flex-none', selectedFilters.length > 0 && 'border-primary text-primary')}
             >
               <ListFilter className="mr-1.5 h-3.5 w-3.5" />
               Filters
@@ -1269,10 +1273,10 @@ export default function CounsellingTLPage() {
           <TeamLoadSection agents={agents} highlightIds={agentFilters} />
 
           {/* ── Stats strip ── */}
-          <div className="flex flex-wrap items-center gap-4 text-xs text-muted-foreground">
-            <span>{totalCount} total</span>
-            <span className="font-medium text-amber-600">{unassignedOnPage} unassigned on page</span>
-            <span className="font-medium text-emerald-600">{assignedOnPage} assigned on page</span>
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-2 sm:gap-4 text-xs text-muted-foreground">
+            <span className="whitespace-nowrap">{totalCount} total</span>
+            <span className="whitespace-nowrap font-medium text-amber-600">{unassignedOnPage} unassigned on page</span>
+            <span className="whitespace-nowrap font-medium text-emerald-600">{assignedOnPage} assigned on page</span>
             {isFetching && (
               <span className="flex items-center gap-1">
                 <Loader2 className="h-3 w-3 animate-spin" />Updating…
@@ -1281,7 +1285,7 @@ export default function CounsellingTLPage() {
 
             {/* ── Range selector ── */}
             {canAssign && totalCount > 0 && (
-              <span className="flex items-center gap-1.5 ml-auto">
+              <span className="flex w-full items-center gap-1.5 sm:w-auto sm:ml-auto">
                 <span className="text-muted-foreground/70">Select rows</span>
                 <input
                   type="number"
@@ -1336,16 +1340,16 @@ export default function CounsellingTLPage() {
                         />
                       </th>
                     )}
-                    <th className="w-10 px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Sr No.</th>
-                    <th className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Name</th>
-                    <th className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Phone</th>
-                    <th className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">City</th>
-                    <th className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Course</th>
-                    <th className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Campaign</th>
-                    <th className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Assigned To</th>
-                    <th className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Calls</th>
-                    <th className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Added</th>
-                    {canAssign && <th className="pr-4 py-3 text-right text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Actions</th>}
+                    <th className="w-10 px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground whitespace-nowrap">Sr No.</th>
+                    <th className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground whitespace-nowrap">Name</th>
+                    <th className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground whitespace-nowrap">Phone</th>
+                    <th className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground whitespace-nowrap">City</th>
+                    <th className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground whitespace-nowrap">Course</th>
+                    <th className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground whitespace-nowrap">Campaign</th>
+                    <th className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground whitespace-nowrap">Assigned To</th>
+                    <th className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground whitespace-nowrap">Calls</th>
+                    <th className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground whitespace-nowrap">Added</th>
+                    {canAssign && <th className="pr-4 py-3 text-right text-[11px] font-semibold uppercase tracking-wider text-muted-foreground whitespace-nowrap">Actions</th>}
                   </tr>
                 </thead>
                 <tbody className="[&_tr:last-child]:border-0">
@@ -1407,15 +1411,15 @@ export default function CounsellingTLPage() {
                         )}
                         <td className="px-4 py-3 text-xs text-muted-foreground tabular-nums whitespace-nowrap">{srNo}</td>
                         <td
-                          className="px-4 py-3 cursor-pointer font-medium hover:text-primary"
+                          className="px-4 py-3 cursor-pointer font-medium hover:text-primary whitespace-nowrap max-w-[220px] truncate"
                           onClick={() => setSelectedLead(lead)}
                         >
                           {lead.name}
                         </td>
-                        <td className="px-4 py-3 text-sm text-muted-foreground">{lead.phone}</td>
-                        <td className="px-4 py-3 text-sm">{lead.city ?? '—'}</td>
-                        <td className="px-4 py-3 text-sm">{lead.course ?? '—'}</td>
-                        <td className="px-4 py-3 text-sm">{lead.campaign ?? '—'}</td>
+                        <td className="px-4 py-3 text-sm text-muted-foreground whitespace-nowrap">{lead.phone}</td>
+                        <td className="px-4 py-3 text-sm whitespace-nowrap">{lead.city ?? '—'}</td>
+                        <td className="px-4 py-3 text-sm whitespace-nowrap max-w-[200px] truncate">{lead.course ?? '—'}</td>
+                        <td className="px-4 py-3 text-sm whitespace-nowrap max-w-[200px] truncate">{lead.campaign ?? '—'}</td>
                         <td className="px-4 py-3">
                           {lead.assignedTo ? (
                             <Badge variant="info" className="text-xs">{lead.assignedTo.name}</Badge>

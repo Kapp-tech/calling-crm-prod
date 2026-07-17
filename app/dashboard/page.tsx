@@ -174,23 +174,23 @@ function StatCard({
 
   return (
     <div
-      className="group relative overflow-hidden rounded-xl border border-border/60 bg-card p-5 flex flex-col gap-2 animate-fade-in-up hover-lift"
+      className="group relative overflow-hidden rounded-xl border border-border/60 bg-card p-3.5 sm:p-5 flex flex-col gap-1.5 sm:gap-2 animate-fade-in-up hover-lift"
       style={{ animationDelay: `${Math.min(index, 8) * 60}ms` }}
     >
       {/* Soft accent glow that appears on hover */}
       <div className={cn('pointer-events-none absolute -right-8 -top-8 h-24 w-24 rounded-full opacity-0 blur-2xl transition-opacity duration-300 group-hover:opacity-100', iconBg)} />
       <div className="relative flex items-start justify-between gap-2">
-        <p className="text-sm text-muted-foreground font-medium leading-tight">{label}</p>
-        <div className={cn('rounded-lg p-2 shrink-0 transition-transform duration-200 ease-premium group-hover:scale-110 group-hover:-rotate-6', iconBg)}>
-          <Icon className={cn('h-4 w-4', iconColor)} />
+        <p className="text-xs sm:text-sm text-muted-foreground font-medium leading-tight">{label}</p>
+        <div className={cn('rounded-lg p-1.5 sm:p-2 shrink-0 transition-transform duration-200 ease-premium group-hover:scale-110 group-hover:-rotate-6', iconBg)}>
+          <Icon className={cn('h-3.5 w-3.5 sm:h-4 sm:w-4', iconColor)} />
         </div>
       </div>
       {loading ? (
-        <div className="h-9 w-24 rounded-md bg-muted skeleton-shimmer" />
+        <div className="h-8 sm:h-9 w-24 rounded-md bg-muted skeleton-shimmer" />
       ) : (
-        <p className="relative text-3xl font-bold tracking-tight tabular-nums">{formatNum(displayed)}</p>
+        <p className="relative text-2xl sm:text-3xl font-bold tracking-tight tabular-nums">{formatNum(displayed)}</p>
       )}
-      {sub && <p className="relative text-xs text-muted-foreground">{sub}</p>}
+      {sub && <p className="relative text-[11px] sm:text-xs leading-tight text-muted-foreground">{sub}</p>}
     </div>
   );
 }
@@ -739,7 +739,8 @@ export default function DashboardPage() {
       )}
 
       {/* ── Stat Cards ── */}
-      <div className={cn('grid gap-4', gridCols)}>
+      {/* On 2-col mobile, an odd last card stretches full width instead of sitting orphaned */}
+      <div className={cn('grid gap-3 sm:gap-4 [&>*:last-child:nth-child(odd)]:col-span-2 sm:[&>*:last-child:nth-child(odd)]:col-span-1', gridCols)}>
         {visibleCards.map((card, i) => (
           <StatCard
             key={card.key}
