@@ -397,6 +397,28 @@ export default function ReportsPage() {
     },
   });
 
+  const approveAllMutation = useMutation({
+    mutationFn: () => {
+      const p = new URLSearchParams();
+      if (search) p.set('search', search);
+      return fetch(`/api/leads/approve-all?${p}`, { method: 'PATCH' }).then(async (r) => {
+        const json = await r.json();
+        if (!json.success) throw new Error(json.error ?? 'Unknown error');
+        return json;
+      });
+    },
+    onSuccess: (data) => {
+      const msg = data.skipped > 0
+        ? `Approved ${data.approved} leads. ${data.skipped} skipped (invalid data).`
+        : `Approved ${data.approved} leads.`;
+      toast({ title: msg });
+      qc.invalidateQueries({ queryKey: ['leads-reports'] });
+    },
+    onError: (err: Error) => {
+      toast({ variant: 'destructive', title: 'Approve all failed', description: err.message });
+    },
+  });
+
   const batchDisapproveMutation = useMutation({
     mutationFn: ({ batchId, reason }: { batchId: string; reason: string }) =>
       fetch(`/api/leads/batch/${batchId}/disapprove`, {
@@ -435,7 +457,8 @@ export default function ReportsPage() {
   });
 
   const isAnyPending =
-    approveMutation.isPending || batchApproveMutation.isPending || batchDisapproveMutation.isPending || deleteMutation.isPending;
+    approveMutation.isPending || batchApproveMutation.isPending || batchDisapproveMutation.isPending ||
+    deleteMutation.isPending || approveAllMutation.isPending;
 
   const canUnmask = !maskData && canToggleMask;
 
@@ -512,6 +535,22 @@ export default function ReportsPage() {
             window.open(`/api/leads/export${p}`, '_blank');
           }}>
             <Download className="mr-1 h-3.5 w-3.5" /> Export CSV
+          </Button>
+        )}
+        {canApproveleads && statusFilter === 'PENDING' && !!data?.total && (
+          <Button
+            size="sm"
+            disabled={isAnyPending}
+            onClick={() => {
+              if (confirm(`Approve all ${data.total} pending leads${search ? ' matching your search' : ''}? This cannot be undone.`)) {
+                approveAllMutation.mutate();
+              }
+            }}
+          >
+            {approveAllMutation.isPending
+              ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
+              : <CheckCircle className="mr-1 h-3.5 w-3.5" />}
+            Approve All Pending ({data.total})
           </Button>
         )}
       </div>
