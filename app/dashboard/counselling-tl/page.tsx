@@ -841,7 +841,10 @@ export default function CounsellingTLPage() {
     enabled: !!session?.user?.id,
   });
 
-  const showTlPicker = session?.user?.role === 'SUPER_ADMIN';
+  // REPORTS has no team of its own (getLeadWhereClause gives it global
+  // visibility, same as SUPER_ADMIN), so it needs the TL-then-agent picker
+  // rather than the implicit "my team" behavior COUNSELLING_TL gets.
+  const showTlPicker = session?.user?.role === 'SUPER_ADMIN' || session?.user?.role === 'REPORTS';
 
   const { data: tlsList = [] } = useQuery<{ id: string; name: string }[]>({
     queryKey: ['all-tls-for-assign'],

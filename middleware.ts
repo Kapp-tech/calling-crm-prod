@@ -11,7 +11,12 @@ const ROLE_ROUTES: Record<string, Role[]> = {
   // view Analytics even though the broader /dashboard/reports/* tree
   // (Lead Approvals, Org Hierarchy) stays REPORTS/SUPER_ADMIN only.
   '/dashboard/reports/analytics': ['SUPER_ADMIN', 'COUNSELLING_TL', 'REPORTS'],
-  '/dashboard/counselling-tl': ['SUPER_ADMIN', 'COUNSELLING_TL'],
+  // REPORTS included so the Manage Permissions "Assign Leads" toggle can
+  // actually grant this page — REPORTS gets the same global TL/agent picker
+  // SUPER_ADMIN sees (enforced client + API side by the ASSIGN_LEADS feature
+  // flag). The more specific /team rule below still keeps the TL's own-team
+  // view TL/SA-only.
+  '/dashboard/counselling-tl': ['SUPER_ADMIN', 'REPORTS', 'COUNSELLING_TL'],
   '/dashboard/counselling-tl/team': ['SUPER_ADMIN', 'COUNSELLING_TL'],
   '/dashboard/counselling-agent': ['SUPER_ADMIN', 'COUNSELLING_AGENT'],
   '/dashboard/counselling-agent/due-today': ['SUPER_ADMIN', 'COUNSELLING_AGENT'],

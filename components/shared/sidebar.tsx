@@ -95,7 +95,10 @@ const NAV: NavEntry[] = [
         href: '/dashboard/counselling-tl',
         label: 'Assign Leads',
         icon: UserCheck,
-        roles: ['SUPER_ADMIN', 'COUNSELLING_TL'],
+        // REPORTS is included because the permission matrix's Assign Leads
+        // toggle must be able to actually grant this — same page as SUPER_ADMIN
+        // uses (global TL/agent picker), not the TL's own-team-only view.
+        roles: ['SUPER_ADMIN', 'REPORTS', 'COUNSELLING_TL'],
         exact: true,
         features: ['ASSIGN_LEADS'],
       },
