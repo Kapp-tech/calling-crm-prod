@@ -295,7 +295,7 @@ export function PunchClockWidget() {
       </button>
 
       {open && (
-        <div className="absolute right-0 top-11 z-50 w-[300px] overflow-hidden rounded-xl border border-border bg-background shadow-2xl ring-1 ring-black/5 dark:ring-white/5">
+        <div className="fixed inset-x-3 top-16 z-50 sm:absolute sm:inset-x-auto sm:right-0 sm:top-11 sm:w-[300px] overflow-hidden rounded-xl border border-border bg-background shadow-2xl ring-1 ring-black/5 dark:ring-white/5">
           <div className="flex items-center justify-between border-b border-border px-4 py-3">
             <span className="text-sm font-semibold flex items-center gap-1.5">
               <Clock className="h-4 w-4 text-muted-foreground" /> Punch Clock
