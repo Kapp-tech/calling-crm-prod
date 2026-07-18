@@ -106,7 +106,10 @@ const NAV: NavEntry[] = [
         href: '/dashboard/counselling-agent/scheduled-calls',
         label: 'Scheduled Calls',
         icon: CalendarClock,
-        roles: ['SUPER_ADMIN', 'COUNSELLING_TL', 'COUNSELLING_AGENT'],
+        // REPORTS is read-only here (page has no mark-done/cancel actions) —
+        // mirrors /api/leads/scheduled-calls, which already scopes REPORTS
+        // the same as SUPER_ADMIN (sees everything, no team restriction).
+        roles: ['SUPER_ADMIN', 'REPORTS', 'COUNSELLING_TL', 'COUNSELLING_AGENT'],
       },
       {
         href: '/dashboard/super-admin/upload-limits',

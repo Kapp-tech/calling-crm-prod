@@ -20,7 +20,7 @@ const ROLE_ROUTES: Record<string, Role[]> = {
   '/dashboard/counselling-tl/team': ['SUPER_ADMIN', 'COUNSELLING_TL'],
   '/dashboard/counselling-agent': ['SUPER_ADMIN', 'COUNSELLING_AGENT'],
   '/dashboard/counselling-agent/due-today': ['SUPER_ADMIN', 'COUNSELLING_AGENT'],
-  '/dashboard/counselling-agent/scheduled-calls': ['SUPER_ADMIN', 'COUNSELLING_TL', 'COUNSELLING_AGENT'],
+  '/dashboard/counselling-agent/scheduled-calls': ['SUPER_ADMIN', 'REPORTS', 'COUNSELLING_TL', 'COUNSELLING_AGENT'],
 };
 
 export default withAuth(
