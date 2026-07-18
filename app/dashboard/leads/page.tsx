@@ -111,16 +111,6 @@ const ZONE_DOT: Record<string, string> = {
   West: 'bg-purple-500', Central: 'bg-yellow-500',
 };
 
-const LEAD_TYPE_COLORS: Record<string, string> = {
-  'Google Ads':   'bg-blue-500/15 text-blue-400 border-blue-500/30',
-  'Facebook Ads': 'bg-indigo-500/15 text-indigo-400 border-indigo-500/30',
-  Facebook:       'bg-indigo-500/15 text-indigo-400 border-indigo-500/30',
-  Organic:        'bg-green-500/15 text-green-400 border-green-500/30',
-  Referral:       'bg-amber-500/15 text-amber-400 border-amber-500/30',
-  'Walk-in':      'bg-purple-500/15 text-purple-400 border-purple-500/30',
-  LinkedIn:       'bg-cyan-500/15 text-cyan-400 border-cyan-500/30',
-};
-
 function displayLeadId(id: string) {
   return id;
 }
@@ -974,9 +964,7 @@ export default function AllLeadsPage() {
                 {leads.map((lead, rowIdx) => {
                   const isSelected      = selectedLeadId === lead.id;
                   const latestFeedback  = lead.feedbacks[0]?.feedbackOption?.label;
-                  const leadTypeLabel   = lead.leadType;
                   const zoneColor       = lead.leadZone ? ZONE_DOT[lead.leadZone] ?? 'bg-gray-400' : null;
-                  const typeColor       = leadTypeLabel ? LEAD_TYPE_COLORS[leadTypeLabel] ?? 'bg-muted/30 text-muted-foreground border-border/40' : null;
                   const profilingPct    = computeProfilingScore(lead).percentage;
                   const profilingTone   = profilingScoreTone(profilingPct);
 
@@ -1066,12 +1054,7 @@ export default function AllLeadsPage() {
 
                       <td className="px-3 py-2.5 whitespace-nowrap text-xs text-muted-foreground">{lead.campaign || '—'}</td>
 
-                      {/* Lead Type badge */}
-                      <td className="px-3 py-2.5 whitespace-nowrap">
-                        {leadTypeLabel && typeColor
-                          ? <span className={cn('inline-flex items-center px-2 py-0.5 rounded text-[10px] font-semibold border', typeColor)}>{leadTypeLabel}</span>
-                          : <span className="text-xs text-muted-foreground">{lead.leadType || '—'}</span>}
-                      </td>
+                      <td className="px-3 py-2.5 whitespace-nowrap text-xs text-muted-foreground">{lead.leadType || '—'}</td>
 
                       <td className="px-3 py-2.5 whitespace-nowrap text-xs text-muted-foreground">{lead.leadOrigin || '—'}</td>
 
