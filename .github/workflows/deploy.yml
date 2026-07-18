@@ -32,8 +32,15 @@ jobs:
           script: |
             set -e
             cd ~/app
+            # `npm install` can rewrite package-lock.json (e.g. metadata like
+            # hasInstallScript differing by npm version) leaving the server's
+            # working tree dirty and aborting the next `git pull` with a merge
+            # conflict. Discard any such drift before pulling, and use `npm ci`
+            # (installs strictly from the committed lockfile, never rewrites it)
+            # instead of `npm install` so it can't recur.
+            git checkout -- package-lock.json 2>/dev/null || true
             git pull origin main
-            npm install
+            npm ci
             npx prisma generate
             NODE_OPTIONS='--max-old-space-size=1536' npm run build
             pm2 restart crm
