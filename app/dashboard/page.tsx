@@ -624,12 +624,12 @@ export default function DashboardPage() {
     applications: {
       label: 'Applications', value: s.applications ?? 0,
       icon: GraduationCap, iconColor: 'text-teal-500', iconBg: 'bg-teal-500/10',
-      sub: 'At application stage',
+      sub: 'Application receipt uploaded',
     },
     admissions: {
       label: 'Admissions', value: s.admissions ?? 0,
       icon: Award, iconColor: 'text-rose-500', iconBg: 'bg-rose-500/10',
-      sub: 'Converted leads',
+      sub: 'Admission receipt uploaded',
     },
     activeAgents: {
       label: 'Active Agents', value: s.activeAgents ?? 0,

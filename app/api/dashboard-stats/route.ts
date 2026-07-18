@@ -111,6 +111,8 @@ export async function GET(request: Request) {
       unassignedLeadsRaw,  // only computed for SA / Reports / TL
       nonTeamAssignedRaw,  // only computed for SA / Reports / Ops
       leadsForChart,
+      applications,        // leads with at least one Application receipt uploaded
+      admissions,          // leads with at least one Admission receipt uploaded
     ] = await Promise.all([
       prisma.lead.count({ where: teamWhere }),
       prisma.lead.count({ where: { ...teamWhere, feedbacks: { some: {} } } }),
@@ -129,6 +131,8 @@ export async function GET(request: Request) {
         select: { createdAt: true },
         orderBy: { createdAt: 'asc' },
       }),
+      prisma.lead.count({ where: { ...teamWhere, receipts: { some: { type: 'APPLICATION' } } } }),
+      prisma.lead.count({ where: { ...teamWhere, receipts: { some: { type: 'ADMISSION' } } } }),
     ]);
 
     const unassignedLeads = unassignedLeadsRaw;
@@ -173,11 +177,6 @@ export async function GET(request: Request) {
         label: optionMap[r.currentFeedbackOptionId!] ?? 'Unknown',
         count: r._count.id,
       }));
-
-    const applications =
-      feedbackBreakdown.find((b) => b.label.toLowerCase().includes('application'))?.count ?? 0;
-    const admissions =
-      feedbackBreakdown.find((b) => b.label.toLowerCase().includes('admission'))?.count ?? 0;
 
     // ── Top agents ───────────────────────────────────────────────────────────
     let topAgents: { name: string; callCount: number; todayCount: number }[] = [];
