@@ -280,7 +280,7 @@ export default function OperationsPage() {
   // ── CSV downloads ─────────────────────────────────────────────────────────────
 
   const downloadSampleCSV = () => {
-    const headers = ['name', 'email', 'phone', 'city', 'state', 'course', 'college', 'campaign', 'lead_type', 'lead_origin', 'lead_zone', 'lead_confirmation', 'lead_stage', 'lead_verification', 'data_calling_type', 'created_at'];
+    const headers = ['name', 'email', 'phone', 'city', 'state', 'course', 'college', 'lead_code', 'lead_type', 'lead_origin', 'lead_zone', 'lead_confirmation', 'lead_stage', 'lead_verification', 'data_calling_type', 'created_at'];
     const sample  = ['Rahul Sharma', 'rahul@example.com', '9876543210', 'Mumbai', 'Maharashtra', 'B.Tech', 'IIT Bombay', 'Google Ads', 'Organic', 'Website', 'West', '', '', '', '', '2026-06-09'];
     triggerDownload([headers.join(','), sample.join(',')].join('\n'), 'leads_sample.csv');
   };

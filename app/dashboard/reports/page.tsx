@@ -54,7 +54,7 @@ function csvEsc(v: string | null | undefined): string {
 }
 
 function downloadLeadsAsCSV(leads: Lead[], filename: string) {
-  const headers = ['name', 'email', 'phone', 'city', 'state', 'course', 'college', 'campaign', 'lead_type', 'lead_origin', 'lead_zone', 'status'];
+  const headers = ['name', 'email', 'phone', 'city', 'state', 'course', 'college', 'lead_code', 'lead_type', 'lead_origin', 'lead_zone', 'status'];
   const rows = leads.map((l) => [
     l.name, l.email, l.phone,
     l.city, l.state, l.course, l.college,

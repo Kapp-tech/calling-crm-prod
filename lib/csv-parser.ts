@@ -40,7 +40,14 @@ export function parseCSV(file: File): Promise<LeadCSVRow[]> {
     Papa.parse<LeadCSVRow>(file, {
       header: true,
       skipEmptyLines: true,
-      transformHeader: (header) => header.trim().toLowerCase().replace(/\s+/g, '_'),
+      transformHeader: (header) => {
+        const normalized = header.trim().toLowerCase().replace(/\s+/g, '_');
+        // The UI label is "Lead Code" (renamed from "Campaign"), but the
+        // underlying field stays `campaign` everywhere downstream — alias
+        // both the new and legacy header spellings onto it.
+        if (normalized === 'lead_code') return 'campaign';
+        return normalized;
+      },
       complete: (results) => {
         if (results.errors.length > 0) {
           reject(new Error(`CSV parse error: ${results.errors[0].message}`));
@@ -172,7 +179,7 @@ export function buildResultCSV(
 ): string {
   const headers = [
     'row', 'name', 'email', 'phone', 'city', 'state',
-    'course', 'college', 'campaign', 'lead_type', 'lead_origin', 'lead_zone',
+    'course', 'college', 'lead_code', 'lead_type', 'lead_origin', 'lead_zone',
     'lead_confirmation', 'lead_stage', 'lead_verification', 'data_calling_type',
     'created_at',
     'status', 'issues',
