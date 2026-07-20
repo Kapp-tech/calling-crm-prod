@@ -26,6 +26,7 @@ enum Feature {
   ASSIGN_LEADS
   VIEW_LEADS
   SUBMIT_FEEDBACK
+  APPROVE_RECEIPTS
 }
 
 enum LeadStatus {
@@ -60,6 +61,9 @@ enum NotificationType {
   LEAD_ASSIGNED
   CALL_REMINDER
   CALL_NOW
+  RECEIPT_SUBMITTED
+  RECEIPT_APPROVED
+  RECEIPT_DISAPPROVED
 }
 
 enum AnnouncementPriority {
@@ -78,6 +82,12 @@ enum UserStatus {
 enum ReceiptType {
   APPLICATION
   ADMISSION
+}
+
+enum ReceiptStatus {
+  PENDING
+  APPROVED
+  DISAPPROVED
 }
 
 enum WorkType {
@@ -112,6 +122,8 @@ enum ActivityAction {
   BATCH_APPROVED
   BATCH_DISAPPROVED
   REFERRAL_ADDED
+  RECEIPT_APPROVED
+  RECEIPT_DISAPPROVED
 }
 
 // ─── Core Models ──────────────────────────────────────────────────────────────
@@ -176,6 +188,7 @@ model User {
   scheduledCalls ScheduledCall[] @relation("AgentSchedules")
   notifications  Notification[]
   uploadedReceipts LeadReceipt[] @relation("ReceiptUploadedBy")
+  reviewedReceipts LeadReceipt[] @relation("ReceiptReviewedBy")
   attendances    Attendance[]
 
   // Feedback options created by this user (SA)
@@ -517,11 +530,21 @@ model LeadReceipt {
   uploadedById String
   uploadedBy   User   @relation("ReceiptUploadedBy", fields: [uploadedById], references: [id])
 
+  // Super Admin approval workflow — approving flips the lead's matching
+  // Primary App./Adm. Confirm field to "Yes"; disapproving lets the agent
+  // fix and resend (upload a fresh receipt of the same type).
+  status            ReceiptStatus @default(PENDING)
+  reviewedById      String?
+  reviewedBy        User?         @relation("ReceiptReviewedBy", fields: [reviewedById], references: [id])
+  reviewedAt        DateTime?
+  disapprovalReason String?
+
   createdAt DateTime @default(now())
 
   @@index([leadId])
   @@index([type])
   @@index([uploadedById])
+  @@index([status])
 }
 
 model Notification {

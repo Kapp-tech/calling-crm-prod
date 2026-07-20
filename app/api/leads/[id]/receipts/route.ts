@@ -99,6 +99,25 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     }
     const d = parsed.data;
 
+    // Only one live request per type at a time — re-upload is for fixing a
+    // disapproved receipt, not stacking duplicate pending requests, and once
+    // approved there's nothing left to resend.
+    const existing = await prisma.leadReceipt.findFirst({
+      where: { leadId: params.id, type: d.type, status: { in: ['PENDING', 'APPROVED'] } },
+      select: { status: true },
+    });
+    if (existing) {
+      return NextResponse.json(
+        {
+          error:
+            existing.status === 'PENDING'
+              ? 'A receipt of this type is already awaiting approval'
+              : 'A receipt of this type has already been approved',
+        },
+        { status: 409 }
+      );
+    }
+
     const filePath = await saveReceiptFile(params.id, file.type, bytes);
 
     const receipt = await prisma.leadReceipt.create({
@@ -130,6 +149,27 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       include: { uploadedBy: { select: { name: true } } },
     });
 
+    // Alert every Super Admin that a new receipt is awaiting approval —
+    // outside the request's critical path so a notification hiccup never
+    // fails the upload itself.
+    const kindLabel = d.type === 'APPLICATION' ? 'Application' : 'Admission';
+    prisma.user
+      .findMany({ where: { role: 'SUPER_ADMIN', isActive: true }, select: { id: true } })
+      .then((admins) =>
+        admins.length > 0
+          ? prisma.notification.createMany({
+              data: admins.map((a) => ({
+                userId: a.id,
+                type: 'RECEIPT_SUBMITTED' as const,
+                title: `${kindLabel} receipt awaiting approval`,
+                body: `${receipt.uploadedBy.name} uploaded ${d.type === 'APPLICATION' ? 'an' : 'a'} ${kindLabel.toLowerCase()} receipt for ${d.studentName}.`,
+                leadId: params.id,
+              })),
+            })
+          : undefined
+      )
+      .catch((err) => console.error('[receipts POST] admin notification create failed:', err));
+
     return NextResponse.json(receipt, { status: 201 });
   } catch (error) {
     console.error('[leads/[id]/receipts POST]', error);
@@ -148,7 +188,10 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
     const receipts = await prisma.leadReceipt.findMany({
       where: { leadId: params.id },
       orderBy: { createdAt: 'desc' },
-      include: { uploadedBy: { select: { name: true } } },
+      include: {
+        uploadedBy: { select: { name: true } },
+        reviewedBy: { select: { name: true } },
+      },
     });
 
     // Never expose the on-disk file path to the client — files are served

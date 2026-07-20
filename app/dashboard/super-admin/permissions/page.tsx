@@ -24,6 +24,7 @@ const FEATURES = [
   { key: 'ASSIGN_LEADS', label: 'Assign Leads' },
   { key: 'VIEW_LEADS', label: 'View Leads' },
   { key: 'SUBMIT_FEEDBACK', label: 'Submit Feedback' },
+  { key: 'APPROVE_RECEIPTS', label: 'Approve Receipts' },
 ] as const;
 
 type RoleKey = typeof ROLES[number]['key'];

@@ -7,6 +7,7 @@ import {
   Loader2, GraduationCap, Landmark, Wallet, Home, BarChart3,
   FileText, Check, ChevronDown, Search, X, CheckCircle2, Handshake, CreditCard,
   School, Building2, RefreshCw, Receipt, ExternalLink, UserPlus, Users, Phone,
+  Clock3, XCircle,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useToast } from '@/components/ui/use-toast';
@@ -25,8 +26,11 @@ const STEP_BY_NAME: Record<string, number> = {
 interface LeadReceiptRecord {
   id: string;
   type: ReceiptKind;
+  status: 'PENDING' | 'APPROVED' | 'DISAPPROVED';
+  disapprovalReason?: string | null;
   createdAt: string;
   uploadedBy: { name: string };
+  reviewedBy?: { name: string } | null;
 }
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -1058,43 +1062,81 @@ const RECEIPT_TONES: Record<ReceiptKind, {
   },
 };
 
+const RECEIPT_STATUS_META = {
+  PENDING: { Icon: Clock3, label: 'Pending review', tone: 'text-amber-600 dark:text-amber-400' },
+  APPROVED: { Icon: CheckCircle2, label: 'Approved', tone: 'text-emerald-600 dark:text-emerald-400' },
+  DISAPPROVED: { Icon: XCircle, label: 'Disapproved', tone: 'text-red-600 dark:text-red-400' },
+} as const;
+
 function ReceiptCard({
   leadId, label, kind, receipts, onUpload,
 }: { leadId: string; label: string; kind: ReceiptKind; receipts: LeadReceiptRecord[]; onUpload: () => void }) {
   const t = RECEIPT_TONES[kind];
+  // Receipts arrive newest-first — the most recent one governs what the
+  // header button offers next (upload / wait / resend / done).
+  const latest = receipts[0];
+
   return (
     <div className={cn('rounded-lg border-2 p-2.5 space-y-2 shadow-sm', t.container)}>
-      <button
-        type="button"
-        onClick={onUpload}
-        className={cn('flex w-full items-center gap-2.5 rounded-md px-2.5 py-2.5 text-left text-xs font-bold transition-colors', t.button)}
-      >
-        <span className={cn('flex h-6 w-6 shrink-0 items-center justify-center rounded-md', t.iconChip)}>
-          <Receipt className="h-3.5 w-3.5" />
-        </span>
-        {label}
-      </button>
+      {!latest || latest.status === 'DISAPPROVED' ? (
+        <button
+          type="button"
+          onClick={onUpload}
+          className={cn('flex w-full items-center gap-2.5 rounded-md px-2.5 py-2.5 text-left text-xs font-bold transition-colors', t.button)}
+        >
+          <span className={cn('flex h-6 w-6 shrink-0 items-center justify-center rounded-md', t.iconChip)}>
+            <Receipt className="h-3.5 w-3.5" />
+          </span>
+          {latest?.status === 'DISAPPROVED' ? `Resend ${label}` : label}
+        </button>
+      ) : (
+        <div className={cn('flex w-full items-center gap-2.5 rounded-md px-2.5 py-2.5 text-xs font-bold', t.button)}>
+          <span className={cn('flex h-6 w-6 shrink-0 items-center justify-center rounded-md', t.iconChip)}>
+            <Receipt className="h-3.5 w-3.5" />
+          </span>
+          <span className="flex-1">{label}</span>
+          {latest.status === 'PENDING' ? (
+            <span className="flex items-center gap-1 text-[10px] font-semibold text-amber-600 dark:text-amber-400">
+              <Clock3 className="h-3 w-3" /> Awaiting approval
+            </span>
+          ) : (
+            <span className="flex items-center gap-1 text-[10px] font-semibold text-emerald-600 dark:text-emerald-400">
+              <CheckCircle2 className="h-3 w-3" /> Confirmed
+            </span>
+          )}
+        </div>
+      )}
+
+      {latest?.status === 'DISAPPROVED' && latest.disapprovalReason && (
+        <p className="rounded-md border border-red-200/60 bg-red-500/5 px-2 py-1.5 text-[11px] text-red-700 dark:border-red-900/40 dark:text-red-400">
+          <strong>Disapproved:</strong> {latest.disapprovalReason}
+        </p>
+      )}
+
       {receipts.length > 0 ? (
         <ul className="space-y-1.5">
-          {receipts.map((r, i) => (
-            <li key={r.id} className="flex items-center justify-between gap-2 px-1 text-[11px]">
-              <span className={cn('flex min-w-0 items-center gap-1 font-medium', t.check)}>
-                <CheckCircle2 className="h-3 w-3 shrink-0" />
-                <span className="shrink-0">#{receipts.length - i}</span>
-                <span className="truncate text-muted-foreground">
-                  &middot; {new Date(r.createdAt).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}
+          {receipts.map((r, i) => {
+            const s = RECEIPT_STATUS_META[r.status];
+            return (
+              <li key={r.id} className="flex items-center justify-between gap-2 px-1 text-[11px]">
+                <span className={cn('flex min-w-0 items-center gap-1 font-medium', s.tone)}>
+                  <s.Icon className="h-3 w-3 shrink-0" />
+                  <span className="shrink-0">#{receipts.length - i}</span>
+                  <span className="truncate text-muted-foreground">
+                    &middot; {new Date(r.createdAt).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}
+                  </span>
                 </span>
-              </span>
-              <a
-                href={`/api/leads/${leadId}/receipts/${r.id}/file`}
-                target="_blank"
-                rel="noopener noreferrer"
-                className={cn('flex shrink-0 items-center gap-1 font-medium hover:underline', t.link)}
-              >
-                View <ExternalLink className="h-3 w-3" />
-              </a>
-            </li>
-          ))}
+                <a
+                  href={`/api/leads/${leadId}/receipts/${r.id}/file`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className={cn('flex shrink-0 items-center gap-1 font-medium hover:underline', t.link)}
+                >
+                  View <ExternalLink className="h-3 w-3" />
+                </a>
+              </li>
+            );
+          })}
         </ul>
       ) : (
         <p className={cn('px-1 text-[11px] font-medium', t.empty)}>Not uploaded yet</p>

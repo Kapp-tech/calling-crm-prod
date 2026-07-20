@@ -12,7 +12,7 @@ import {
   UserCircle, UserCheck, ClipboardList, LogOut, ChevronRight, ChevronDown,
   GitBranch, CalendarClock, X, ChevronsLeft, ChevronsRight,
   GraduationCap, Tag, Globe2, MapPin, CheckSquare, ShieldCheck, Phone,
-  Megaphone, Gauge,
+  Megaphone, Gauge, Receipt,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -279,6 +279,18 @@ const NAV: NavEntry[] = [
     roles: ['SUPER_ADMIN'],
     exact: true,
     features: ['APPROVE_LEADS'],
+  },
+  {
+    type: 'leaf',
+    href: '/dashboard/super-admin/receipt-approvals',
+    label: 'Receipt Approvals',
+    icon: Receipt,
+    // REPORTS included so granting APPROVE_RECEIPTS via Manage Permissions
+    // actually reveals this menu — mirrors the Assign Leads / Scheduled
+    // Calls fix (role decides the page shape; feature decides if it's on).
+    roles: ['SUPER_ADMIN', 'REPORTS'],
+    exact: true,
+    features: ['APPROVE_RECEIPTS'],
   },
   {
     type: 'leaf',

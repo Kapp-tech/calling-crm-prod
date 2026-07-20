@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Bell, UserPlus, CalendarClock, PhoneCall, CheckCheck, X, ArrowRight } from 'lucide-react';
+import { Bell, UserPlus, CalendarClock, PhoneCall, CheckCheck, X, ArrowRight, Receipt, CheckCircle2, XCircle } from 'lucide-react';
 import { useSession } from 'next-auth/react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
@@ -10,14 +10,35 @@ import { cn } from '@/lib/utils';
 import { toast } from '@/components/ui/use-toast';
 import { ToastAction } from '@/components/ui/toast';
 
+type NotificationKind =
+  | 'LEAD_ASSIGNED' | 'CALL_REMINDER' | 'CALL_NOW'
+  | 'RECEIPT_SUBMITTED' | 'RECEIPT_APPROVED' | 'RECEIPT_DISAPPROVED';
+
 interface NotificationItem {
   id: string;
-  type: 'LEAD_ASSIGNED' | 'CALL_REMINDER' | 'CALL_NOW';
+  type: NotificationKind;
   title: string;
   body: string;
   leadId?: string | null;
   read: boolean;
   createdAt: string;
+}
+
+// Where clicking a notification should take you, and the label on its action
+// button/link. Returns null for types with no obvious destination (e.g. call
+// reminders, which are actioned from the lead itself, not a dedicated page).
+function notificationTarget(n: NotificationItem): { href: string; label: string } | null {
+  switch (n.type) {
+    case 'LEAD_ASSIGNED':
+      return { href: `/dashboard/notifications/${n.id}/leads`, label: 'View leads' };
+    case 'RECEIPT_SUBMITTED':
+      return { href: '/dashboard/super-admin/receipt-approvals', label: 'Review' };
+    case 'RECEIPT_APPROVED':
+    case 'RECEIPT_DISAPPROVED':
+      return n.leadId ? { href: `/leads/${n.leadId}/profile`, label: 'View lead' } : null;
+    default:
+      return null;
+  }
 }
 
 // Pleasant ascending C-E-G chime using Web Audio API — no audio file needed
@@ -43,9 +64,12 @@ function playChime() {
 }
 
 const TYPE_META = {
-  LEAD_ASSIGNED: { Icon: UserPlus,      color: 'bg-blue-100 text-blue-600 dark:bg-blue-950 dark:text-blue-400' },
-  CALL_REMINDER: { Icon: CalendarClock, color: 'bg-amber-100 text-amber-600 dark:bg-amber-950 dark:text-amber-400' },
-  CALL_NOW:      { Icon: PhoneCall,     color: 'bg-green-100 text-green-600 dark:bg-green-950 dark:text-green-400' },
+  LEAD_ASSIGNED:       { Icon: UserPlus,      color: 'bg-blue-100 text-blue-600 dark:bg-blue-950 dark:text-blue-400' },
+  CALL_REMINDER:       { Icon: CalendarClock, color: 'bg-amber-100 text-amber-600 dark:bg-amber-950 dark:text-amber-400' },
+  CALL_NOW:            { Icon: PhoneCall,     color: 'bg-green-100 text-green-600 dark:bg-green-950 dark:text-green-400' },
+  RECEIPT_SUBMITTED:   { Icon: Receipt,       color: 'bg-indigo-100 text-indigo-600 dark:bg-indigo-950 dark:text-indigo-400' },
+  RECEIPT_APPROVED:    { Icon: CheckCircle2,  color: 'bg-emerald-100 text-emerald-600 dark:bg-emerald-950 dark:text-emerald-400' },
+  RECEIPT_DISAPPROVED: { Icon: XCircle,       color: 'bg-red-100 text-red-600 dark:bg-red-950 dark:text-red-400' },
 } as const;
 
 function timeAgo(iso: string): string {
@@ -158,19 +182,19 @@ export function NotificationBell() {
     const fresh = notifications.filter((n) => !n.read && !seenIdsRef.current.has(n.id));
     for (const n of notifications) seenIdsRef.current.add(n.id);
     fresh.forEach((n) => {
-      const isLeadAssigned = n.type === 'LEAD_ASSIGNED';
+      const target = notificationTarget(n);
       toast({
         title: n.title,
         description: n.body,
-        action: isLeadAssigned ? (
+        action: target ? (
           <ToastAction
-            altText="View leads"
+            altText={target.label}
             onClick={() => {
               markRead(n.id);
-              router.push(`/dashboard/notifications/${n.id}/leads`);
+              router.push(target.href);
             }}
           >
-            View
+            {target.label}
           </ToastAction>
         ) : undefined,
       });
@@ -266,21 +290,19 @@ export function NotificationBell() {
             ) : (
               notifications.slice(0, 10).map((n) => {
                 const { Icon, color } = TYPE_META[n.type] ?? TYPE_META.LEAD_ASSIGNED;
-                const isLeadAssigned = n.type === 'LEAD_ASSIGNED';
+                const target = notificationTarget(n);
                 return (
                   <button
                     key={n.id}
                     onClick={() => {
                       markRead(n.id);
                       setOpen(false);
-                      if (isLeadAssigned) {
-                        router.push(`/dashboard/notifications/${n.id}/leads`);
-                      }
+                      if (target) router.push(target.href);
                     }}
                     className={cn(
                       'flex w-full items-start gap-3 px-4 py-3 text-left transition-colors hover:bg-muted/60',
                       !n.read && 'bg-primary/[0.04]',
-                      isLeadAssigned && 'cursor-pointer',
+                      target && 'cursor-pointer',
                     )}
                   >
                     <div className={cn('mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full', color)}>
@@ -293,8 +315,8 @@ export function NotificationBell() {
                       <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">{n.body}</p>
                       <div className="mt-1 flex items-center gap-2">
                         <p className="text-[10px] text-muted-foreground/60">{timeAgo(n.createdAt)}</p>
-                        {isLeadAssigned && (
-                          <span className="text-[10px] font-medium text-primary">View leads →</span>
+                        {target && (
+                          <span className="text-[10px] font-medium text-primary">{target.label} →</span>
                         )}
                       </div>
                     </div>

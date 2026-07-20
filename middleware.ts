@@ -21,6 +21,10 @@ const ROLE_ROUTES: Record<string, Role[]> = {
   '/dashboard/counselling-agent': ['SUPER_ADMIN', 'COUNSELLING_AGENT'],
   '/dashboard/counselling-agent/due-today': ['SUPER_ADMIN', 'COUNSELLING_AGENT'],
   '/dashboard/counselling-agent/scheduled-calls': ['SUPER_ADMIN', 'REPORTS', 'COUNSELLING_TL', 'COUNSELLING_AGENT'],
+  // More specific than the blanket '/dashboard/super-admin' rule above —
+  // REPORTS can reach this one page if granted APPROVE_RECEIPTS via the
+  // permission matrix (enforced client + API side by that feature flag).
+  '/dashboard/super-admin/receipt-approvals': ['SUPER_ADMIN', 'REPORTS'],
 };
 
 export default withAuth(

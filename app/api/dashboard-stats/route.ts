@@ -131,8 +131,10 @@ export async function GET(request: Request) {
         select: { createdAt: true },
         orderBy: { createdAt: 'asc' },
       }),
-      prisma.lead.count({ where: { ...teamWhere, receipts: { some: { type: 'APPLICATION' } } } }),
-      prisma.lead.count({ where: { ...teamWhere, receipts: { some: { type: 'ADMISSION' } } } }),
+      // Approved only — a receipt merely uploaded and awaiting Super Admin
+      // review isn't a confirmed application/admission yet.
+      prisma.lead.count({ where: { ...teamWhere, receipts: { some: { type: 'APPLICATION', status: 'APPROVED' } } } }),
+      prisma.lead.count({ where: { ...teamWhere, receipts: { some: { type: 'ADMISSION', status: 'APPROVED' } } } }),
     ]);
 
     const unassignedLeads = unassignedLeadsRaw;
