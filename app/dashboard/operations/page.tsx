@@ -26,6 +26,7 @@ import {
 import { formatDateTime } from '@/lib/utils';
 import { usePermissions } from '@/lib/usePermissions';
 import { cn } from '@/lib/utils';
+import { SearchableSelect, type SearchableSelectOption } from '@/components/shared/searchable-select';
 
 // ─── Single-lead form schema ──────────────────────────────────────────────────
 
@@ -107,6 +108,7 @@ export default function OperationsPage() {
   const {
     register: regSingle, handleSubmit: handleSingleSubmit,
     reset: resetSingle, formState: { errors: singleErrors },
+    setValue: setSingleValue, watch: watchSingle,
   } = useForm<SingleLeadForm>({ resolver: zodResolver(singleLeadSchema) });
 
   // ── Validation data ───────────────────────────────────────────────────────────
@@ -133,6 +135,57 @@ export default function OperationsPage() {
     queryFn: () => fetch('/api/courses').then((r) => r.json()).then((d) => Array.isArray(d) ? d : []).catch(() => []),
     staleTime: Infinity,
   });
+
+  // Lead Type / Lead Origin / Zone come from Manage Dropdowns (Super Admin's
+  // own configured lists), same source the Single Add Lead form's dropdowns
+  // draw from — not free text, so agents can't introduce typo variants.
+  const { data: leadTypesRaw } = useQuery<{ id: string; value: string }[]>({
+    queryKey: ['dropdown-lead-types'],
+    queryFn: () => fetch('/api/dropdown-options?type=LEAD_TYPE').then((r) => r.json()).then((d) => Array.isArray(d) ? d : []),
+    staleTime: Infinity,
+  });
+  const { data: leadOriginsRaw } = useQuery<{ id: string; value: string }[]>({
+    queryKey: ['dropdown-lead-origins'],
+    queryFn: () => fetch('/api/dropdown-options?type=LEAD_ORIGIN').then((r) => r.json()).then((d) => Array.isArray(d) ? d : []),
+    staleTime: Infinity,
+  });
+  const { data: leadZonesRaw } = useQuery<{ id: string; value: string }[]>({
+    queryKey: ['dropdown-zones'],
+    queryFn: () => fetch('/api/dropdown-options?type=ZONE').then((r) => r.json()).then((d) => Array.isArray(d) ? d : []),
+    staleTime: Infinity,
+  });
+
+  // Single Add Lead dropdown options — the Lead model stores these as plain
+  // strings (no foreign keys), so each option's value IS the display name,
+  // matching exactly what CSV upload and the rest of the app already store.
+  const cityOptions = useMemo<SearchableSelectOption[]>(
+    () => ((citiesRaw?.data ?? []) as { city_name: string }[]).map((c) => ({ value: c.city_name, label: c.city_name })),
+    [citiesRaw],
+  );
+  const stateOptions = useMemo<SearchableSelectOption[]>(
+    () => ((statesRaw?.data ?? []) as { name: string }[]).map((s) => ({ value: s.name, label: s.name })),
+    [statesRaw],
+  );
+  const courseOptions = useMemo<SearchableSelectOption[]>(
+    () => (coursesRaw ?? []).map((c) => ({ value: c.name, label: c.name })),
+    [coursesRaw],
+  );
+  const collegeOptions = useMemo<SearchableSelectOption[]>(
+    () => (kappCollegesRaw ?? []).map((c) => ({ value: c.value, label: c.value })),
+    [kappCollegesRaw],
+  );
+  const leadTypeOptions = useMemo<SearchableSelectOption[]>(
+    () => (leadTypesRaw ?? []).map((o) => ({ value: o.value, label: o.value })),
+    [leadTypesRaw],
+  );
+  const leadOriginOptions = useMemo<SearchableSelectOption[]>(
+    () => (leadOriginsRaw ?? []).map((o) => ({ value: o.value, label: o.value })),
+    [leadOriginsRaw],
+  );
+  const leadZoneOptions = useMemo<SearchableSelectOption[]>(
+    () => (leadZonesRaw ?? []).map((o) => ({ value: o.value, label: o.value })),
+    [leadZonesRaw],
+  );
 
   // Build lookup maps — only block on kappCollegesRaw (local DB); city/state/course are optional
   const validationMaps = useMemo<ValidationMaps | undefined>(() => {
@@ -572,32 +625,67 @@ export default function OperationsPage() {
               </div>
               <div className="space-y-1.5">
                 <Label>City</Label>
-                <Input {...regSingle('city')} placeholder="e.g. Mumbai" />
+                <SearchableSelect
+                  options={cityOptions}
+                  value={watchSingle('city') ?? ''}
+                  onChange={(v) => setSingleValue('city', v, { shouldValidate: true })}
+                  placeholder="— Select City —"
+                />
               </div>
               <div className="space-y-1.5">
                 <Label>State</Label>
-                <Input {...regSingle('state')} placeholder="e.g. Maharashtra" />
+                <SearchableSelect
+                  options={stateOptions}
+                  value={watchSingle('state') ?? ''}
+                  onChange={(v) => setSingleValue('state', v, { shouldValidate: true })}
+                  placeholder="— Select State —"
+                />
               </div>
               <div className="space-y-1.5">
                 <Label>Course</Label>
-                <Input {...regSingle('course')} placeholder="e.g. B.Tech" />
+                <SearchableSelect
+                  options={courseOptions}
+                  value={watchSingle('course') ?? ''}
+                  onChange={(v) => setSingleValue('course', v, { shouldValidate: true })}
+                  placeholder="— Select Course —"
+                />
               </div>
               <div className="space-y-1.5">
                 <Label>College <span className="text-destructive">*</span></Label>
-                <Input {...regSingle('college')} placeholder="e.g. IIT Delhi" />
+                <SearchableSelect
+                  options={collegeOptions}
+                  value={watchSingle('college') ?? ''}
+                  onChange={(v) => setSingleValue('college', v, { shouldValidate: true })}
+                  placeholder="— Select College —"
+                />
                 {singleErrors.college && <p className="text-xs text-destructive">{singleErrors.college.message}</p>}
               </div>
               <div className="space-y-1.5">
                 <Label>Lead Type</Label>
-                <Input {...regSingle('leadType')} placeholder="e.g. Organic" />
+                <SearchableSelect
+                  options={leadTypeOptions}
+                  value={watchSingle('leadType') ?? ''}
+                  onChange={(v) => setSingleValue('leadType', v, { shouldValidate: true })}
+                  placeholder="— Select Lead Type —"
+                />
               </div>
               <div className="space-y-1.5">
                 <Label>Lead Origin</Label>
-                <Input {...regSingle('leadOrigin')} placeholder="e.g. Website" />
+                <SearchableSelect
+                  options={leadOriginOptions}
+                  value={watchSingle('leadOrigin') ?? ''}
+                  onChange={(v) => setSingleValue('leadOrigin', v, { shouldValidate: true })}
+                  placeholder="— Select Lead Origin —"
+                />
               </div>
               <div className="space-y-1.5 sm:col-span-2">
                 <Label>Lead Zone</Label>
-                <Input {...regSingle('leadZone')} placeholder="e.g. North" />
+                <SearchableSelect
+                  options={leadZoneOptions}
+                  value={watchSingle('leadZone') ?? ''}
+                  onChange={(v) => setSingleValue('leadZone', v, { shouldValidate: true })}
+                  placeholder="— Select Lead Zone —"
+                />
               </div>
             </div>
             <DialogFooter>

@@ -2,9 +2,10 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Check, ChevronDown, FileText, Image as ImageIcon, Loader2, Search, UploadCloud, X } from 'lucide-react';
+import { FileText, Image as ImageIcon, Loader2, UploadCloud, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useToast } from '@/components/ui/use-toast';
+import { SearchableSelect, type SearchableSelectOption as Option } from '@/components/shared/searchable-select';
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
 } from '@/components/ui/dialog';
@@ -14,11 +15,6 @@ export type ReceiptKind = 'APPLICATION' | 'ADMISSION';
 interface StaticOption {
   id: number | string;
   name: string;
-}
-
-interface Option {
-  value: string;
-  label: string;
 }
 
 function toOptionsFromStatic(list: StaticOption[]): Option[] {
@@ -31,97 +27,6 @@ const LABEL_CLASS = 'text-xs font-semibold text-foreground/80';
 const ALLOWED_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.pdf'];
 const ALLOWED_MIME_TYPES = ['image/png', 'image/jpeg', 'application/pdf'];
 const MAX_FILE_SIZE = 10 * 1024 * 1024;
-
-// ─── Single-value searchable select ────────────────────────────────────────────
-
-function SearchableSelect({
-  options, value, onChange, placeholder, disabled,
-}: {
-  options: Option[];
-  value: string;
-  onChange: (v: string) => void;
-  placeholder?: string;
-  disabled?: boolean;
-}) {
-  const [open, setOpen] = useState(false);
-  const [query, setQuery] = useState('');
-  const ref = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    function handle(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
-    }
-    document.addEventListener('mousedown', handle);
-    return () => document.removeEventListener('mousedown', handle);
-  }, [open]);
-
-  const filtered = useMemo(() => {
-    const q = query.toLowerCase().trim();
-    const list = !q ? options : options.filter((o) => o.label.toLowerCase().includes(q));
-    return list.slice(0, 200);
-  }, [options, query]);
-
-  const label = options.find((o) => o.value === value)?.label;
-
-  return (
-    <div ref={ref} className="relative">
-      <button
-        type="button"
-        disabled={disabled}
-        onClick={() => !disabled && setOpen((o) => !o)}
-        className={cn(
-          INPUT_CLASS, 'justify-between gap-2 cursor-pointer',
-          disabled && 'cursor-not-allowed bg-muted/50 text-muted-foreground/90 hover:border-input'
-        )}
-      >
-        <span className={cn('truncate text-left', !label && 'text-muted-foreground/60')}>
-          {label ?? (placeholder ?? '— Select —')}
-        </span>
-        <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground/60" />
-      </button>
-
-      {open && !disabled && (
-        <div className="absolute z-50 mt-1 w-full rounded-md border border-border bg-background shadow-lg overflow-hidden">
-          <div className="flex items-center gap-1.5 border-b border-border px-2.5 py-1.5">
-            <Search className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-            <input
-              autoFocus
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search…"
-              className="flex-1 bg-transparent text-[13px] outline-none placeholder:text-muted-foreground/60"
-            />
-          </div>
-
-          <ul className="max-h-48 overflow-y-auto py-1">
-            {filtered.length === 0 && (
-              <li className="px-3 py-2 text-xs text-muted-foreground">No results</li>
-            )}
-            {filtered.map((opt) => {
-              const checked = opt.value === value;
-              return (
-                <li
-                  key={opt.value}
-                  onClick={() => { onChange(opt.value); setOpen(false); setQuery(''); }}
-                  className="flex cursor-pointer items-center gap-2 px-3 py-1.5 text-[13px] hover:bg-muted/50"
-                >
-                  <span className={cn(
-                    'flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded border border-input',
-                    checked && 'border-primary bg-primary'
-                  )}>
-                    {checked && <Check className="h-2.5 w-2.5 text-primary-foreground" />}
-                  </span>
-                  <span className="truncate">{opt.label}</span>
-                </li>
-              );
-            })}
-          </ul>
-        </div>
-      )}
-    </div>
-  );
-}
 
 function Field({ label, required, children, span2 }: { label: string; required?: boolean; children: React.ReactNode; span2?: boolean }) {
   return (
