@@ -863,7 +863,7 @@ export function LeadProfilePage({ leadId, agentName }: { leadId: string; agentNa
             <div className="flex flex-wrap gap-2">
               <a
                 href={`tel:${lead.phone}`}
-                className="inline-flex h-9 items-center gap-1.5 rounded-md bg-green-600 px-3 text-xs font-medium text-white shadow-sm transition-colors hover:bg-green-700"
+                className="inline-flex h-9 items-center gap-1.5 rounded-md bg-[#0e4164] px-3 text-xs font-medium text-white shadow-sm transition-colors hover:bg-[#0c3755]"
               >
                 <Phone className="h-3.5 w-3.5" /> Call
               </a>

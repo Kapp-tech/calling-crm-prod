@@ -1013,7 +1013,7 @@ export function LeadDetailDrawer({ leadId, onClose, canSubmitFeedback = false }:
                           <Mail className="h-3.5 w-3.5" /> Email
                         </a>
                       </Button>
-                      <Button size="sm" className="gap-1.5 bg-green-600 hover:bg-green-700 text-white text-xs" asChild>
+                      <Button size="sm" className="gap-1.5 bg-[#0e4164] hover:bg-[#0c3755] text-white text-xs" asChild>
                         <a href={`tel:${lead.phone}`}>
                           <Phone className="h-3.5 w-3.5" /> Call
                         </a>
