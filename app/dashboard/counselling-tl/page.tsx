@@ -718,7 +718,7 @@ const FILTER_GROUPS: { group: string; filters: FilterDef[] }[] = [
   {
     group: 'Lead Source',
     filters: [
-      { key: 'campaign',   label: 'Campaign'    },
+      { key: 'campaign',   label: 'Lead Code'    },
       { key: 'leadType',   label: 'Lead Type'   },
       { key: 'leadOrigin', label: 'Lead Origin' },
       { key: 'zone',       label: 'Zone'        },
@@ -1214,7 +1214,7 @@ export default function CounsellingTLPage() {
               )}
               {selectedFilters.includes('campaign') && (
                 <div className="flex flex-col gap-1">
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Campaign</span>
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Lead Code</span>
                   <MultiSelectFilter placeholder="All Campaigns" options={filterOptions?.campaigns ?? []} selected={campaignFilters} onChange={setCampaignFilters} />
                 </div>
               )}
@@ -1348,7 +1348,7 @@ export default function CounsellingTLPage() {
                     <th className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground whitespace-nowrap">Phone</th>
                     <th className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground whitespace-nowrap">City</th>
                     <th className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground whitespace-nowrap">Course</th>
-                    <th className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground whitespace-nowrap">Campaign</th>
+                    <th className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground whitespace-nowrap">Lead Code</th>
                     <th className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground whitespace-nowrap">Assigned To</th>
                     <th className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground whitespace-nowrap">Calls</th>
                     <th className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground whitespace-nowrap">Added</th>

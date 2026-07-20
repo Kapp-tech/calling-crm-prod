@@ -249,7 +249,7 @@ function BatchSection({
                   <TableHead className="whitespace-nowrap font-semibold">State</TableHead>
                   <TableHead className="whitespace-nowrap font-semibold">Course</TableHead>
                   <TableHead className="whitespace-nowrap font-semibold">College</TableHead>
-                  <TableHead className="whitespace-nowrap font-semibold">Campaign</TableHead>
+                  <TableHead className="whitespace-nowrap font-semibold">Lead Code</TableHead>
                   <TableHead className="whitespace-nowrap font-semibold">Lead Type</TableHead>
                   <TableHead className="whitespace-nowrap font-semibold">Lead Origin</TableHead>
                   <TableHead className="whitespace-nowrap font-semibold">Zone</TableHead>

@@ -567,7 +567,7 @@ export default function OperationsPage() {
                 {singleErrors.phone && <p className="text-xs text-destructive">{singleErrors.phone.message}</p>}
               </div>
               <div className="space-y-1.5">
-                <Label>Campaign</Label>
+                <Label>Lead Code</Label>
                 <Input {...regSingle('campaign')} placeholder="e.g. Google Ads" />
               </div>
               <div className="space-y-1.5">

@@ -65,7 +65,7 @@ export function LeadDetailModal({ lead, open, onClose, canUnmask = false }: Lead
             <InfoRow label="State" value={lead.state} />
             <InfoRow label="Course" value={lead.course} />
             <InfoRow label="College" value={lead.college} />
-            <InfoRow label="Campaign" value={lead.campaign} />
+            <InfoRow label="Lead Code" value={lead.campaign} />
             <InfoRow label="Lead Type" value={lead.leadType} />
             <InfoRow label="Lead Origin" value={lead.leadOrigin} />
             <InfoRow label="Lead Zone" value={lead.leadZone} />

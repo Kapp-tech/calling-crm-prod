@@ -196,7 +196,7 @@ export async function GET(req: NextRequest) {
     const fixedHeaders = [
       'Lead ID', 'Name', 'Email', 'Phone',
       'City', 'State', 'Course', 'College', 'KAPP College ID',
-      'Campaign', 'Lead Type', 'Lead Origin', 'Zone',
+      'Lead Code', 'Lead Type', 'Lead Origin', 'Zone',
       'Status', 'Uploaded By',
       'Assigned To', 'Assigned By', 'Assigned From', 'Prev Assignee 2',
       'Updated At', 'Created At', 'Uploaded At',

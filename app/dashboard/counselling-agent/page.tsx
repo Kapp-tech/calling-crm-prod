@@ -169,7 +169,7 @@ export default function CounsellingAgentPage() {
                     <TableHead>Phone</TableHead>
                     <TableHead>City</TableHead>
                     <TableHead>Course</TableHead>
-                    <TableHead>Campaign</TableHead>
+                    <TableHead>Lead Code</TableHead>
                     <TableHead>Last Feedback</TableHead>
                     <TableHead>Follow-ups</TableHead>
                     <TableHead>Assigned</TableHead>

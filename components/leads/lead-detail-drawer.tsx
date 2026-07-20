@@ -1049,7 +1049,7 @@ export function LeadDetailDrawer({ leadId, onClose, canSubmitFeedback = false }:
                       <InfoRow label="Course" value={lead.course} />
                       <InfoRow label="State / City" value={[lead.state, lead.city].filter(Boolean).join(' / ')} />
                       <InfoRow label="Zone" value={lead.leadZone} />
-                      <InfoRow label="Campaign" value={lead.campaign} />
+                      <InfoRow label="Lead Code" value={lead.campaign} />
                       <InfoRow label="Lead Type" value={lead.leadType} />
                       <InfoRow
                         label="Date Added"

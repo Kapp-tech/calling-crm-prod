@@ -62,7 +62,7 @@ const FILTER_GROUPS: { group: string; filters: FilterDef[] }[] = [
   {
     group: 'Lead Source',
     filters: [
-      { key: 'campaign',   label: 'Campaign'    },
+      { key: 'campaign',   label: 'Lead Code'    },
       { key: 'leadType',   label: 'Lead Type'   },
       { key: 'leadOrigin', label: 'Lead Origin' },
       { key: 'zone',       label: 'Zone'        },
@@ -800,7 +800,7 @@ export default function AllLeadsPage() {
         <div className="flex flex-wrap gap-3 mb-3 p-3 rounded-lg border border-border/60 bg-muted/10 items-end">
           {activeFilters.includes('campaign') && (
             <div className="flex flex-col gap-1">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Campaign</span>
+              <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Lead Code</span>
               <MultiSelectFilter placeholder="All Campaigns" options={campaignOptions} selected={campaigns} onChange={(v) => filterChange(() => setCampaigns(v))} loading={optsLoading} />
             </div>
           )}
@@ -943,7 +943,7 @@ export default function AllLeadsPage() {
               <th className="whitespace-nowrap px-3 py-2.5 text-left text-[10px] font-bold uppercase tracking-wider text-muted-foreground min-w-[140px]">Agent</th>
               <th className="whitespace-nowrap px-3 py-2.5 text-left text-[10px] font-bold uppercase tracking-wider text-muted-foreground min-w-[160px]">Feedback</th>
               <th className="whitespace-nowrap px-3 py-2.5 text-left text-[10px] font-bold uppercase tracking-wider text-muted-foreground min-w-[130px]">Profile %</th>
-              <th className="whitespace-nowrap px-3 py-2.5 text-left text-[10px] font-bold uppercase tracking-wider text-muted-foreground min-w-[130px]">Campaign</th>
+              <th className="whitespace-nowrap px-3 py-2.5 text-left text-[10px] font-bold uppercase tracking-wider text-muted-foreground min-w-[130px]">Lead Code</th>
               <th className="whitespace-nowrap px-3 py-2.5 text-left text-[10px] font-bold uppercase tracking-wider text-muted-foreground min-w-[120px]">Lead Type</th>
               <th className="whitespace-nowrap px-3 py-2.5 text-left text-[10px] font-bold uppercase tracking-wider text-muted-foreground min-w-[120px]">Lead Origin</th>
               <th className="whitespace-nowrap px-3 py-2.5 text-left text-[10px] font-bold uppercase tracking-wider text-muted-foreground min-w-[90px]">Zone</th>

@@ -51,7 +51,7 @@ const EMPTY_FILTERS: Filters = {
 
 const DIM_LABELS: Record<Dim, string> = {
   agent: 'Agent', feedback: 'Feedback', state: 'State',
-  city: 'City', college: 'College', campaign: 'Campaign', leadType: 'Lead Type',
+  city: 'City', college: 'College', campaign: 'Lead Code', leadType: 'Lead Type',
 };
 
 const ALL_DIMS: Dim[] = ['agent', 'feedback', 'state', 'city', 'college', 'campaign', 'leadType'];
@@ -91,7 +91,7 @@ function getDimColDefs(dims: Dim[]): { key: string; label: string; value: (r: An
     state:    { key: 'state',         label: 'State',     value: (r) => r.state },
     city:     { key: 'city',          label: 'City',      value: (r) => r.city },
     college:  { key: 'college',       label: 'College',   value: (r) => r.college },
-    campaign: { key: 'campaign',      label: 'Campaign',  value: (r) => r.campaign },
+    campaign: { key: 'campaign',      label: 'Lead Code',  value: (r) => r.campaign },
     leadType: { key: 'leadType',      label: 'Lead Type', value: (r) => r.leadType },
   };
   return dims.map((d) => map[d]);
@@ -429,9 +429,9 @@ export default function AnalyticsPage() {
                 </Select>
               </div>
 
-              {/* Campaign */}
+              {/* Lead Code */}
               <div className="space-y-1">
-                <Label className="text-xs text-muted-foreground">Campaign</Label>
+                <Label className="text-xs text-muted-foreground">Lead Code</Label>
                 <Select value={pending.campaign || '__all__'} onValueChange={(v) => setPending({ ...pending, campaign: v === '__all__' ? '' : v })}>
                   <SelectTrigger className="h-8 text-sm"><SelectValue placeholder="All campaigns" /></SelectTrigger>
                   <SelectContent>
