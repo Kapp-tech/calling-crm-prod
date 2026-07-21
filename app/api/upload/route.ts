@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { authOptions } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import { hasPermission } from '@/lib/permissions';
+import { buildDropdownValidationSets, isAllowedDropdownValue } from '@/lib/dropdown-validation';
 import { Feature, DropdownType } from '@prisma/client';
 
 const leadSchema = z.object({
@@ -68,35 +69,9 @@ export async function POST(req: NextRequest) {
     const incomingEmails = leads.map((l) => l.email.trim().toLowerCase());
 
     // ── Fetch all active dropdown options for validation ─────────────────────
-    const allDropdownOptions = await prisma.dropdownOption.findMany({
-      where: { isActive: true },
-      select: { type: true, value: true, kappCollegeId: true },
-    });
-
-    // Build lookup sets per type (lowercased for case-insensitive matching)
-    // COLLEGE type uses kappCollegeId → name map instead of a value set
-    const dropdownSets: Partial<Record<DropdownType, Set<string>>> = {};
-    const collegeIdMap = new Map<string, string>(); // kappCollegeId.lower → college name
-
-    for (const opt of allDropdownOptions) {
-      if (opt.type === DropdownType.COLLEGE) {
-        if (opt.kappCollegeId) {
-          // College ID matching stays case-insensitive (it's a code, not a display value)
-          collegeIdMap.set(opt.kappCollegeId.trim().toLowerCase(), opt.value.trim());
-        }
-      } else {
-        if (!dropdownSets[opt.type]) dropdownSets[opt.type] = new Set();
-        // Store values exactly as defined — validation is case-sensitive
-        dropdownSets[opt.type]!.add(opt.value.trim());
-      }
-    }
-
-    const hasOptions = (t: DropdownType) => (dropdownSets[t]?.size ?? 0) > 0;
-    const allowed = (t: DropdownType, v: string | null | undefined) => {
-      if (!hasOptions(t)) return true;   // no rules defined → accept anything
-      if (!v?.trim()) return true;       // empty field → skip validation
-      return dropdownSets[t]!.has(v.trim()); // exact case match
-    };
+    const { sets: dropdownSets, collegeIdMap } = await buildDropdownValidationSets();
+    const allowed = (t: DropdownType, v: string | null | undefined) =>
+      isAllowedDropdownValue({ sets: dropdownSets, collegeIdMap }, t, v);
 
     // ── Validate each lead against dropdown options ───────────────────────────
     type LeadInput = typeof leads[number];
@@ -130,6 +105,7 @@ export async function POST(req: NextRequest) {
       if (!allowed(DropdownType.LEAD_ORIGIN,        lead.lead_origin))       errs.push(`lead_origin "${lead.lead_origin}" is not in the allowed list`);
       if (!allowed(DropdownType.ZONE,               lead.lead_zone))         errs.push(`lead_zone "${lead.lead_zone}" is not in the allowed list`);
       if (!allowed(DropdownType.LEAD_CONFIRMATION,  lead.lead_confirmation)) errs.push(`lead_confirmation "${lead.lead_confirmation}" is not in the allowed list`);
+      if (!allowed(DropdownType.LEAD_STAGE,         lead.lead_stage))        errs.push(`lead_stage "${lead.lead_stage}" is not in the allowed list`);
       if (!allowed(DropdownType.LEAD_VERIFICATION,  lead.lead_verification)) errs.push(`lead_verification "${lead.lead_verification}" is not in the allowed list`);
       if (!allowed(DropdownType.DATA_CALLING_TYPE,  lead.data_calling_type)) errs.push(`data_calling_type "${lead.data_calling_type}" is not in the allowed list`);
 

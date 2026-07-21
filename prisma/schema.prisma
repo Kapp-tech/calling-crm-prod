@@ -41,6 +41,7 @@ enum DropdownType {
   LEAD_ORIGIN
   ZONE
   LEAD_CONFIRMATION
+  LEAD_STAGE
   LEAD_VERIFICATION
   DATA_CALLING_TYPE
 }
@@ -124,6 +125,9 @@ enum ActivityAction {
   REFERRAL_ADDED
   RECEIPT_APPROVED
   RECEIPT_DISAPPROVED
+  API_KEY_CREATED
+  API_KEY_REVOKED
+  LEAD_CREATED_VIA_API
 }
 
 // ─── Core Models ──────────────────────────────────────────────────────────────
@@ -190,6 +194,7 @@ model User {
   uploadedReceipts LeadReceipt[] @relation("ReceiptUploadedBy")
   reviewedReceipts LeadReceipt[] @relation("ReceiptReviewedBy")
   attendances    Attendance[]
+  apiKeysCreated ApiKey[] @relation("ApiKeyCreatedBy")
 
   // Feedback options created by this user (SA)
   createdFeedbackOptions FeedbackOption[] @relation("FeedbackOptionCreator")
@@ -276,6 +281,11 @@ model Lead {
   uploadedById String
   uploadedBy   User   @relation("UploadedBy", fields: [uploadedById], references: [id])
 
+  // Set only for leads created through POST /api/v1/leads — lets an admin
+  // trace a lead back to the specific partner integration that sent it.
+  apiKeyId String?
+  apiKey   ApiKey? @relation("LeadCreatedByApiKey", fields: [apiKeyId], references: [id])
+
   approvedById String?
   approvedBy   User?     @relation("ApprovedBy", fields: [approvedById], references: [id])
   approvedAt   DateTime?
@@ -355,6 +365,7 @@ model Lead {
   @@index([status, assignedToId])
   @@index([kappCollegeId])
   @@index([referredById])
+  @@index([apiKeyId])
 }
 
 model LeadProfile {
@@ -651,4 +662,33 @@ model Setting {
   key       String   @id
   value     String
   updatedAt DateTime @updatedAt
+}
+
+// Credentials for external systems pushing leads into the CRM via
+// POST /api/v1/leads (see that route for the full contract). The raw key is
+// shown to the Super Admin exactly once at creation time and is never
+// persisted — only its SHA-256 hash is stored, so a database leak alone
+// can't be used to authenticate as an integration.
+model ApiKey {
+  id String @id @default(cuid())
+
+  name String // human label, e.g. "Partner LMS — Referral Leads"
+
+  keyHash   String @unique // sha256(raw key) — never store the raw key
+  keyPrefix String // first 12 chars of the raw key, shown in the UI so an admin can tell keys apart without re-revealing them
+
+  isActive  Boolean   @default(true)
+  lastUsedAt DateTime?
+
+  createdById String
+  createdBy   User   @relation("ApiKeyCreatedBy", fields: [createdById], references: [id])
+
+  revokedAt DateTime?
+
+  createdAt DateTime @default(now())
+
+  leads Lead[] @relation("LeadCreatedByApiKey")
+
+  @@index([keyHash])
+  @@index([createdById])
 }

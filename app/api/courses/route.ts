@@ -1,31 +1,23 @@
 import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
-
-const LMS_API_KEY = 'sk_LMS_4e2c91d7a8f34b17b6a4f9b8d93c72fd';
-const LMS_BASE = 'https://api.lms.kollegeapply.com/api/leads/unified-data';
+import { fetchLmsUnifiedData } from '@/lib/lms-api';
 
 export async function GET() {
   try {
     const session = await getServerSession(authOptions);
     if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-    const res = await fetch(`${LMS_BASE}?type=course-group`, {
-      headers: { 'x-api-key': LMS_API_KEY },
-      next: { revalidate: 3600 },
-    });
-
-    if (!res.ok) {
+    const json = await fetchLmsUnifiedData('course-group').catch(() => null);
+    if (json === null) {
       return NextResponse.json({ error: 'Failed to fetch courses' }, { status: 502 });
     }
-
-    const json = await res.json();
 
     // Normalize: LMS returns { data: [...] } or similar
     const raw: Record<string, unknown>[] = Array.isArray(json)
       ? json
-      : Array.isArray(json?.data)
-      ? json.data
+      : Array.isArray((json as { data?: unknown })?.data)
+      ? (json as { data: Record<string, unknown>[] }).data
       : [];
 
     const normalized = raw.map((item, idx) => ({

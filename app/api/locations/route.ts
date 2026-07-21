@@ -1,9 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
-
-const LMS_API_KEY = 'sk_LMS_4e2c91d7a8f34b17b6a4f9b8d93c72fd';
-const LMS_BASE = 'https://api.lms.kollegeapply.com/api/leads/unified-data';
+import { fetchLmsUnifiedData } from '@/lib/lms-api';
 
 export async function GET(req: NextRequest) {
   try {
@@ -15,16 +13,11 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: 'Invalid type' }, { status: 400 });
     }
 
-    const res = await fetch(`${LMS_BASE}?type=${type}`, {
-      headers: { 'x-api-key': LMS_API_KEY },
-      next: { revalidate: 3600 },
-    });
-
-    if (!res.ok) {
+    const data = await fetchLmsUnifiedData(type).catch(() => null);
+    if (data === null) {
       return NextResponse.json({ error: 'Failed to fetch locations' }, { status: 502 });
     }
 
-    const data = await res.json();
     return NextResponse.json(data);
   } catch (error) {
     console.error('[locations GET]', error);

@@ -12,7 +12,7 @@ import {
   UserCircle, UserCheck, ClipboardList, LogOut, ChevronRight, ChevronDown,
   GitBranch, CalendarClock, X, ChevronsLeft, ChevronsRight,
   GraduationCap, Tag, Globe2, MapPin, CheckSquare, ShieldCheck, Phone,
-  Megaphone, Gauge, Receipt,
+  Megaphone, Gauge, Receipt, Layers, KeyRound, Settings,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -163,6 +163,12 @@ const NAV: NavEntry[] = [
         roles: ['SUPER_ADMIN'],
       },
       {
+        href: '/dashboard/super-admin/manage-lead-stage',
+        label: 'Lead Stage',
+        icon: Layers,
+        roles: ['SUPER_ADMIN'],
+      },
+      {
         href: '/dashboard/super-admin/manage-lead-verification',
         label: 'Lead Verification',
         icon: ShieldCheck,
@@ -291,6 +297,21 @@ const NAV: NavEntry[] = [
     roles: ['SUPER_ADMIN', 'REPORTS'],
     exact: true,
     features: ['APPROVE_RECEIPTS'],
+  },
+  {
+    type: 'group',
+    key: 'configurations',
+    label: 'Configurations',
+    icon: Settings,
+    roles: ['SUPER_ADMIN'],
+    children: [
+      {
+        href: '/dashboard/super-admin/configurations/api-keys',
+        label: 'API Keys',
+        icon: KeyRound,
+        roles: ['SUPER_ADMIN'],
+      },
+    ],
   },
   {
     type: 'leaf',
