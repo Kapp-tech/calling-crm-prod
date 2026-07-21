@@ -9,15 +9,33 @@ const LMS_BASE = 'https://api.lms.kollegeapply.com/api/leads/unified-data';
 
 export type LmsDataType = 'state' | 'city' | 'course-group';
 
+// A cold cache (first request after deploy, or once per hour thereafter)
+// means this call actually hits the external provider. Without a timeout, a
+// slow or unresponsive upstream would hang the caller indefinitely — bound
+// it so a flaky external API fails fast with a clear error instead.
+const FETCH_TIMEOUT_MS = 8_000;
+
 export async function fetchLmsUnifiedData(type: LmsDataType): Promise<unknown> {
-  const res = await fetch(`${LMS_BASE}?type=${type}`, {
-    headers: { 'x-api-key': LMS_API_KEY },
-    next: { revalidate: 3600 },
-  });
-  if (!res.ok) {
-    throw new Error(`LMS API request failed for type=${type}: HTTP ${res.status}`);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  try {
+    const res = await fetch(`${LMS_BASE}?type=${type}`, {
+      headers: { 'x-api-key': LMS_API_KEY },
+      next: { revalidate: 3600 },
+      signal: controller.signal,
+    });
+    if (!res.ok) {
+      throw new Error(`LMS API request failed for type=${type}: HTTP ${res.status}`);
+    }
+    return await res.json();
+  } catch (err) {
+    if (err instanceof Error && err.name === 'AbortError') {
+      throw new Error(`LMS API request for type=${type} timed out after ${FETCH_TIMEOUT_MS / 1000}s`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeout);
   }
-  return res.json();
 }
 
 /** Canonical city names, e.g. ["Mumbai", "Pune", ...]. */
