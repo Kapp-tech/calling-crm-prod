@@ -116,7 +116,7 @@ export default function ApiKeysPage() {
           </h1>
           <p className="text-sm text-muted-foreground mt-1">
             Credentials for external systems pushing leads into this CRM via the Lead Ingestion API.
-            New leads land in Lead Approvals like any other source, then the unassigned pool once approved.
+            New leads skip Lead Approvals and land directly in Unassigned Leads on the Assign Leads page.
           </p>
         </div>
         <Button onClick={() => setCreateOpen(true)} className="w-full sm:w-auto shrink-0">
