@@ -128,31 +128,31 @@ const NAV: NavEntry[] = [
     children: [
       {
         href: '/dashboard/super-admin/feedback-options',
-        label: 'Manage Feedbacks',
+        label: 'Feedbacks',
         icon: MessageSquare,
         roles: ['SUPER_ADMIN'],
       },
       {
         href: '/dashboard/super-admin/manage-colleges',
-        label: 'Manage Colleges',
+        label: 'Colleges',
         icon: GraduationCap,
         roles: ['SUPER_ADMIN'],
       },
       {
         href: '/dashboard/super-admin/manage-lead-type',
-        label: 'Manage Lead Type',
+        label: 'Lead Type',
         icon: Tag,
         roles: ['SUPER_ADMIN'],
       },
       {
         href: '/dashboard/super-admin/manage-lead-origin',
-        label: 'Manage Lead Origin',
+        label: 'Lead Origin',
         icon: Globe2,
         roles: ['SUPER_ADMIN'],
       },
       {
         href: '/dashboard/super-admin/manage-zones',
-        label: 'Manage Zones',
+        label: 'Zones',
         icon: MapPin,
         roles: ['SUPER_ADMIN'],
       },
