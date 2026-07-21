@@ -12,7 +12,7 @@ import {
   UserCircle, UserCheck, ClipboardList, LogOut, ChevronRight, ChevronDown,
   GitBranch, CalendarClock, X, ChevronsLeft, ChevronsRight,
   GraduationCap, Tag, Globe2, MapPin, CheckSquare, ShieldCheck, Phone,
-  Megaphone, Gauge, Receipt, Layers, KeyRound, Settings,
+  Megaphone, Gauge, Receipt, Layers, KeyRound, Settings, Handshake,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -178,6 +178,12 @@ const NAV: NavEntry[] = [
         href: '/dashboard/super-admin/manage-data-calling-type',
         label: 'Data Calling Type',
         icon: Phone,
+        roles: ['SUPER_ADMIN'],
+      },
+      {
+        href: '/dashboard/super-admin/manage-deal-type',
+        label: 'Deal Type',
+        icon: Handshake,
         roles: ['SUPER_ADMIN'],
       },
     ],

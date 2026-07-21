@@ -36,6 +36,7 @@ export const nonFeedbackQuerySchema = z.object({
   leadStage:               z.string().optional(),
   leadVerification:        z.string().optional(),
   dataCallingType:         z.string().optional(),
+  dealType:                z.string().optional(),
 });
 
 export type NonFeedbackQuery = z.infer<typeof nonFeedbackQuerySchema>;
@@ -125,6 +126,10 @@ export function buildNonFeedbackFilters(
   if (q.dataCallingType) {
     const vals = splitCsv(q.dataCallingType);
     if (vals.length > 0) filters.push({ dataCallingType: { in: vals } });
+  }
+  if (q.dealType) {
+    const vals = splitCsv(q.dealType);
+    if (vals.length > 0) filters.push({ dealType: { in: vals } });
   }
 
   return filters;

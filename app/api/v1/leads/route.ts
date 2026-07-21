@@ -50,6 +50,7 @@ import { buildDropdownValidationSets, isAllowedDropdownValue } from '@/lib/dropd
 //     leadStage: string;            // must match Manage Dropdowns → Lead Stage
 //     leadVerification: string;     // must match Manage Dropdowns → Lead Verification
 //     dataCallingType: string;      // must match Manage Dropdowns → Data Calling Type
+//     dealType: string;             // must match Manage Dropdowns → Deal Type
 //     createdAt: string;            // format: "yyyy-mm-dd" — the lead's original creation
 //                                    // date on your side (stored separately from this CRM's
 //                                    // own audit timestamp, which always reflects when the
@@ -57,8 +58,8 @@ import { buildDropdownValidationSets, isAllowedDropdownValue } from '@/lib/dropd
 //   }
 //
 //   Dropdown fields (leadType / leadOrigin / leadConfirmation / leadStage /
-//   leadVerification / dataCallingType) match case-sensitively against the
-//   exact values configured in Manage Dropdowns. Exception: if a dropdown
+//   leadVerification / dataCallingType / dealType) match case-sensitively
+//   against the exact values configured in Manage Dropdowns. Exception: if a dropdown
 //   type has no values configured there AT ALL yet, that field is accepted
 //   as free text (there's nothing to validate against) — configure it in
 //   Manage Dropdowns once you want that specific field enforced.
@@ -111,6 +112,7 @@ const payloadSchema = z.object({
   leadStage: req1('leadStage'),
   leadVerification: req1('leadVerification'),
   dataCallingType: req1('dataCallingType'),
+  dealType: req1('dealType'),
   createdAt: z
     .string()
     .trim()
@@ -189,6 +191,7 @@ export async function POST(req: NextRequest) {
     checkDropdown(DropdownType.LEAD_STAGE, d.leadStage, 'leadStage', 'Lead Stage');
     checkDropdown(DropdownType.LEAD_VERIFICATION, d.leadVerification, 'leadVerification', 'Lead Verification');
     checkDropdown(DropdownType.DATA_CALLING_TYPE, d.dataCallingType, 'dataCallingType', 'Data Calling Type');
+    checkDropdown(DropdownType.DEAL_TYPE, d.dealType, 'dealType', 'Deal Type');
 
     if (Object.keys(errors).length > 0) {
       return fail(400, 'Validation failed', { errors });
@@ -232,6 +235,7 @@ export async function POST(req: NextRequest) {
         leadStage: d.leadStage,
         leadVerification: d.leadVerification,
         dataCallingType: d.dataCallingType,
+        dealType: d.dealType,
         primaryApplicationConfirm: 'No',
         primaryAdmissionConfirm: 'No',
         uploadedAt: new Date(`${d.createdAt}T00:00:00.000Z`),

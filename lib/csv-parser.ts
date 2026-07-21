@@ -16,6 +16,7 @@ export interface LeadCSVRow {
   lead_stage?: string;
   lead_verification?: string;
   data_calling_type?: string;
+  deal_type?: string;
   created_at?: string;
 }
 
@@ -180,7 +181,7 @@ export function buildResultCSV(
   const headers = [
     'row', 'name', 'email', 'phone', 'city', 'state',
     'course', 'college', 'lead_code', 'lead_type', 'lead_origin', 'lead_zone',
-    'lead_confirmation', 'lead_stage', 'lead_verification', 'data_calling_type',
+    'lead_confirmation', 'lead_stage', 'lead_verification', 'data_calling_type', 'deal_type',
     'created_at',
     'status', 'issues',
   ];
@@ -218,6 +219,7 @@ export function buildResultCSV(
       csvEscape(d.lead_stage ?? ''),
       csvEscape(d.lead_verification ?? ''),
       csvEscape(d.data_calling_type ?? ''),
+      csvEscape(d.deal_type ?? ''),
       csvEscape(d.created_at ?? ''),
       status,
       csvEscape(issues),

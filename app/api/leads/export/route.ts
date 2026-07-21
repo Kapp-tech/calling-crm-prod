@@ -166,6 +166,7 @@ export async function GET(req: NextRequest) {
         leadStage:                 true,
         leadVerification:          true,
         dataCallingType:           true,
+        dealType:                  true,
         profile: {
           select: {
             budget:              true,
@@ -201,7 +202,7 @@ export async function GET(req: NextRequest) {
       'Assigned To', 'Assigned By', 'Assigned From', 'Prev Assignee 2',
       'Updated At', 'Created At', 'Uploaded At',
       'Primary Application Confirm', 'Primary Admission Confirm',
-      'Lead Confirmation', 'Lead Stage', 'Lead Verification', 'Data Calling Type',
+      'Lead Confirmation', 'Lead Stage', 'Lead Verification', 'Data Calling Type', 'Deal Type',
       'Budget', 'Course Type', 'College Type',
       'Preferred Courses', 'Preferred Colleges', 'Preferred Cities', 'Preferred States',
       'Total Feedbacks',
@@ -256,6 +257,7 @@ export async function GET(req: NextRequest) {
         l.leadStage                 ?? '',
         l.leadVerification          ?? '',
         l.dataCallingType           ?? '',
+        l.dealType                  ?? '',
         l.profile?.budget      ?? '',
         l.profile?.courseType  ?? '',
         l.profile?.collegeType ?? '',

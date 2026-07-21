@@ -44,6 +44,7 @@ enum DropdownType {
   LEAD_STAGE
   LEAD_VERIFICATION
   DATA_CALLING_TYPE
+  DEAL_TYPE
 }
 
 enum BatchStatus {
@@ -327,6 +328,7 @@ model Lead {
   leadStage                 String?
   leadVerification          String?
   dataCallingType           String?
+  dealType                  String?
   uploadedAt                DateTime?
 
   // Referral chain — a lead can refer any number of new leads; the referred

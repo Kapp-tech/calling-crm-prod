@@ -13,7 +13,7 @@ export async function GET() {
     const [
       campaigns, leadTypes, leadOrigins, leadZones, cities, states, colleges, courses,
       leadConfirmations, leadVerifications, dataCallingTypes,
-      primaryAppConfirms, primaryAdmConfirms, leadStages,
+      primaryAppConfirms, primaryAdmConfirms, leadStages, dealTypes,
     ] = await Promise.all([
       prisma.lead.findMany({ distinct: ['campaign'],                    where: { ...approved, campaign:                    { not: null } }, select: { campaign:                    true }, orderBy: { campaign:                    'asc' } }),
       prisma.lead.findMany({ distinct: ['leadType'],                    where: { ...approved, leadType:                    { not: null } }, select: { leadType:                    true }, orderBy: { leadType:                    'asc' } }),
@@ -29,6 +29,7 @@ export async function GET() {
       prisma.lead.findMany({ distinct: ['primaryApplicationConfirm'],  where: { ...approved, primaryApplicationConfirm:  { not: null } }, select: { primaryApplicationConfirm:  true }, orderBy: { primaryApplicationConfirm:  'asc' } }),
       prisma.lead.findMany({ distinct: ['primaryAdmissionConfirm'],    where: { ...approved, primaryAdmissionConfirm:    { not: null } }, select: { primaryAdmissionConfirm:    true }, orderBy: { primaryAdmissionConfirm:    'asc' } }),
       prisma.lead.findMany({ distinct: ['leadStage'],                   where: { ...approved, leadStage:                   { not: null } }, select: { leadStage:                   true }, orderBy: { leadStage:                   'asc' } }),
+      prisma.lead.findMany({ distinct: ['dealType'],                    where: { ...approved, dealType:                    { not: null } }, select: { dealType:                    true }, orderBy: { dealType:                    'asc' } }),
     ]);
 
     return NextResponse.json({
@@ -46,6 +47,7 @@ export async function GET() {
       primaryAppConfirms:   primaryAppConfirms.map((r) => r.primaryApplicationConfirm!),
       primaryAdmConfirms:   primaryAdmConfirms.map((r) => r.primaryAdmissionConfirm!),
       leadStages:           leadStages.map((r) => r.leadStage!),
+      dealTypes:            dealTypes.map((r) => r.dealType!),
     });
   } catch (error) {
     console.error('[leads/filter-options GET]', error);

@@ -23,6 +23,7 @@ const leadSchema = z.object({
   lead_stage:                  z.string().optional().nullable(),
   lead_verification:           z.string().optional().nullable(),
   data_calling_type:           z.string().optional().nullable(),
+  deal_type:                   z.string().optional().nullable(),
   created_at:                  z.string().optional().nullable(),
 });
 
@@ -108,6 +109,7 @@ export async function POST(req: NextRequest) {
       if (!allowed(DropdownType.LEAD_STAGE,         lead.lead_stage))        errs.push(`lead_stage "${lead.lead_stage}" is not in the allowed list`);
       if (!allowed(DropdownType.LEAD_VERIFICATION,  lead.lead_verification)) errs.push(`lead_verification "${lead.lead_verification}" is not in the allowed list`);
       if (!allowed(DropdownType.DATA_CALLING_TYPE,  lead.data_calling_type)) errs.push(`data_calling_type "${lead.data_calling_type}" is not in the allowed list`);
+      if (!allowed(DropdownType.DEAL_TYPE,           lead.deal_type))         errs.push(`deal_type "${lead.deal_type}" is not in the allowed list`);
 
       if (errs.length > 0) {
         invalidLeads.push({ row: i + 2, email: lead.email, errors: errs }); // row +2: header=1, 0-indexed
@@ -176,6 +178,7 @@ export async function POST(req: NextRequest) {
             leadStage:                 lead.lead_stage?.trim()                  || null,
             leadVerification:          lead.lead_verification?.trim()           || null,
             dataCallingType:           lead.data_calling_type?.trim()           || null,
+            dealType:                  lead.deal_type?.trim()                   || null,
             uploadedAt:                parseDate(lead.created_at),
             status:      'PENDING',
             uploadedById: session.user.id,

@@ -85,6 +85,7 @@ interface LeadDetail {
   leadStage?: string | null;
   leadVerification?: string | null;
   dataCallingType?: string | null;
+  dealType?: string | null;
   status: string;
   createdAt: string;
   uploadedBy?: { name: string };
@@ -1060,7 +1061,7 @@ export function LeadDetailDrawer({ leadId, onClose, canSubmitFeedback = false }:
 
                   {(lead.primaryApplicationConfirm || lead.primaryAdmissionConfirm ||
                     lead.leadConfirmation || lead.leadStage ||
-                    lead.leadVerification || lead.dataCallingType) && (
+                    lead.leadVerification || lead.dataCallingType || lead.dealType) && (
                     <div>
                       <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-2">
                         Lead Tracking
@@ -1072,6 +1073,7 @@ export function LeadDetailDrawer({ leadId, onClose, canSubmitFeedback = false }:
                         <InfoRow label="Lead Stage"            value={lead.leadStage} />
                         <InfoRow label="Lead Verification"     value={lead.leadVerification} />
                         <InfoRow label="Data Calling Type"     value={lead.dataCallingType} />
+                        <InfoRow label="Deal Type"              value={lead.dealType} />
                       </dl>
                     </div>
                   )}

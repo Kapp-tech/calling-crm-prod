@@ -6,7 +6,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useSession } from 'next-auth/react';
 import {
   Plus, Pencil, Trash2, Loader2, ListChecks, Tag, ShieldCheck, Globe2,
-  GraduationCap, MapPin, PhoneCall, CheckCircle2, Layers, Inbox,
+  GraduationCap, MapPin, PhoneCall, CheckCircle2, Layers, Inbox, Handshake,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -25,6 +25,8 @@ const TYPE_META: Record<string, { icon: React.ComponentType<{ className?: string
   ZONE:               { icon: MapPin,        color: 'text-rose-600 dark:text-rose-400',      bg: 'bg-rose-500/10',    ring: 'from-rose-500 to-rose-600' },
   DATA_CALLING_TYPE:  { icon: PhoneCall,     color: 'text-amber-600 dark:text-amber-400',    bg: 'bg-amber-500/10',   ring: 'from-amber-500 to-amber-600' },
   LEAD_CONFIRMATION:  { icon: CheckCircle2,  color: 'text-emerald-600 dark:text-emerald-400', bg: 'bg-emerald-500/10', ring: 'from-emerald-500 to-emerald-600' },
+  LEAD_STAGE:         { icon: Layers,        color: 'text-slate-600 dark:text-slate-400',    bg: 'bg-slate-500/10',   ring: 'from-slate-500 to-slate-600' },
+  DEAL_TYPE:          { icon: Handshake,     color: 'text-pink-600 dark:text-pink-400',      bg: 'bg-pink-500/10',    ring: 'from-pink-500 to-pink-600' },
 };
 const DEFAULT_META = { icon: ListChecks, color: 'text-slate-600 dark:text-slate-400', bg: 'bg-slate-500/10', ring: 'from-slate-500 to-slate-600' };
 

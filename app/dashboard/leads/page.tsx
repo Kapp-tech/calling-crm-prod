@@ -23,6 +23,7 @@ interface Lead {
   primaryApplicationConfirm?: string | null; primaryAdmissionConfirm?: string | null;
   leadConfirmation?: string | null; leadStage?: string | null;
   leadVerification?: string | null; dataCallingType?: string | null;
+  dealType?: string | null;
   uploadedAt?: string | null;
   status: string; createdAt: string; updatedAt: string;
   assignedTo?: { id: string; name: string } | null;
@@ -52,6 +53,7 @@ interface FilterOptions {
   colleges: string[]; courses: string[];
   leadConfirmations: string[]; leadVerifications: string[]; dataCallingTypes: string[];
   primaryAppConfirms: string[]; primaryAdmConfirms: string[]; leadStages: string[];
+  dealTypes: string[];
 }
 
 // ─── Advanced filter definitions ─────────────────────────────────────────────
@@ -92,6 +94,7 @@ const FILTER_GROUPS: { group: string; filters: FilterDef[] }[] = [
       { key: 'leadStage',         label: 'Lead Stage'            },
       { key: 'leadVerification',  label: 'Lead Verification'     },
       { key: 'dataCallingType',   label: 'Data Calling Type'     },
+      { key: 'dealType',          label: 'Deal Type'             },
     ],
   },
 ];
@@ -333,6 +336,7 @@ export default function AllLeadsPage() {
   const [leadStages,           setLeadStages]           = useState<string[]>([]);
   const [leadVerifications,    setLeadVerifications]    = useState<string[]>([]);
   const [dataCallingTypes,     setDataCallingTypes]     = useState<string[]>([]);
+  const [dealTypes,            setDealTypes]            = useState<string[]>([]);
 
   // Dialog state — which filter keys are "active" (shown below basic filters)
   const [activeFilters,     setActiveFilters]     = useState<string[]>([]);
@@ -356,6 +360,7 @@ export default function AllLeadsPage() {
     primaryAppConfirms.length > 0, primaryAdmConfirms.length > 0,
     leadConfirmations.length > 0, leadStages.length > 0,
     leadVerifications.length > 0, dataCallingTypes.length > 0,
+    dealTypes.length > 0,
   ].filter(Boolean).length;
 
   function openFilterDialog() {
@@ -388,6 +393,7 @@ export default function AllLeadsPage() {
       case 'leadStage':         setLeadStages([]);           break;
       case 'leadVerification':  setLeadVerifications([]);    break;
       case 'dataCallingType':   setDataCallingTypes([]);     break;
+      case 'dealType':          setDealTypes([]);            break;
     }
   }
 
@@ -439,6 +445,7 @@ export default function AllLeadsPage() {
     if (leadStages.length)          p.set('leadStage',           leadStages.join(','));
     if (leadVerifications.length)   p.set('leadVerification',    leadVerifications.join(','));
     if (dataCallingTypes.length)    p.set('dataCallingType',     dataCallingTypes.join(','));
+    if (dealTypes.length)           p.set('dealType',            dealTypes.join(','));
     return p;
   }
 
@@ -447,7 +454,7 @@ export default function AllLeadsPage() {
     updatedDateFrom, updatedDateTo,
     campaigns, leadTypes, leadOrigins, zones, tlIds, agentIds,
     primaryAppConfirms, primaryAdmConfirms, leadConfirmations,
-    leadStages, leadVerifications, dataCallingTypes,
+    leadStages, leadVerifications, dataCallingTypes, dealTypes,
   ];
 
   const { data: categoryCounts = {} } = useQuery<Record<string, number>>({
@@ -504,6 +511,7 @@ export default function AllLeadsPage() {
   const primaryAppConfirmOpts   = useMemo(() => str2opt(filterOpts?.primaryAppConfirms ?? ['Yes', 'No']), [filterOpts]);
   const primaryAdmConfirmOpts   = useMemo(() => str2opt(filterOpts?.primaryAdmConfirms ?? ['Yes', 'No']), [filterOpts]);
   const leadStageOptions        = useMemo(() => str2opt(filterOpts?.leadStages),        [filterOpts]);
+  const dealTypeOptions         = useMemo(() => str2opt(filterOpts?.dealTypes),         [filterOpts]);
 
   // ── TLs / Agents ───────────────────────────────────────────────────────────
 
@@ -581,6 +589,7 @@ export default function AllLeadsPage() {
     setPrimaryAppConfirms([]); setPrimaryAdmConfirms([]);
     setLeadConfirmations([]); setLeadStages([]);
     setLeadVerifications([]); setDataCallingTypes([]);
+    setDealTypes([]);
     setActiveFilters([]);
     setFeedbackMode('all'); setSelectedOptIds([]); setSelectedCategoryIds([]);
     setPage(1);
@@ -912,6 +921,12 @@ export default function AllLeadsPage() {
               <MultiSelectFilter placeholder="Any" options={dataCallingTypeOptions} selected={dataCallingTypes} onChange={(v) => filterChange(() => setDataCallingTypes(v))} loading={optsLoading} />
             </div>
           )}
+          {activeFilters.includes('dealType') && (
+            <div className="flex flex-col gap-1">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Deal Type</span>
+              <MultiSelectFilter placeholder="Any" options={dealTypeOptions} selected={dealTypes} onChange={(v) => filterChange(() => setDealTypes(v))} loading={optsLoading} />
+            </div>
+          )}
         </div>
       )}
 
@@ -953,6 +968,7 @@ export default function AllLeadsPage() {
               <th className="whitespace-nowrap px-3 py-2.5 text-center text-[10px] font-bold uppercase tracking-wider text-muted-foreground min-w-[120px]">Lead Stage</th>
               <th className="whitespace-nowrap px-3 py-2.5 text-center text-[10px] font-bold uppercase tracking-wider text-muted-foreground min-w-[140px]">Lead Verification</th>
               <th className="whitespace-nowrap px-3 py-2.5 text-center text-[10px] font-bold uppercase tracking-wider text-muted-foreground min-w-[140px]">Data Calling Type</th>
+              <th className="whitespace-nowrap px-3 py-2.5 text-center text-[10px] font-bold uppercase tracking-wider text-muted-foreground min-w-[120px]">Deal Type</th>
               <th className="whitespace-nowrap px-3 py-2.5 text-left text-[10px] font-bold uppercase tracking-wider text-muted-foreground min-w-[130px]">Updated At</th>
               <th className="whitespace-nowrap px-3 py-2.5 text-left text-[10px] font-bold uppercase tracking-wider text-muted-foreground min-w-[130px]">Created At</th>
               <th className="whitespace-nowrap px-3 py-2.5 text-left text-[10px] font-bold uppercase tracking-wider text-muted-foreground min-w-[130px]">Uploaded At</th>
@@ -1074,6 +1090,7 @@ export default function AllLeadsPage() {
                       <td className="px-3 py-2.5 whitespace-nowrap text-center text-xs text-muted-foreground">{lead.leadStage || '—'}</td>
                       <td className="px-3 py-2.5 whitespace-nowrap text-center text-xs text-muted-foreground">{lead.leadVerification || '—'}</td>
                       <td className="px-3 py-2.5 whitespace-nowrap text-center text-xs text-muted-foreground">{lead.dataCallingType || '—'}</td>
+                      <td className="px-3 py-2.5 whitespace-nowrap text-center text-xs text-muted-foreground">{lead.dealType || '—'}</td>
 
                       <td className="px-3 py-2.5 whitespace-nowrap text-xs text-muted-foreground">{fmtDate(lead.updatedAt)}</td>
                       <td className="px-3 py-2.5 whitespace-nowrap text-xs text-muted-foreground">{lead.uploadedAt ? fmtDate(lead.uploadedAt) : '—'}</td>
@@ -1083,7 +1100,7 @@ export default function AllLeadsPage() {
                 })}
                 {leads.length === 0 && (
                   <tr>
-                    <td colSpan={27} className="px-3 py-16 text-center text-muted-foreground text-sm">
+                    <td colSpan={28} className="px-3 py-16 text-center text-muted-foreground text-sm">
                       No leads found matching the current filters.
                     </td>
                   </tr>
