@@ -5,14 +5,17 @@ import { prisma } from '@/lib/prisma';
 import { logActivity } from '@/lib/permissions';
 import { verifyApiKey } from '@/lib/api-key';
 import { fetchLmsCityNames, fetchLmsStateNames, fetchLmsCourseNames, toCanonicalMap } from '@/lib/lms-api';
-import { buildDropdownValidationSets, isAllowedDropdownValue } from '@/lib/dropdown-validation';
+import { buildDropdownValidationSets, isAllowedDropdownValue, type DropdownValidationSets } from '@/lib/dropdown-validation';
 
 // ═════════════════════════════════════════════════════════════════════════
 // POST /api/v1/leads — External Lead Ingestion API
 // ═════════════════════════════════════════════════════════════════════════
 //
 // Lets an external system (partner LMS, referral site, landing-page backend,
-// etc.) push a lead directly into this CRM.
+// etc.) push leads directly into this CRM. Accepts EITHER a single lead
+// object (original format, response unchanged for backward compatibility)
+// OR a JSON array of up to 500 lead objects in one call — use the array
+// form to push many leads without hitting this endpoint once per lead.
 //
 // Unlike CSV upload / Single Add Lead, a lead created here SKIPS Lead
 // Approvals entirely: it's created with status APPROVED and no assignee, so
@@ -25,9 +28,10 @@ import { buildDropdownValidationSets, isAllowedDropdownValue } from '@/lib/dropd
 //   Generate/revoke keys under Super Admin → Configurations → API Keys.
 //   A request with a missing, malformed, unknown, or revoked key gets 401.
 //
-// REQUEST BODY (application/json)
-//   Every field below is REQUIRED. A request missing any of them, or with a
-//   value that fails its check, is rejected with 400 and never creates a lead.
+// REQUEST BODY (application/json) — a single object, OR an array of objects
+//   Every field below is REQUIRED on each lead object. A lead missing any of
+//   them, or with a value that fails its check, is rejected — the array form
+//   reports failures per item and still creates everything else that's valid.
 //
 //   interface LeadIngestPayload {
 //     name: string;               // full name
@@ -64,7 +68,11 @@ import { buildDropdownValidationSets, isAllowedDropdownValue } from '@/lib/dropd
 //   as free text (there's nothing to validate against) — configure it in
 //   Manage Dropdowns once you want that specific field enforced.
 //
-// RESPONSES
+//   Duplicates (email + resolved college, case-insensitive) are checked both
+//   against leads already in the CRM AND against earlier items in the same
+//   array — sending the same lead twice in one call only creates it once.
+//
+// RESPONSES — single-object request body (unchanged)
 //   201 Created      — lead accepted, created APPROVED and unassigned
 //     { "success": true, "message": "Lead Processed Successfully", "Lead_ID": "LID50" }
 //
@@ -75,6 +83,24 @@ import { buildDropdownValidationSets, isAllowedDropdownValue } from '@/lib/dropd
 //   400 Bad Request    — one or more fields were missing or failed validation
 //     { "success": false, "message": "Validation failed", "errors": { "<field>": "<reason>", ... } }
 //
+// RESPONSES — array request body
+//   201 Created (at least one lead was created) or 400 Bad Request (none were)
+//     {
+//       "success": true,
+//       "message": "Processed 3 leads — 2 created, 1 duplicate, 0 failed",
+//       "summary": { "total": 3, "created": 2, "duplicate": 1, "failed": 0 },
+//       "results": [
+//         { "index": 0, "success": true,  "message": "Lead Processed Successfully", "Lead_ID": "LID101" },
+//         { "index": 1, "success": true,  "message": "Lead Processed Successfully", "Lead_ID": "LID102" },
+//         { "index": 2, "success": false, "message": "Duplicate lead...", "Lead_ID": "LID101" }
+//       ]
+//     }
+//   Each entry in "results" is shaped exactly like a single-object response,
+//   plus its "index" (0-based position) in the array you sent — a failed
+//   validation entry there has "errors" instead of "Lead_ID", same as above.
+//   Max 500 leads per call — send more in a second request.
+//
+// RESPONSES — either form
 //   401 Unauthorized    — missing / malformed / unknown / revoked API key
 //     { "success": false, "message": "Missing or invalid API key" }
 //
@@ -86,6 +112,8 @@ import { buildDropdownValidationSets, isAllowedDropdownValue } from '@/lib/dropd
 // ad-hoc codes, so any standard HTTP client / API gateway on your side
 // handles it correctly without special-casing.
 // ═════════════════════════════════════════════════════════════════════════
+
+const MAX_BULK = 500;
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -121,8 +149,78 @@ const payloadSchema = z.object({
     .refine(isValidCalendarDate, 'createdAt is not a valid calendar date'),
 });
 
+type LeadPayload = z.infer<typeof payloadSchema>;
+
 function fail(status: number, message: string, extra?: Record<string, unknown>) {
   return NextResponse.json({ success: false, message, ...extra }, { status });
+}
+
+function fieldErrorsFromZod(error: z.ZodError): Record<string, string> {
+  const errors: Record<string, string> = {};
+  for (const issue of error.issues) {
+    const key = issue.path.join('.') || '_';
+    if (!errors[key]) errors[key] = issue.message;
+  }
+  return errors;
+}
+
+// ── Shared cross-reference validation (city/state/course/college/dropdowns) ──
+// Resolves free-text values against the LMS location provider + Manage
+// Dropdowns, case-insensitively. Pure/in-memory — the LMS names and dropdown
+// sets are fetched once per request (not once per lead) and passed in.
+
+interface ResolvedFields {
+  city?: string;
+  state?: string;
+  course?: string;
+  college?: string;
+}
+
+interface CrossRefMaps {
+  cityMap: Map<string, string>;
+  stateMap: Map<string, string>;
+  courseMap: Map<string, string>;
+  dropdownData: DropdownValidationSets;
+}
+
+function resolveAndValidate(d: LeadPayload, maps: CrossRefMaps): { errors: Record<string, string>; resolved: ResolvedFields } {
+  const errors: Record<string, string> = {};
+  const resolved: ResolvedFields = {};
+
+  const canonicalCity = maps.cityMap.get(d.city.toLowerCase());
+  if (!canonicalCity) errors.city = `"${d.city}" does not match any known city`;
+  else resolved.city = canonicalCity;
+
+  const canonicalState = maps.stateMap.get(d.state.toLowerCase());
+  if (!canonicalState) errors.state = `"${d.state}" does not match any known state`;
+  else resolved.state = canonicalState;
+
+  const canonicalCourse = maps.courseMap.get(d.course.toLowerCase());
+  if (!canonicalCourse) errors.course = `"${d.course}" does not match any known course`;
+  else resolved.course = canonicalCourse;
+
+  const canonicalCollege = maps.dropdownData.collegeIdMap.get(d.kappCollegeId.toLowerCase());
+  if (!canonicalCollege) errors.kappCollegeId = `"${d.kappCollegeId}" is not a valid KAPP College ID`;
+  else resolved.college = canonicalCollege;
+
+  const checkDropdown = (type: DropdownType, value: string, field: string, label: string) => {
+    if (!isAllowedDropdownValue(maps.dropdownData, type, value)) {
+      errors[field] = `"${value}" is not a configured ${label} value`;
+    }
+  };
+  checkDropdown(DropdownType.LEAD_TYPE, d.leadType, 'leadType', 'Lead Type');
+  checkDropdown(DropdownType.LEAD_ORIGIN, d.leadOrigin, 'leadOrigin', 'Lead Origin');
+  checkDropdown(DropdownType.LEAD_CONFIRMATION, d.leadConfirmation, 'leadConfirmation', 'Lead Confirmation');
+  checkDropdown(DropdownType.LEAD_STAGE, d.leadStage, 'leadStage', 'Lead Stage');
+  checkDropdown(DropdownType.LEAD_VERIFICATION, d.leadVerification, 'leadVerification', 'Lead Verification');
+  checkDropdown(DropdownType.DATA_CALLING_TYPE, d.dataCallingType, 'dataCallingType', 'Data Calling Type');
+  checkDropdown(DropdownType.DEAL_TYPE, d.dealType, 'dealType', 'Deal Type');
+
+  return { errors, resolved };
+}
+
+function dedupeKey(email: string, college: string | null): string {
+  return `${email.toLowerCase()}|${(college ?? '').toLowerCase()}`;
 }
 
 export async function POST(req: NextRequest) {
@@ -135,131 +233,202 @@ export async function POST(req: NextRequest) {
     const body = await req.json().catch(() => null);
     if (body === null) return fail(400, 'Request body must be valid JSON');
 
-    const parsed = payloadSchema.safeParse(body);
-    if (!parsed.success) {
-      const errors: Record<string, string> = {};
-      for (const issue of parsed.error.issues) {
-        const key = issue.path.join('.') || '_';
-        if (!errors[key]) errors[key] = issue.message;
-      }
-      return fail(400, 'Validation failed', { errors });
-    }
-    const d = parsed.data;
+    const isBulk = Array.isArray(body);
 
-    // ── Cross-reference validation (city/state/course/college/dropdowns) ──
-    const errors: Record<string, string> = {};
-
+    // ── Cross-reference data — fetched ONCE per request, reused for every
+    // lead in the array, instead of once per lead ──────────────────────────
     const [cityNames, stateNames, courseNames, dropdownData] = await Promise.all([
       fetchLmsCityNames().catch(() => null),
       fetchLmsStateNames().catch(() => null),
       fetchLmsCourseNames().catch(() => null),
       buildDropdownValidationSets(),
     ]);
-
     if (cityNames === null || stateNames === null || courseNames === null) {
       return fail(502, 'Could not verify city/state/course against the location provider — please retry');
     }
-
-    let resolvedCity: string | undefined;
-    const canonicalCity = toCanonicalMap(cityNames).get(d.city.toLowerCase());
-    if (!canonicalCity) errors.city = `"${d.city}" does not match any known city`;
-    else resolvedCity = canonicalCity;
-
-    let resolvedState: string | undefined;
-    const canonicalState = toCanonicalMap(stateNames).get(d.state.toLowerCase());
-    if (!canonicalState) errors.state = `"${d.state}" does not match any known state`;
-    else resolvedState = canonicalState;
-
-    let resolvedCourse: string | undefined;
-    const canonicalCourse = toCanonicalMap(courseNames).get(d.course.toLowerCase());
-    if (!canonicalCourse) errors.course = `"${d.course}" does not match any known course`;
-    else resolvedCourse = canonicalCourse;
-
-    let resolvedCollege: string | undefined;
-    const canonicalCollege = dropdownData.collegeIdMap.get(d.kappCollegeId.toLowerCase());
-    if (!canonicalCollege) errors.kappCollegeId = `"${d.kappCollegeId}" is not a valid KAPP College ID`;
-    else resolvedCollege = canonicalCollege;
-
-    const checkDropdown = (type: DropdownType, value: string, field: string, label: string) => {
-      if (!isAllowedDropdownValue(dropdownData, type, value)) {
-        errors[field] = `"${value}" is not a configured ${label} value`;
-      }
+    const maps: CrossRefMaps = {
+      cityMap: toCanonicalMap(cityNames),
+      stateMap: toCanonicalMap(stateNames),
+      courseMap: toCanonicalMap(courseNames),
+      dropdownData,
     };
-    checkDropdown(DropdownType.LEAD_TYPE, d.leadType, 'leadType', 'Lead Type');
-    checkDropdown(DropdownType.LEAD_ORIGIN, d.leadOrigin, 'leadOrigin', 'Lead Origin');
-    checkDropdown(DropdownType.LEAD_CONFIRMATION, d.leadConfirmation, 'leadConfirmation', 'Lead Confirmation');
-    checkDropdown(DropdownType.LEAD_STAGE, d.leadStage, 'leadStage', 'Lead Stage');
-    checkDropdown(DropdownType.LEAD_VERIFICATION, d.leadVerification, 'leadVerification', 'Lead Verification');
-    checkDropdown(DropdownType.DATA_CALLING_TYPE, d.dataCallingType, 'dataCallingType', 'Data Calling Type');
-    checkDropdown(DropdownType.DEAL_TYPE, d.dealType, 'dealType', 'Deal Type');
 
-    if (Object.keys(errors).length > 0) {
-      return fail(400, 'Validation failed', { errors });
-    }
+    // ═══════════════════════════════════════════════════════════════════
+    // Single-object request — unchanged behavior/response shape
+    // ═══════════════════════════════════════════════════════════════════
+    if (!isBulk) {
+      const parsed = payloadSchema.safeParse(body);
+      if (!parsed.success) return fail(400, 'Validation failed', { errors: fieldErrorsFromZod(parsed.error) });
+      const d = parsed.data;
 
-    // ── Duplicate check (same rule as CSV upload / Single Add Lead: email + college) ──
-    const email = d.email.toLowerCase();
-    const college = resolvedCollege ?? null;
+      const { errors, resolved } = resolveAndValidate(d, maps);
+      if (Object.keys(errors).length > 0) return fail(400, 'Validation failed', { errors });
 
-    const existing = await prisma.lead.findFirst({
-      where: { email, college: college ? { equals: college, mode: 'insensitive' } : null },
-      select: { id: true },
-    });
-    if (existing) {
-      return NextResponse.json(
-        {
-          success: false,
-          message: 'Duplicate lead — a lead with this email and college already exists',
-          Lead_ID: existing.id,
+      const email = d.email.toLowerCase();
+      const college = resolved.college ?? null;
+
+      const existing = await prisma.lead.findFirst({
+        where: { email, college: college ? { equals: college, mode: 'insensitive' } : null },
+        select: { id: true },
+      });
+      if (existing) {
+        return NextResponse.json(
+          { success: false, message: 'Duplicate lead — a lead with this email and college already exists', Lead_ID: existing.id },
+          { status: 409 },
+        );
+      }
+
+      const now = new Date();
+      const lead = await prisma.lead.create({
+        data: {
+          name: d.name, email, phone: d.phone,
+          city: resolved.city, state: resolved.state, course: resolved.course, college,
+          kappCollegeId: d.kappCollegeId, campaign: d.leadCode,
+          leadType: d.leadType, leadOrigin: d.leadOrigin, leadConfirmation: d.leadConfirmation,
+          leadStage: d.leadStage, leadVerification: d.leadVerification,
+          dataCallingType: d.dataCallingType, dealType: d.dealType,
+          primaryApplicationConfirm: 'No', primaryAdmissionConfirm: 'No',
+          uploadedAt: new Date(`${d.createdAt}T00:00:00.000Z`),
+          status: 'APPROVED', approvedById: apiKey.createdById, approvedAt: now,
+          uploadedById: apiKey.createdById, apiKeyId: apiKey.id,
         },
-        { status: 409 },
-      );
+        select: { id: true },
+      });
+
+      await logActivity({
+        userId: apiKey.createdById,
+        action: 'LEAD_CREATED_VIA_API',
+        targetId: lead.id,
+        targetType: 'Lead',
+        description: `Lead ${lead.id} created via API key "${apiKey.name}" — auto-approved, sent to Unassigned Leads`,
+        metadata: { apiKeyId: apiKey.id, apiKeyName: apiKey.name },
+      });
+
+      return NextResponse.json({ success: true, message: 'Lead Processed Successfully', Lead_ID: lead.id }, { status: 201 });
     }
 
-    // ── Create — APPROVED + unassigned, skipping Lead Approvals entirely ──
-    const now = new Date();
-    const lead = await prisma.lead.create({
-      data: {
-        name: d.name,
-        email,
-        phone: d.phone,
-        city: resolvedCity,
-        state: resolvedState,
-        course: resolvedCourse,
-        college,
-        kappCollegeId: d.kappCollegeId,
-        campaign: d.leadCode,
-        leadType: d.leadType,
-        leadOrigin: d.leadOrigin,
-        leadConfirmation: d.leadConfirmation,
-        leadStage: d.leadStage,
-        leadVerification: d.leadVerification,
-        dataCallingType: d.dataCallingType,
-        dealType: d.dealType,
-        primaryApplicationConfirm: 'No',
-        primaryAdmissionConfirm: 'No',
-        uploadedAt: new Date(`${d.createdAt}T00:00:00.000Z`),
-        status: 'APPROVED',
-        approvedById: apiKey.createdById,
-        approvedAt: now,
-        uploadedById: apiKey.createdById,
-        apiKeyId: apiKey.id,
-      },
-      select: { id: true },
-    });
+    // ═══════════════════════════════════════════════════════════════════
+    // Array request — bulk ingestion
+    // ═══════════════════════════════════════════════════════════════════
+    if (body.length === 0) return fail(400, 'Array must contain at least 1 lead');
+    if (body.length > MAX_BULK) return fail(400, `A single request can contain at most ${MAX_BULK} leads — split into multiple calls`);
 
-    await logActivity({
-      userId: apiKey.createdById,
-      action: 'LEAD_CREATED_VIA_API',
-      targetId: lead.id,
-      targetType: 'Lead',
-      description: `Lead ${lead.id} created via API key "${apiKey.name}" — auto-approved, sent to Unassigned Leads`,
-      metadata: { apiKeyId: apiKey.id, apiKeyName: apiKey.name },
-    });
+    type Pending = { index: number; d: LeadPayload; college: string | null };
+    const results: ({ index: number; success: boolean; message: string; Lead_ID?: string; errors?: Record<string, string> })[] =
+      new Array(body.length);
+    const pending: Pending[] = [];
+
+    // Phase 1 — shape + cross-reference validation for every item (no DB calls)
+    for (let index = 0; index < body.length; index++) {
+      const parsed = payloadSchema.safeParse(body[index]);
+      if (!parsed.success) {
+        results[index] = { index, success: false, message: 'Validation failed', errors: fieldErrorsFromZod(parsed.error) };
+        continue;
+      }
+      const d = parsed.data;
+      const { errors, resolved } = resolveAndValidate(d, maps);
+      if (Object.keys(errors).length > 0) {
+        results[index] = { index, success: false, message: 'Validation failed', errors };
+        continue;
+      }
+      pending.push({ index, d, college: resolved.college ?? null });
+    }
+
+    // Phase 2 — duplicate check, batched into ONE query against leads already
+    // in the CRM, plus dedup against earlier items in this same array.
+    if (pending.length > 0) {
+      const existing = await prisma.lead.findMany({
+        where: { OR: pending.map((p) => ({ email: p.d.email.toLowerCase(), college: p.college ? { equals: p.college, mode: 'insensitive' as const } : null })) },
+        select: { id: true, email: true, college: true },
+      });
+      const existingByKey = new Map<string, string>();
+      for (const e of existing) existingByKey.set(dedupeKey(e.email, e.college), e.id);
+
+      const seenInBatch = new Map<string, number>(); // key -> index that will create it
+      const toCreate: Pending[] = [];
+      const duplicateOfIndex = new Map<number, number>(); // index -> index of the batch item creating it
+
+      for (const p of pending) {
+        const key = dedupeKey(p.d.email, p.college);
+        const existingId = existingByKey.get(key);
+        if (existingId) {
+          results[p.index] = { index: p.index, success: false, message: 'Duplicate lead — a lead with this email and college already exists', Lead_ID: existingId };
+          continue;
+        }
+        const batchIndex = seenInBatch.get(key);
+        if (batchIndex !== undefined) {
+          duplicateOfIndex.set(p.index, batchIndex);
+          continue;
+        }
+        seenInBatch.set(key, p.index);
+        toCreate.push(p);
+      }
+
+      // Phase 3 — create everything that's left, in parallel
+      const now = new Date();
+      const createdIdByIndex = new Map<number, string>();
+      await Promise.all(toCreate.map(async (p) => {
+        try {
+          const { d, college, index } = p;
+          const { resolved } = resolveAndValidate(d, maps); // cheap, re-derive canonical city/state/course
+          const lead = await prisma.lead.create({
+            data: {
+              name: d.name, email: d.email.toLowerCase(), phone: d.phone,
+              city: resolved.city, state: resolved.state, course: resolved.course, college,
+              kappCollegeId: d.kappCollegeId, campaign: d.leadCode,
+              leadType: d.leadType, leadOrigin: d.leadOrigin, leadConfirmation: d.leadConfirmation,
+              leadStage: d.leadStage, leadVerification: d.leadVerification,
+              dataCallingType: d.dataCallingType, dealType: d.dealType,
+              primaryApplicationConfirm: 'No', primaryAdmissionConfirm: 'No',
+              uploadedAt: new Date(`${d.createdAt}T00:00:00.000Z`),
+              status: 'APPROVED', approvedById: apiKey.createdById, approvedAt: now,
+              uploadedById: apiKey.createdById, apiKeyId: apiKey.id,
+            },
+            select: { id: true },
+          });
+          createdIdByIndex.set(index, lead.id);
+          results[index] = { index, success: true, message: 'Lead Processed Successfully', Lead_ID: lead.id };
+        } catch (err) {
+          console.error('[v1/leads POST bulk] failed to create item', p.index, err);
+          results[p.index] = { index: p.index, success: false, message: 'Internal server error creating this lead' };
+        }
+      }));
+
+      // Backfill intra-batch duplicates with the Lead_ID that was actually created for them
+      duplicateOfIndex.forEach((sourceIndex, dupIndex) => {
+        const sourceId = createdIdByIndex.get(sourceIndex);
+        results[dupIndex] = sourceId
+          ? { index: dupIndex, success: false, message: 'Duplicate lead — same email and college as another lead earlier in this request', Lead_ID: sourceId }
+          : { index: dupIndex, success: false, message: 'Duplicate lead — same email and college as another lead earlier in this request, which failed to create' };
+      });
+    }
+
+    const summary = {
+      total: results.length,
+      created: results.filter((r) => r.success).length,
+      duplicate: results.filter((r) => !r.success && r.message.startsWith('Duplicate')).length,
+      failed: results.filter((r) => !r.success && !r.message.startsWith('Duplicate')).length,
+    };
+
+    if (summary.created > 0) {
+      await logActivity({
+        userId: apiKey.createdById,
+        action: 'LEAD_CREATED_VIA_API',
+        targetId: 'bulk',
+        targetType: 'Lead',
+        description: `${summary.created} lead(s) created via bulk API key "${apiKey.name}" (${summary.total} sent, ${summary.duplicate} duplicate, ${summary.failed} failed) — auto-approved, sent to Unassigned Leads`,
+        metadata: { apiKeyId: apiKey.id, apiKeyName: apiKey.name, ...summary },
+      });
+    }
 
     return NextResponse.json(
-      { success: true, message: 'Lead Processed Successfully', Lead_ID: lead.id },
-      { status: 201 },
+      {
+        success: summary.created > 0,
+        message: `Processed ${summary.total} lead${summary.total === 1 ? '' : 's'} — ${summary.created} created, ${summary.duplicate} duplicate, ${summary.failed} failed`,
+        summary,
+        results,
+      },
+      { status: summary.created > 0 ? 201 : 400 },
     );
   } catch (error) {
     console.error('[v1/leads POST]', error);
