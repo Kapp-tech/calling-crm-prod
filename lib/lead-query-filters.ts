@@ -15,6 +15,7 @@ export const nonFeedbackQuerySchema = z.object({
   status:       z.nativeEnum(LeadStatus).optional(),
   assignedToId: z.string().optional(),   // comma-separated agent IDs
   uploadedById: z.string().optional(),
+  batchId:      z.string().optional(),   // CSV upload batch — the most precise way to target a mistaken upload
   search:       z.string().optional(),
   zone:         z.string().optional(),   // comma-separated
   city:         z.string().optional(),   // comma-separated
@@ -40,6 +41,16 @@ export const nonFeedbackQuerySchema = z.object({
 });
 
 export type NonFeedbackQuery = z.infer<typeof nonFeedbackQuerySchema>;
+
+/**
+ * True if at least one real filter field was supplied. Used to block
+ * destructive bulk operations (e.g. delete-by-filter) from running
+ * unscoped — an empty query object must never be treated as "match every
+ * lead" for anything that deletes data.
+ */
+export function hasAnyFilter(q: NonFeedbackQuery): boolean {
+  return Object.values(q).some((v) => v !== undefined && v !== '');
+}
 
 export function splitCsv(v: string | undefined): string[] {
   return v ? v.split(',').map((s) => s.trim()).filter(Boolean) : [];
@@ -69,6 +80,7 @@ export function buildNonFeedbackFilters(
   if (q.assignmentStatus === 'unassigned') filters.push({ assignedToId: null });
   if (q.assignmentStatus === 'assigned')   filters.push({ assignedToId: { not: null } });
   if (q.uploadedById) filters.push({ uploadedById: q.uploadedById });
+  if (q.batchId) filters.push({ batchId: q.batchId });
   if (q.search) {
     filters.push({
       OR: [

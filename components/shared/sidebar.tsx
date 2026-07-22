@@ -12,7 +12,7 @@ import {
   UserCircle, UserCheck, ClipboardList, LogOut, ChevronRight, ChevronDown,
   GitBranch, CalendarClock, X, ChevronsLeft, ChevronsRight,
   GraduationCap, Tag, Globe2, MapPin, CheckSquare, ShieldCheck, Phone,
-  Megaphone, Gauge, Receipt, Layers, KeyRound, Settings, Handshake,
+  Megaphone, Gauge, Receipt, Layers, KeyRound, Settings, Handshake, Trash2,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -77,6 +77,16 @@ const NAV: NavEntry[] = [
     features: ['VIEW_LEADS', 'VIEW_REPORTS'],
   },
   {
+    type: 'leaf',
+    href: '/dashboard/counselling-agent/scheduled-calls',
+    label: 'Scheduled Calls',
+    icon: CalendarClock,
+    // REPORTS is read-only here (page has no mark-done/cancel actions) —
+    // mirrors /api/leads/scheduled-calls, which already scopes REPORTS
+    // the same as SUPER_ADMIN (sees everything, no team restriction).
+    roles: ['SUPER_ADMIN', 'REPORTS', 'COUNSELLING_TL', 'COUNSELLING_AGENT'],
+  },
+  {
     type: 'group',
     key: 'manage-leads',
     label: 'Manage Leads',
@@ -103,19 +113,20 @@ const NAV: NavEntry[] = [
         features: ['ASSIGN_LEADS'],
       },
       {
-        href: '/dashboard/counselling-agent/scheduled-calls',
-        label: 'Scheduled Calls',
-        icon: CalendarClock,
-        // REPORTS is read-only here (page has no mark-done/cancel actions) —
-        // mirrors /api/leads/scheduled-calls, which already scopes REPORTS
-        // the same as SUPER_ADMIN (sees everything, no team restriction).
-        roles: ['SUPER_ADMIN', 'REPORTS', 'COUNSELLING_TL', 'COUNSELLING_AGENT'],
-      },
-      {
         href: '/dashboard/super-admin/upload-limits',
         label: 'Upload Limits',
         icon: Gauge,
         roles: ['SUPER_ADMIN'],
+      },
+      {
+        href: '/dashboard/super-admin/bulk-delete-leads',
+        label: 'Bulk Delete Leads',
+        icon: Trash2,
+        // Hard-restricted to SUPER_ADMIN — irreversible, so this one is not
+        // exposed through the permission matrix like the other Manage Leads
+        // items above.
+        roles: ['SUPER_ADMIN'],
+        exact: true,
       },
     ],
   },
