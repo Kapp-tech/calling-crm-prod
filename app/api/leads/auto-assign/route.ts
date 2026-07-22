@@ -67,7 +67,7 @@ export async function POST(req: NextRequest) {
   // Fetch current assignee chain so we can shift it
   const currentLeads = await prisma.lead.findMany({
     where: { id: { in: leadIds } },
-    select: { id: true, assignedToId: true, assignedFromId: true, assignedById: true },
+    select: { id: true, assignedToId: true, assignedFromId: true, assignedById: true, currentCycle: true },
   });
   const leadChainMap = new Map(currentLeads.map((l) => [l.id, l]));
 
@@ -82,7 +82,25 @@ export async function POST(req: NextRequest) {
     const now = new Date();
 
     if (resetFeedbacks) {
-      await tx.leadFeedback.deleteMany({ where: { leadId: { in: leadIds } } });
+      // Archive outgoing feedback instead of destroying it — see single-lead
+      // assign route for the full rationale (TL/Super Admin keep visibility,
+      // newly-assigned agents get a clean lead).
+      const existingFeedbacks = await tx.leadFeedback.findMany({ where: { leadId: { in: leadIds } } });
+      if (existingFeedbacks.length > 0) {
+        await tx.leadFeedbackArchive.createMany({
+          data: existingFeedbacks.map((fb) => ({
+            leadId:           fb.leadId,
+            agentId:          fb.agentId,
+            feedbackOptionId: fb.feedbackOptionId,
+            remarks:          fb.remarks,
+            followUpNumber:   fb.followUpNumber,
+            createdAt:        fb.createdAt,
+            cycle:            leadChainMap.get(fb.leadId)?.currentCycle ?? 1,
+            archivedById:     session.user.id,
+          })),
+        });
+        await tx.leadFeedback.deleteMany({ where: { leadId: { in: leadIds } } });
+      }
       await tx.scheduledCall.updateMany({
         where: { leadId: { in: leadIds }, status: 'PENDING' },
         data:  { status: 'CANCELLED' },
@@ -102,7 +120,8 @@ export async function POST(req: NextRequest) {
           teamId:          agent.teamId ?? null,
           assignedFromId:  current?.assignedToId  ?? null,
           prevAssignee2Id: current?.assignedById  ?? null,
-          ...(resetFeedbacks ? { currentFeedbackOptionId: null } : {}),
+          lastAssignmentWasFresh: !!resetFeedbacks,
+          ...(resetFeedbacks ? { currentFeedbackOptionId: null, currentCycle: { increment: 1 } } : {}),
         },
       });
     }
@@ -110,8 +129,8 @@ export async function POST(req: NextRequest) {
     await logActivity({
       userId: session.user.id,
       action: 'LEAD_ASSIGNED',
-      description: `Auto-assigned ${leadIds.length} leads across ${agents.length} agents (round-robin)`,
-      metadata: { leadIds: leadIds.length, agentCount: agents.length },
+      description: `Auto-assigned ${leadIds.length} leads across ${agents.length} agents (round-robin)${resetFeedbacks ? ' — reassigned as fresh, previous feedback archived' : ''}`,
+      metadata: { leadIds: leadIds.length, agentCount: agents.length, fresh: !!resetFeedbacks },
     });
   }, { timeout: 30000 });
 

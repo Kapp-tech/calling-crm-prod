@@ -37,6 +37,11 @@ interface Feedback {
   feedbackOption: { id: string; label: string };
 }
 
+interface ArchivedFeedback extends Feedback {
+  cycle: number;
+  archivedBy?: { id: string; name: string } | null;
+}
+
 interface LeadProfile {
   id: string;
   budget?: string | null;
@@ -105,6 +110,7 @@ interface LeadDetail {
   parentMobile?: string | null;
   gender?:       string | null;
   feedbacks: Feedback[];
+  archivedFeedbacks?: ArchivedFeedback[];
   profile?: LeadProfile | null;
   _count?: { feedbacks: number };
 }
@@ -726,7 +732,7 @@ interface ScheduledCallItem {
   status: 'PENDING' | 'DONE' | 'CANCELLED';
 }
 
-function CallsTab({ leadId, feedbacks }: { leadId: string; feedbacks: Feedback[] }) {
+function CallsTab({ leadId, feedbacks, archivedFeedbacks = [] }: { leadId: string; feedbacks: Feedback[]; archivedFeedbacks?: ArchivedFeedback[] }) {
   const qc = useQueryClient();
   const { toast } = useToast();
 
@@ -829,7 +835,45 @@ function CallsTab({ leadId, feedbacks }: { leadId: string; feedbacks: Feedback[]
             ))}
           </div>
         )}
+      </div>
 
+      {/* Previous assignment history — feedback archived by a "reassign as fresh"
+          reset. Only ever populated for roles other than the assigned agent. */}
+      {archivedFeedbacks.length > 0 && (
+        <div>
+          <p className="mb-2 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+            Previous Assignment History
+          </p>
+          <div className="space-y-2">
+            {Object.entries(
+              archivedFeedbacks.reduce<Record<number, ArchivedFeedback[]>>((acc, f) => {
+                (acc[f.cycle] ??= []).push(f);
+                return acc;
+              }, {})
+            ).map(([cycle, items]) => (
+              <div key={cycle} className="space-y-2">
+                <p className="text-[10px] font-semibold text-muted-foreground/70">Cycle {cycle}</p>
+                {items.map((f) => (
+                  <div key={f.id} className="rounded-lg border border-dashed border-border/60 bg-muted/30 p-3 space-y-1.5 text-sm">
+                    <div className="flex items-center justify-between">
+                      <span className="font-medium text-xs">Follow-up #{f.followUpNumber}</span>
+                      <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-semibold bg-muted text-muted-foreground border border-border">
+                        {f.feedbackOption.label}
+                      </span>
+                    </div>
+                    {f.remarks && <p className="text-foreground">{f.remarks}</p>}
+                    <p className="text-xs text-muted-foreground">
+                      {new Date(f.createdAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })} · {f.agent.name}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div>
         {/* Past schedules */}
         {past.length > 0 && (
           <div className="mt-3 space-y-1.5">
@@ -1120,7 +1164,7 @@ export function LeadDetailDrawer({ leadId, onClose, canSubmitFeedback = false }:
 
               {/* ── CALLS ─────────────────────────────────────────── */}
               {activeTab === 'calls' && (
-                <CallsTab leadId={lead.id} feedbacks={feedbacks} />
+                <CallsTab leadId={lead.id} feedbacks={feedbacks} archivedFeedbacks={lead.archivedFeedbacks} />
               )}
 
               {/* ── TIMELINE ──────────────────────────────────────── */}
@@ -1142,7 +1186,7 @@ export function LeadDetailDrawer({ leadId, onClose, canSubmitFeedback = false }:
 
 interface TimelineEvent {
   id: string;
-  type: 'CREATED' | 'APPROVED' | 'ASSIGNED' | 'FEEDBACK' | 'SCHEDULED_CALL' | 'RECEIPT';
+  type: 'CREATED' | 'APPROVED' | 'ASSIGNED' | 'FEEDBACK' | 'ARCHIVED_FEEDBACK' | 'SCHEDULED_CALL' | 'RECEIPT';
   timestamp: string;
   title: string;
   subtitle?: string;
@@ -1154,6 +1198,7 @@ const TIMELINE_ICON: Record<TimelineEvent['type'], React.ReactNode> = {
   APPROVED:       <FileCheck    className="h-4 w-4 text-blue-500" />,
   ASSIGNED:       <UserPlus     className="h-4 w-4 text-violet-500" />,
   FEEDBACK:       <PhoneIncoming className="h-4 w-4 text-primary" />,
+  ARCHIVED_FEEDBACK: <PhoneIncoming className="h-4 w-4 text-muted-foreground" />,
   SCHEDULED_CALL: <Clock3       className="h-4 w-4 text-amber-500" />,
   RECEIPT:        <Receipt      className="h-4 w-4 text-green-600" />,
 };
@@ -1163,6 +1208,7 @@ const TIMELINE_DOT: Record<TimelineEvent['type'], string> = {
   APPROVED:       'bg-blue-500',
   ASSIGNED:       'bg-violet-500',
   FEEDBACK:       'bg-primary',
+  ARCHIVED_FEEDBACK: 'bg-muted-foreground/50',
   SCHEDULED_CALL: 'bg-amber-500',
   RECEIPT:        'bg-green-600',
 };
@@ -1234,6 +1280,16 @@ function TimelineTab({ leadId }: { leadId: string }) {
                   )}
                   {event.badge && (event.type === 'RECEIPT') && (
                     <span className="shrink-0 rounded-full border border-green-300/50 bg-green-500/10 px-2 py-0.5 text-[10px] font-semibold text-green-700 dark:text-green-400">
+                      {event.badge}
+                    </span>
+                  )}
+                  {event.badge && (event.type === 'ASSIGNED') && (
+                    <span className="shrink-0 rounded-full border border-violet-300/50 bg-violet-500/10 px-2 py-0.5 text-[10px] font-semibold text-violet-700 dark:text-violet-400">
+                      {event.badge}
+                    </span>
+                  )}
+                  {event.badge && (event.type === 'ARCHIVED_FEEDBACK') && (
+                    <span className="shrink-0 rounded-full border border-border bg-muted px-2 py-0.5 text-[10px] font-semibold text-muted-foreground">
                       {event.badge}
                     </span>
                   )}

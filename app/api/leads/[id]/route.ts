@@ -31,7 +31,24 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
 
     if (!lead) return NextResponse.json({ error: 'Lead not found' }, { status: 404 });
 
-    return NextResponse.json(lead);
+    // TL/Super Admin/Reports (anyone but the assigned agent) can also see
+    // feedback archived by a previous "reassign as fresh" reset — the agent
+    // themselves only ever sees the live (current-cycle) `feedbacks` above,
+    // so a freshly-assigned lead reads as clean to them.
+    let archivedFeedbacks: unknown[] = [];
+    if (session.user.role !== 'COUNSELLING_AGENT') {
+      archivedFeedbacks = await prisma.leadFeedbackArchive.findMany({
+        where: { leadId: params.id },
+        include: {
+          agent:         { select: { id: true, name: true } },
+          feedbackOption:{ select: { id: true, label: true } },
+          archivedBy:    { select: { id: true, name: true } },
+        },
+        orderBy: [{ cycle: 'asc' }, { followUpNumber: 'asc' }],
+      });
+    }
+
+    return NextResponse.json({ ...lead, archivedFeedbacks });
   } catch (error) {
     console.error('[leads/[id] GET]', error);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });

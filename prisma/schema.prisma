@@ -188,6 +188,8 @@ model User {
   assignedFromLeads  Lead[]         @relation("AssignedFrom")
   prevAssignee2Leads Lead[]         @relation("PrevAssignee2")
   feedbacks        LeadFeedback[]
+  archivedFeedbacks       LeadFeedbackArchive[] @relation("ArchivedFeedbackAgent")
+  archivedFeedbacksResetBy LeadFeedbackArchive[] @relation("ArchivedFeedbackBy")
   uploadBatches    UploadBatch[]
 
   scheduledCalls ScheduledCall[] @relation("AgentSchedules")
@@ -321,6 +323,21 @@ model Lead {
   scheduledCalls ScheduledCall[]
   receipts       LeadReceipt[]
 
+  // Archived feedback from before the most recent "reassign as fresh" reset —
+  // preserved for TL/Super Admin visibility even though the live `feedbacks`
+  // relation above is cleared so the newly-assigned agent sees a clean lead.
+  archivedFeedbacks LeadFeedbackArchive[]
+
+  // Incremented every time this lead is reassigned "as fresh" (resetFeedbacks).
+  // Feedback archived under a given reset is stamped with the cycle number it
+  // belonged to, so historical follow-ups can be grouped by assignment period.
+  currentCycle Int @default(1)
+
+  // True when the CURRENT assignment (assignedTo/assignedAt/assignedBy above)
+  // was made with resetFeedbacks — surfaced on the Timeline's "Assigned to X"
+  // event so other roles can see that a fresh reset happened.
+  lastAssignmentWasFresh Boolean @default(false)
+
   // Extra upload fields
   primaryApplicationConfirm String?
   primaryAdmissionConfirm   String?
@@ -431,6 +448,7 @@ model FeedbackOption {
   creator   User              @relation("FeedbackOptionCreator", fields: [createdBy], references: [id])
   category  FeedbackCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
   feedbacks LeadFeedback[]
+  archivedFeedbacks LeadFeedbackArchive[]
 
   @@index([isActive])
   @@index([isActive, sortOrder])
@@ -472,6 +490,31 @@ model LeadFeedback {
   @@index([agentId])
   @@index([feedbackOptionId])
   @@index([createdAt])
+}
+
+// Snapshot of a LeadFeedback row moved out of the live LeadFeedback table
+// when a lead is reassigned "as fresh" (resetFeedbacks). The live table is
+// cleared so the newly-assigned agent sees a clean lead, but nothing is ever
+// destroyed — TL/Super Admin/Reports can still see it here via the Timeline.
+model LeadFeedbackArchive {
+  id               String         @id @default(cuid())
+  leadId           String
+  lead             Lead           @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  agentId          String
+  agent            User           @relation("ArchivedFeedbackAgent", fields: [agentId], references: [id])
+  feedbackOptionId String
+  feedbackOption   FeedbackOption @relation(fields: [feedbackOptionId], references: [id])
+  remarks          String?
+  followUpNumber   Int
+  createdAt        DateTime       // original feedback creation time, preserved as-is
+
+  cycle        Int      // which assignment cycle (Lead.currentCycle at the time) this belonged to
+  archivedAt   DateTime @default(now())
+  archivedById String?
+  archivedBy   User?    @relation("ArchivedFeedbackBy", fields: [archivedById], references: [id])
+
+  @@index([leadId])
+  @@index([leadId, cycle])
 }
 
 model UploadBatch {

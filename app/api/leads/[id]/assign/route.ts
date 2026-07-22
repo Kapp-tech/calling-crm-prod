@@ -3,7 +3,7 @@ import { getServerSession } from 'next-auth';
 import { z } from 'zod';
 import { authOptions } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
-import { hasPermission } from '@/lib/permissions';
+import { hasPermission, logActivity } from '@/lib/permissions';
 import { Feature } from '@prisma/client';
 
 const assignSchema = z.object({
@@ -46,7 +46,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
 
   const lead = await prisma.lead.findUnique({
     where: { id: params.id },
-    select: { status: true, assignedToId: true, assignedFromId: true, assignedById: true },
+    select: { status: true, assignedToId: true, assignedFromId: true, assignedById: true, currentCycle: true },
   });
   if (!lead) return NextResponse.json({ error: 'Lead not found' }, { status: 404 });
   if (lead.status !== 'APPROVED') {
@@ -55,7 +55,26 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
 
   const updated = await prisma.$transaction(async (tx) => {
     if (resetFeedbacks) {
-      await tx.leadFeedback.deleteMany({ where: { leadId: params.id } });
+      // Archive the outgoing agent's feedback instead of destroying it — TL /
+      // Super Admin can still see it (Timeline, Calls tab), while the live
+      // `feedbacks` relation is cleared so the newly-assigned agent sees a
+      // clean lead.
+      const existingFeedbacks = await tx.leadFeedback.findMany({ where: { leadId: params.id } });
+      if (existingFeedbacks.length > 0) {
+        await tx.leadFeedbackArchive.createMany({
+          data: existingFeedbacks.map((fb) => ({
+            leadId:           fb.leadId,
+            agentId:          fb.agentId,
+            feedbackOptionId: fb.feedbackOptionId,
+            remarks:          fb.remarks,
+            followUpNumber:   fb.followUpNumber,
+            createdAt:        fb.createdAt,
+            cycle:            lead.currentCycle,
+            archivedById:     session.user.id,
+          })),
+        });
+        await tx.leadFeedback.deleteMany({ where: { leadId: params.id } });
+      }
       await tx.scheduledCall.updateMany({
         where: { leadId: params.id, status: 'PENDING' },
         data:  { status: 'CANCELLED' },
@@ -69,7 +88,8 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
         assignedAt:      new Date(),
         assignedFromId:  lead.assignedToId  ?? null,
         prevAssignee2Id: lead.assignedById  ?? null,
-        ...(resetFeedbacks ? { currentFeedbackOptionId: null } : {}),
+        lastAssignmentWasFresh: !!resetFeedbacks,
+        ...(resetFeedbacks ? { currentFeedbackOptionId: null, currentCycle: { increment: 1 } } : {}),
       },
       include: {
         assignedTo:   { select: { id: true, name: true } },
@@ -79,6 +99,17 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       },
     });
   });
+
+  await logActivity({
+    userId: session.user.id,
+    action: 'LEAD_ASSIGNED',
+    targetId: params.id,
+    targetType: 'Lead',
+    description: resetFeedbacks
+      ? `Lead ${params.id} reassigned to ${updated.assignedTo?.name ?? agentId} as a fresh lead (previous feedback archived)`
+      : `Lead ${params.id} reassigned to ${updated.assignedTo?.name ?? agentId}`,
+    metadata: { agentId, fresh: !!resetFeedbacks },
+  }).catch((err) => console.error('[assign] activity log failed:', err));
 
   // Notify the assigned agent — non-blocking so a DB hiccup here
   // doesn't make the entire assign appear to have failed

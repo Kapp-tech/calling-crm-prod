@@ -9,6 +9,7 @@ export type TimelineEventType =
   | 'APPROVED'
   | 'ASSIGNED'
   | 'FEEDBACK'
+  | 'ARCHIVED_FEEDBACK'
   | 'SCHEDULED_CALL'
   | 'RECEIPT';
 
@@ -29,7 +30,9 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
     const allowed = await canAccessLead(session.user, params.id);
     if (!allowed) return NextResponse.json({ error: 'Lead not found' }, { status: 404 });
 
-    const [lead, feedbacks, scheduledCalls, receipts] = await Promise.all([
+    const isAgent = session.user.role === 'COUNSELLING_AGENT';
+
+    const [lead, feedbacks, archivedFeedbacks, scheduledCalls, receipts] = await Promise.all([
       prisma.lead.findUnique({
         where: { id: params.id },
         select: {
@@ -37,6 +40,7 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
           createdAt: true,
           assignedAt: true,
           approvedAt: true,
+          lastAssignmentWasFresh: true,
           assignedTo: { select: { name: true } },
           assignedBy: { select: { name: true } },
           approvedBy: { select: { name: true } },
@@ -55,6 +59,24 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
           feedbackOption: { select: { label: true } },
         },
       }),
+      // Feedback from before a "reassign as fresh" reset — preserved for
+      // every role except the assigned agent, who should see this lead as
+      // clean. Not fetched at all for the agent (no point querying it).
+      isAgent
+        ? Promise.resolve([])
+        : prisma.leadFeedbackArchive.findMany({
+            where: { leadId: params.id },
+            orderBy: { createdAt: 'asc' },
+            select: {
+              id: true,
+              followUpNumber: true,
+              remarks: true,
+              createdAt: true,
+              cycle: true,
+              agent: { select: { name: true } },
+              feedbackOption: { select: { label: true } },
+            },
+          }),
       prisma.scheduledCall.findMany({
         where: { leadId: params.id },
         orderBy: { createdAt: 'asc' },
@@ -111,12 +133,15 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
         id: `assigned-${lead.id}`,
         type: 'ASSIGNED',
         timestamp: lead.assignedAt.toISOString(),
-        title: `Assigned to ${lead.assignedTo.name}`,
+        title: lead.lastAssignmentWasFresh
+          ? `Reassigned to ${lead.assignedTo.name} as a Fresh Lead`
+          : `Assigned to ${lead.assignedTo.name}`,
         subtitle: lead.assignedBy ? `By ${lead.assignedBy.name}` : undefined,
+        badge: lead.lastAssignmentWasFresh ? 'FRESH' : undefined,
       });
     }
 
-    // Feedback submissions
+    // Feedback submissions (current assignment cycle)
     for (const fb of feedbacks) {
       events.push({
         id: `feedback-${fb.id}`,
@@ -125,6 +150,19 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
         title: `Follow-up #${fb.followUpNumber} — ${fb.feedbackOption.label}`,
         subtitle: [fb.agent.name, fb.remarks].filter(Boolean).join(' · '),
         badge: fb.feedbackOption.label,
+      });
+    }
+
+    // Feedback from before a fresh reassignment — visible to every role
+    // except the currently-assigned agent (see query above).
+    for (const fb of archivedFeedbacks) {
+      events.push({
+        id: `archived-feedback-${fb.id}`,
+        type: 'ARCHIVED_FEEDBACK',
+        timestamp: fb.createdAt.toISOString(),
+        title: `Follow-up #${fb.followUpNumber} — ${fb.feedbackOption.label}`,
+        subtitle: [fb.agent.name, fb.remarks].filter(Boolean).join(' · '),
+        badge: `Previous Assignment · Cycle ${fb.cycle}`,
       });
     }
 
