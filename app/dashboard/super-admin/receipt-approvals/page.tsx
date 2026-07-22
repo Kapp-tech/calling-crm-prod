@@ -3,8 +3,7 @@
 import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
-  Receipt, Loader2, Search, CheckCircle2, XCircle, Clock, ExternalLink,
-  GraduationCap, School, Banknote, Hash, CalendarDays, UserRound,
+  Receipt, Loader2, Search, CheckCircle2, XCircle, Clock, ExternalLink, UserRound,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -81,14 +80,6 @@ function StatusBadge({ status }: { status: ReceiptRow['status'] }) {
   return (
     <span className="inline-flex items-center gap-1 rounded-full border border-amber-300/50 bg-amber-500/10 px-2 py-0.5 text-[10px] font-bold text-amber-700 dark:text-amber-400">
       <Clock className="h-3 w-3" /> Pending
-    </span>
-  );
-}
-
-function DetailChip({ icon: Icon, children }: { icon: React.ComponentType<{ className?: string }>; children: React.ReactNode }) {
-  return (
-    <span className="inline-flex items-center gap-1 text-[11px] text-muted-foreground">
-      <Icon className="h-3 w-3 shrink-0" /> {children}
     </span>
   );
 }
@@ -285,7 +276,7 @@ export default function ReceiptApprovalsPage() {
         )}
       </div>
 
-      {/* List */}
+      {/* Table */}
       {isLoading ? (
         <div className="flex justify-center py-16">
           <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
@@ -301,22 +292,41 @@ export default function ReceiptApprovalsPage() {
           </p>
         </div>
       ) : (
-        <div className="space-y-2.5">
-          {receipts.map((r) => {
-            const t = TYPE_META[r.type];
-            return (
-              <div key={r.id} className="rounded-xl border border-border/60 bg-card p-3.5 sm:p-4 transition-colors hover:bg-muted/20">
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                  {/* Left: identity + details */}
-                  <div className="min-w-0 flex-1 space-y-1.5">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className={cn('flex h-6 w-6 shrink-0 items-center justify-center rounded-md', t.chip)}>
-                        <Receipt className="h-3.5 w-3.5" />
+        <div className={cn('overflow-auto rounded-lg border border-border/60 transition-opacity duration-150', isFetching && 'opacity-60')}>
+          <table className="w-full text-sm border-collapse">
+            <thead className="sticky top-0 z-20">
+              <tr className="border-b border-border/60 bg-muted">
+                <th className="whitespace-nowrap px-3 py-2.5 text-left text-[10px] font-bold uppercase tracking-wider text-muted-foreground min-w-[110px]">Type</th>
+                <th className="sticky left-0 z-30 bg-muted border-r border-border/60 whitespace-nowrap px-3 py-2.5 text-left text-[10px] font-bold uppercase tracking-wider text-muted-foreground min-w-[190px]">Student</th>
+                <th className="whitespace-nowrap px-3 py-2.5 text-left text-[10px] font-bold uppercase tracking-wider text-muted-foreground min-w-[160px]">Campus</th>
+                <th className="whitespace-nowrap px-3 py-2.5 text-left text-[10px] font-bold uppercase tracking-wider text-muted-foreground min-w-[160px]">Course</th>
+                <th className="whitespace-nowrap px-3 py-2.5 text-right text-[10px] font-bold uppercase tracking-wider text-muted-foreground min-w-[100px]">Amount</th>
+                <th className="whitespace-nowrap px-3 py-2.5 text-left text-[10px] font-bold uppercase tracking-wider text-muted-foreground min-w-[140px]">Receipt No.</th>
+                <th className="whitespace-nowrap px-3 py-2.5 text-left text-[10px] font-bold uppercase tracking-wider text-muted-foreground min-w-[110px]">Paid Date</th>
+                <th className="whitespace-nowrap px-3 py-2.5 text-center text-[10px] font-bold uppercase tracking-wider text-muted-foreground min-w-[120px]">Status</th>
+                <th className="whitespace-nowrap px-3 py-2.5 text-left text-[10px] font-bold uppercase tracking-wider text-muted-foreground min-w-[170px]">Uploaded By</th>
+                <th className="whitespace-nowrap px-3 py-2.5 text-left text-[10px] font-bold uppercase tracking-wider text-muted-foreground min-w-[170px]">Reviewed By</th>
+                <th className="px-3 py-2.5 text-left text-[10px] font-bold uppercase tracking-wider text-muted-foreground min-w-[220px]">Disapproval Reason</th>
+                <th className="whitespace-nowrap px-3 py-2.5 text-center text-[10px] font-bold uppercase tracking-wider text-muted-foreground min-w-[150px]">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {receipts.map((r) => {
+                const t = TYPE_META[r.type];
+                return (
+                  <tr key={r.id} className="group border-b border-border/40 transition-colors last:border-0 hover:bg-muted/20">
+                    {/* Type */}
+                    <td className="px-3 py-2.5 whitespace-nowrap">
+                      <span className="inline-flex items-center gap-1.5">
+                        <span className={cn('flex h-5 w-5 shrink-0 items-center justify-center rounded', t.chip)}>
+                          <Receipt className="h-3 w-3" />
+                        </span>
+                        <span className={cn('rounded-full border px-2 py-0.5 text-[10px] font-bold', t.badge)}>{t.label}</span>
                       </span>
-                      <span className={cn('rounded-full border px-2 py-0.5 text-[10px] font-bold', t.badge)}>
-                        {t.label}
-                      </span>
-                      <StatusBadge status={r.status} />
+                    </td>
+
+                    {/* Student (sticky) */}
+                    <td className="sticky left-0 z-10 border-r border-border/60 bg-card px-3 py-2.5 transition-colors group-hover:bg-muted/40">
                       {r.lead ? (
                         <a
                           href={`/leads/${r.lead.id}/profile`}
@@ -324,72 +334,89 @@ export default function ReceiptApprovalsPage() {
                           rel="noopener noreferrer"
                           className="flex items-center gap-1 text-sm font-semibold hover:text-primary hover:underline"
                         >
-                          {r.studentName} <ExternalLink className="h-3 w-3" />
+                          {r.studentName} <ExternalLink className="h-3 w-3 shrink-0" />
                         </a>
                       ) : (
                         <span className="text-sm font-semibold">{r.studentName}</span>
                       )}
-                      <span className="font-mono text-[10px] text-muted-foreground">{r.lead?.id}</span>
-                    </div>
+                      <p className="font-mono text-[10px] text-muted-foreground">{r.lead?.id}</p>
+                    </td>
 
-                    <div className="flex flex-wrap gap-x-3 gap-y-1">
-                      <DetailChip icon={School}>{r.campusName}</DetailChip>
-                      <DetailChip icon={GraduationCap}>{r.courseName}</DetailChip>
-                      <DetailChip icon={Banknote}>₹{r.amountPaid}</DetailChip>
-                      <DetailChip icon={Hash}>{r.receiptNumber}</DetailChip>
-                      <DetailChip icon={CalendarDays}>{new Date(r.paidDate).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}</DetailChip>
-                    </div>
+                    <td className="px-3 py-2.5 whitespace-nowrap text-xs text-muted-foreground">{r.campusName}</td>
+                    <td className="px-3 py-2.5 whitespace-nowrap text-xs text-muted-foreground">{r.courseName}</td>
+                    <td className="px-3 py-2.5 whitespace-nowrap text-right text-xs font-semibold tabular-nums">₹{r.amountPaid}</td>
+                    <td className="px-3 py-2.5 whitespace-nowrap font-mono text-xs text-muted-foreground">{r.receiptNumber}</td>
+                    <td className="px-3 py-2.5 whitespace-nowrap text-xs text-muted-foreground">
+                      {new Date(r.paidDate).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}
+                    </td>
 
-                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
-                      <span className="inline-flex items-center gap-1">
-                        <UserRound className="h-3 w-3" /> Uploaded by <strong className="font-medium text-foreground/80">{r.uploadedBy.name}</strong> · {formatDateTime(r.createdAt)}
+                    <td className="px-3 py-2.5 text-center">
+                      <StatusBadge status={r.status} />
+                    </td>
+
+                    <td className="px-3 py-2.5 whitespace-nowrap text-xs">
+                      <span className="inline-flex items-center gap-1 font-medium text-foreground/80">
+                        <UserRound className="h-3 w-3 shrink-0 text-muted-foreground" /> {r.uploadedBy.name}
                       </span>
-                      {r.reviewedBy && (
-                        <span>
-                          Reviewed by <strong className="font-medium text-foreground/80">{r.reviewedBy.name}</strong>
-                          {r.reviewedAt && ` · ${formatDateTime(r.reviewedAt)}`}
-                        </span>
+                      <p className="text-[10px] text-muted-foreground">{formatDateTime(r.createdAt)}</p>
+                    </td>
+
+                    <td className="px-3 py-2.5 whitespace-nowrap text-xs">
+                      {r.reviewedBy ? (
+                        <>
+                          <span className="font-medium text-foreground/80">{r.reviewedBy.name}</span>
+                          {r.reviewedAt && <p className="text-[10px] text-muted-foreground">{formatDateTime(r.reviewedAt)}</p>}
+                        </>
+                      ) : (
+                        <span className="text-muted-foreground/60">—</span>
                       )}
-                    </div>
+                    </td>
 
-                    {r.status === 'DISAPPROVED' && r.disapprovalReason && (
-                      <p className="rounded-md border border-red-200/60 bg-red-500/5 px-2.5 py-1.5 text-[11px] text-red-700 dark:border-red-900/40 dark:text-red-400">
-                        <strong>Reason:</strong> {r.disapprovalReason}
-                      </p>
-                    )}
-                  </div>
+                    <td className="max-w-[260px] whitespace-normal px-3 py-2.5 text-xs">
+                      {r.status === 'DISAPPROVED' && r.disapprovalReason ? (
+                        <span className="text-red-700 dark:text-red-400">{r.disapprovalReason}</span>
+                      ) : (
+                        <span className="text-muted-foreground/60">—</span>
+                      )}
+                    </td>
 
-                  {/* Right: actions */}
-                  <div className="flex shrink-0 items-center gap-2 sm:flex-col sm:items-stretch">
-                    <a
-                      href={`/api/leads/${r.lead?.id}/receipts/${r.id}/file`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="flex items-center justify-center gap-1.5 rounded-lg border border-input px-3 py-1.5 text-xs font-semibold shadow-sm transition-colors hover:bg-muted/60"
-                    >
-                      View Receipt <ExternalLink className="h-3 w-3" />
-                    </a>
-                    {r.status === 'PENDING' && (
-                      <div className="flex gap-2">
-                        <button
-                          onClick={() => review(r, 'APPROVE')}
-                          className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-emerald-700 disabled:opacity-50"
+                    {/* Actions */}
+                    <td className="border-l border-border/60 px-3 py-2.5">
+                      <div className="flex items-center justify-center gap-1.5">
+                        <a
+                          href={`/api/leads/${r.lead?.id}/receipts/${r.id}/file`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          title="View Receipt"
+                          className="flex h-7 w-7 items-center justify-center rounded-md border border-input shadow-sm transition-colors hover:bg-muted/60"
                         >
-                          <CheckCircle2 className="h-3.5 w-3.5" /> Approve
-                        </button>
-                        <button
-                          onClick={() => setDisapproveTarget(r)}
-                          className="flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-red-300/60 bg-red-500/10 px-3 py-1.5 text-xs font-semibold text-red-700 transition-colors hover:bg-red-500/20 disabled:opacity-50 dark:text-red-400"
-                        >
-                          <XCircle className="h-3.5 w-3.5" /> Disapprove
-                        </button>
+                          <ExternalLink className="h-3.5 w-3.5" />
+                        </a>
+                        {r.status === 'PENDING' && (
+                          <>
+                            <button
+                              onClick={() => review(r, 'APPROVE')}
+                              title="Approve"
+                              className="flex h-7 w-7 items-center justify-center rounded-md bg-emerald-600 text-white transition-colors hover:bg-emerald-700"
+                            >
+                              <CheckCircle2 className="h-3.5 w-3.5" />
+                            </button>
+                            <button
+                              onClick={() => setDisapproveTarget(r)}
+                              title="Disapprove"
+                              className="flex h-7 w-7 items-center justify-center rounded-md border border-red-300/60 bg-red-500/10 text-red-700 transition-colors hover:bg-red-500/20 dark:text-red-400"
+                            >
+                              <XCircle className="h-3.5 w-3.5" />
+                            </button>
+                          </>
+                        )}
                       </div>
-                    )}
-                  </div>
-                </div>
-              </div>
-            );
-          })}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
         </div>
       )}
 
