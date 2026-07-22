@@ -4,7 +4,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Search, Loader2, Phone, MapPin, GraduationCap, UserCheck } from 'lucide-react';
+import { Search, Loader2, Phone, Mail, MapPin, GraduationCap, UserCheck } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 interface SearchResult {
@@ -207,6 +207,11 @@ export function GlobalSearch() {
                           <span className="inline-flex items-center gap-1">
                             <Phone className="h-3 w-3" /> {lead.phone}
                           </span>
+                          {lead.email && (
+                            <span className="inline-flex items-center gap-1 truncate">
+                              <Mail className="h-3 w-3 shrink-0" /> {lead.email}
+                            </span>
+                          )}
                           {lead.course && (
                             <span className="inline-flex items-center gap-1 truncate">
                               <GraduationCap className="h-3 w-3 shrink-0" /> {lead.course}

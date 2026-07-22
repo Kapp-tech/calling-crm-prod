@@ -26,9 +26,15 @@ export async function GET(req: NextRequest) {
     const digits = q.replace(/\D/g, '');
     if (digits.length >= 4) or.push({ phone: { contains: digits } });
 
-    const leads = await prisma.lead.findMany({
+    // A plain "any field contains q, newest first" match makes results feel
+    // random — e.g. searching "Rita" surfaces "PRITAM" (contains "rita" as a
+    // substring) and anyone whose EMAIL happens to contain "rita" ahead of
+    // someone actually named Rita, just because they were updated more
+    // recently. Pull a wider candidate pool and rank it so the most likely
+    // intent (name starts with the query) always comes first.
+    const candidates = await prisma.lead.findMany({
       where: { AND: [getLeadWhereClause(session.user), { OR: or }] },
-      take: 10,
+      take: 50,
       orderBy: { updatedAt: 'desc' },
       select: {
         id: true,
@@ -38,9 +44,27 @@ export async function GET(req: NextRequest) {
         city: true,
         course: true,
         status: true,
+        updatedAt: true,
         assignedTo: { select: { name: true } },
       },
     });
+
+    const qLower = q.toLowerCase();
+    const rank = (lead: (typeof candidates)[number]): number => {
+      const name = lead.name.toLowerCase();
+      if (name.startsWith(qLower)) return 0;
+      if (lead.id.toLowerCase().includes(qLower)) return 1;
+      if (digits.length >= 4 && lead.phone.replace(/\D/g, '').includes(digits)) return 1;
+      if (name.includes(qLower)) return 2;
+      if (lead.email.toLowerCase().includes(qLower)) return 3;
+      return 4;
+    };
+
+    const leads = candidates
+      .map((lead) => ({ lead, r: rank(lead) }))
+      .sort((a, b) => a.r - b.r || b.lead.updatedAt.getTime() - a.lead.updatedAt.getTime())
+      .slice(0, 10)
+      .map(({ lead: { updatedAt: _updatedAt, ...lead } }) => lead);
 
     return NextResponse.json(leads);
   } catch (error) {
