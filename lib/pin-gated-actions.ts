@@ -5,6 +5,7 @@
 // sensitive tool needs the same 6-digit PIN protection.
 export const PIN_GATED_ACTIONS = {
   BULK_DELETE_LEADS: 'BULK_DELETE_LEADS',
+  MANAGE_PERMISSIONS: 'MANAGE_PERMISSIONS',
 } as const;
 
 export type PinGatedAction = (typeof PIN_GATED_ACTIONS)[keyof typeof PIN_GATED_ACTIONS];

@@ -6,6 +6,8 @@ import { Switch } from '@/components/ui/switch';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { useToast } from '@/components/ui/use-toast';
+import { PinGate } from '@/components/shared/pin-gate';
+import { PIN_GATED_ACTIONS } from '@/lib/pin-gated-actions';
 
 const ROLES = [
   { key: 'SUPER_ADMIN', label: 'Super Admin' },
@@ -31,6 +33,14 @@ type RoleKey = typeof ROLES[number]['key'];
 type FeatureKey = typeof FEATURES[number]['key'];
 
 export default function PermissionsPage() {
+  return (
+    <PinGate action={PIN_GATED_ACTIONS.MANAGE_PERMISSIONS} title="Manage Permissions">
+      <PermissionsContent />
+    </PinGate>
+  );
+}
+
+function PermissionsContent() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
 

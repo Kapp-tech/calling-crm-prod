@@ -5,6 +5,8 @@ import { authOptions } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import { getAllPermissions } from '@/lib/permissions';
 import { Feature, Role } from '@prisma/client';
+import { isActionUnlocked } from '@/lib/security-pin';
+import { PIN_GATED_ACTIONS } from '@/lib/pin-gated-actions';
 
 const updatePermissionSchema = z.object({
   role: z.nativeEnum(Role),
@@ -17,6 +19,9 @@ export async function GET() {
     const session = await getServerSession(authOptions);
     if (!session || session.user.role !== 'SUPER_ADMIN') {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+    if (!(await isActionUnlocked(session.user.id, PIN_GATED_ACTIONS.MANAGE_PERMISSIONS))) {
+      return NextResponse.json({ error: 'This tool is PIN-locked — verify your security PIN first', code: 'PIN_LOCKED' }, { status: 423 });
     }
 
     const permissions = await getAllPermissions();
@@ -32,6 +37,9 @@ export async function PATCH(req: NextRequest) {
   const session = await getServerSession(authOptions);
   if (!session || session.user.role !== 'SUPER_ADMIN') {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+  if (!(await isActionUnlocked(session.user.id, PIN_GATED_ACTIONS.MANAGE_PERMISSIONS))) {
+    return NextResponse.json({ error: 'This tool is PIN-locked — verify your security PIN first', code: 'PIN_LOCKED' }, { status: 423 });
   }
 
   const body = await req.json();
