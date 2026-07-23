@@ -325,8 +325,9 @@ export default function ReceiptApprovalsPage() {
                       </span>
                     </td>
 
-                    {/* Student (sticky) */}
-                    <td className="sticky left-0 z-10 border-r border-border/60 bg-card px-3 py-2.5 transition-colors group-hover:bg-muted/40">
+                    {/* Student (sticky) — background MUST stay fully opaque (no
+                        alpha), or scrolled-past columns bleed through on hover */}
+                    <td className="sticky left-0 z-10 border-r border-border/60 bg-card px-3 py-2.5 transition-colors group-hover:bg-muted">
                       {r.lead ? (
                         <a
                           href={`/leads/${r.lead.id}/profile`}
