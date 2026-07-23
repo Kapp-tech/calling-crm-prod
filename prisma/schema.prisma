@@ -131,6 +131,16 @@ enum ActivityAction {
   LEAD_CREATED_VIA_API
   SECURITY_PIN_CHANGED
   SECURITY_ACTION_UNLOCKED
+  LEAD_INTEGRATION_CREATED
+  LEAD_INTEGRATION_UPDATED
+  LEAD_INTEGRATION_DELETED
+}
+
+// Which CRM event fires a configured push — only referral-lead creation for
+// now (that's the one concrete need); more triggers can be added to this
+// enum later without touching the LeadIntegration table shape.
+enum LeadIntegrationTrigger {
+  REFERRAL_CREATED
 }
 
 // ─── Core Models ──────────────────────────────────────────────────────────────
@@ -209,6 +219,7 @@ model User {
   reviewedReceipts LeadReceipt[] @relation("ReceiptReviewedBy")
   attendances    Attendance[]
   apiKeysCreated ApiKey[] @relation("ApiKeyCreatedBy")
+  leadIntegrationsCreated LeadIntegration[] @relation("LeadIntegrationCreatedBy")
 
   // Feedback options created by this user (SA)
   createdFeedbackOptions FeedbackOption[] @relation("FeedbackOptionCreator")
@@ -364,6 +375,9 @@ model Lead {
   referredById String?
   referredBy   Lead?   @relation("LeadReferrals", fields: [referredById], references: [id])
   referrals    Lead[]  @relation("LeadReferrals")
+
+  // Push history when this lead triggered an external integration (e.g. LMS push)
+  integrationLogs LeadIntegrationLog[]
 
   // Tracks the most recent feedback option — updated on every feedback submit
   currentFeedbackOptionId String?
@@ -779,4 +793,63 @@ model HolidayCache {
   fetchedAt DateTime @default(now())
 
   @@unique([country, year])
+}
+
+// A Super-Admin-configured outbound push — e.g. "send every new referral
+// lead to the LMS". The endpoint/headers/body are fully editable from the
+// UI (not hardcoded) since the receiving API's contract can change at any
+// time; `bodyTemplate` is a raw JSON string containing literal values mixed
+// with {{field}} placeholders, rendered against the triggering lead at send
+// time (see lib/lead-integration-template.ts).
+model LeadIntegration {
+  id           String                 @id @default(cuid())
+  name         String
+  isActive     Boolean                @default(false) // off until an admin explicitly verifies it via Test & Send
+  trigger      LeadIntegrationTrigger @default(REFERRAL_CREATED)
+  method       String                 @default("POST")
+  url          String
+  headers      Json // [{ key, value, isSecret }] — isSecret values are AES-256-GCM encrypted, see lib/integration-crypto.ts
+  queryParams  Json // [{ key, value }]
+  bodyTemplate String                 @db.Text
+  timeoutMs    Int                    @default(10000)
+
+  createdById String
+  createdBy   User   @relation("LeadIntegrationCreatedBy", fields: [createdById], references: [id])
+
+  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now())
+
+  logs LeadIntegrationLog[]
+
+  @@index([trigger, isActive])
+}
+
+// One row per push attempt (automatic, test, or retry) — kept even on
+// success so admins can audit exactly what was sent to a third party.
+model LeadIntegrationLog {
+  id            String          @id @default(cuid())
+  integrationId String
+  integration   LeadIntegration @relation(fields: [integrationId], references: [id], onDelete: Cascade)
+
+  // Nullable: a test send against synthetic sample data has no real lead.
+  leadId String?
+  lead   Lead?   @relation(fields: [leadId], references: [id], onDelete: SetNull)
+
+  isTest       Boolean @default(false)
+  retryOfLogId String? // set when this row is a manual retry of an earlier failed attempt
+
+  requestUrl     String
+  requestMethod  String
+  requestHeaders Json
+  requestBody    String  @db.Text
+  responseStatus Int?
+  responseBody   String? @db.Text
+  success        Boolean
+  errorMessage   String?
+
+  attemptedAt DateTime @default(now())
+
+  @@index([integrationId])
+  @@index([leadId])
+  @@index([success])
 }

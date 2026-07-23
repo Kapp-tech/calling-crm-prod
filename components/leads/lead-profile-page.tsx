@@ -5,9 +5,9 @@ import { useRouter } from 'next/navigation';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Loader2, GraduationCap, Landmark, Wallet, Home, BarChart3,
-  FileText, Check, ChevronDown, Search, X, CheckCircle2, Handshake, CreditCard,
+  FileText, Check, ChevronDown, ChevronUp, Search, X, CheckCircle2, Handshake, CreditCard,
   School, Building2, RefreshCw, Receipt, ExternalLink, UserPlus, Users, Phone,
-  Clock3, XCircle,
+  Clock3, XCircle, Webhook,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useToast } from '@/components/ui/use-toast';
@@ -1232,6 +1232,19 @@ function ProfileCompletionCard({
 
 // ─── Referrals ────────────────────────────────────────────────────────────────
 
+interface ReferralIntegrationLog {
+  id: string;
+  success: boolean;
+  isTest: boolean;
+  responseStatus: number | null;
+  responseBody: string | null;
+  errorMessage: string | null;
+  requestUrl: string;
+  requestBody: string;
+  attemptedAt: string;
+  integration: { name: string };
+}
+
 interface ReferralRecord {
   id: string;
   name: string;
@@ -1243,6 +1256,7 @@ interface ReferralRecord {
   college?: string | null;
   createdAt: string;
   assignedTo?: { id: string; name: string } | null;
+  integrationLogs: ReferralIntegrationLog[];
 }
 
 interface ReferralForm {
@@ -1409,6 +1423,7 @@ function ReferralsSection({ leadId }: { leadId: string }) {
               <p className="text-[11px] text-muted-foreground/80">
                 Assigned to {r.assignedTo?.name ?? '—'} &middot; {new Date(r.createdAt).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}
               </p>
+              <ReferralPushStatus logs={r.integrationLogs} />
             </li>
           ))}
         </ul>
@@ -1529,6 +1544,63 @@ function ReferralsSection({ leadId }: { leadId: string }) {
               Save Referral
             </button>
           </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Compact LMS push status for one referral, expandable to the full request/response the integration sent. */
+function ReferralPushStatus({ logs }: { logs: ReferralIntegrationLog[] }) {
+  const [expanded, setExpanded] = useState(false);
+  const latest = logs[0];
+
+  if (!latest) {
+    return (
+      <p className="flex items-center gap-1 text-[11px] text-muted-foreground/70">
+        <Webhook className="h-3 w-3" /> Not pushed to any external system yet
+      </p>
+    );
+  }
+
+  return (
+    <div className="text-[11px]">
+      <button
+        type="button"
+        onClick={() => setExpanded((v) => !v)}
+        className="flex items-center gap-1 text-muted-foreground transition-colors hover:text-foreground"
+      >
+        {latest.success ? (
+          <CheckCircle2 className="h-3 w-3 text-emerald-600" />
+        ) : (
+          <XCircle className="h-3 w-3 text-red-600" />
+        )}
+        Pushed to {latest.integration.name}
+        {latest.isTest && <span className="rounded border border-border px-1 py-0 text-[9px] font-semibold">TEST</span>}
+        &middot; {latest.success ? `HTTP ${latest.responseStatus}` : latest.errorMessage ?? 'Failed'}
+        &middot; {new Date(latest.attemptedAt).toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}
+        {expanded ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+      </button>
+
+      {expanded && (
+        <div className="mt-2 space-y-2 rounded-lg border border-border/60 bg-muted/20 p-2.5">
+          {logs.map((log) => (
+            <div key={log.id} className="space-y-1 border-b border-border/40 pb-2 last:border-0 last:pb-0">
+              <p className="flex items-center gap-1 font-semibold text-muted-foreground">
+                {log.success ? (
+                  <CheckCircle2 className="h-3 w-3 text-emerald-600" />
+                ) : (
+                  <XCircle className="h-3 w-3 text-red-600" />
+                )}
+                {new Date(log.attemptedAt).toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                {log.isTest && <span className="rounded border border-border px-1 py-0 text-[9px]">TEST</span>}
+              </p>
+              <p className="break-all font-mono text-[10px] text-muted-foreground">{log.requestUrl}</p>
+              <pre className="max-h-32 overflow-auto rounded bg-background/60 p-1.5 font-mono text-[10px]">
+                {log.responseBody ?? log.errorMessage ?? 'No response'}
+              </pre>
+            </div>
+          ))}
         </div>
       )}
     </div>

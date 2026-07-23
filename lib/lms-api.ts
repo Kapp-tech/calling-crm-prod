@@ -38,18 +38,42 @@ export async function fetchLmsUnifiedData(type: LmsDataType): Promise<unknown> {
   }
 }
 
+export interface LmsCityRecord {
+  city_id: number;
+  city_name: string;
+  state_id: number;
+  state_name: string;
+}
+
+export interface LmsStateRecord {
+  state_id: number;
+  name: string;
+}
+
+/** Full city records (id + name + parent state) — the source of truth for the LMS's own city_id, used by lib/lms-location-lookup.ts. */
+export async function fetchLmsCityRecords(): Promise<LmsCityRecord[]> {
+  const json = await fetchLmsUnifiedData('city');
+  const list = (json as { data?: LmsCityRecord[] })?.data ?? [];
+  return list.filter((c) => !!c.city_name);
+}
+
+/** Full state records (id + name) — the source of truth for the LMS's own state_id, used by lib/lms-location-lookup.ts. */
+export async function fetchLmsStateRecords(): Promise<LmsStateRecord[]> {
+  const json = await fetchLmsUnifiedData('state');
+  const list = (json as { data?: LmsStateRecord[] })?.data ?? [];
+  return list.filter((s) => !!s.name);
+}
+
 /** Canonical city names, e.g. ["Mumbai", "Pune", ...]. */
 export async function fetchLmsCityNames(): Promise<string[]> {
-  const json = await fetchLmsUnifiedData('city');
-  const list = (json as { data?: { city_name?: string }[] })?.data ?? [];
-  return list.map((c) => c.city_name).filter((v): v is string => !!v);
+  const records = await fetchLmsCityRecords();
+  return records.map((c) => c.city_name);
 }
 
 /** Canonical state names, e.g. ["Maharashtra", "Rajasthan", ...]. */
 export async function fetchLmsStateNames(): Promise<string[]> {
-  const json = await fetchLmsUnifiedData('state');
-  const list = (json as { data?: { name?: string }[] })?.data ?? [];
-  return list.map((s) => s.name).filter((v): v is string => !!v);
+  const records = await fetchLmsStateRecords();
+  return records.map((s) => s.name);
 }
 
 /** Canonical course names, e.g. ["B.Tech", "MBA/PGDM", ...]. */

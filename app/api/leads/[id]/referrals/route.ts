@@ -5,6 +5,7 @@ import { authOptions } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import { canAccessLead } from '@/lib/lead-access';
 import { logActivity } from '@/lib/permissions';
+import { pushLeadToIntegrations } from '@/lib/lead-integration-engine';
 
 // Referrals are captured by counsellors while talking to the lead
 const REFERRAL_ROLES = ['SUPER_ADMIN', 'COUNSELLING_TL', 'COUNSELLING_AGENT'];
@@ -47,6 +48,21 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
         college: true,
         createdAt: true,
         assignedTo: { select: { id: true, name: true } },
+        integrationLogs: {
+          orderBy: { attemptedAt: 'desc' },
+          select: {
+            id: true,
+            success: true,
+            isTest: true,
+            responseStatus: true,
+            responseBody: true,
+            errorMessage: true,
+            requestUrl: true,
+            requestBody: true,
+            attemptedAt: true,
+            integration: { select: { name: true } },
+          },
+        },
       },
     });
 
@@ -152,6 +168,14 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
 
       return created;
     });
+
+    // Fire-and-forget: this is a persistent Node process (not serverless),
+    // so the push keeps running after the response below is sent. Never
+    // awaited — a slow or down third-party LMS must not delay or break
+    // referral capture for the counsellor.
+    pushLeadToIntegrations(referral.id, 'REFERRAL_CREATED').catch((err) =>
+      console.error('[leads/[id]/referrals POST] integration push failed', err)
+    );
 
     return NextResponse.json(referral, { status: 201 });
   } catch (error) {

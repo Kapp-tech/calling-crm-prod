@@ -12,7 +12,7 @@ import {
   UserCircle, UserCheck, ClipboardList, LogOut, ChevronRight, ChevronDown,
   GitBranch, CalendarClock, X, ChevronsLeft, ChevronsRight,
   GraduationCap, Tag, Globe2, MapPin, CheckSquare, ShieldCheck, Phone,
-  Megaphone, Gauge, Receipt, Layers, KeyRound, Settings, Handshake, Trash2,
+  Megaphone, Gauge, Receipt, Layers, KeyRound, Settings, Handshake, Trash2, Webhook,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -326,6 +326,12 @@ const NAV: NavEntry[] = [
         href: '/dashboard/super-admin/configurations/api-keys',
         label: 'API Keys',
         icon: KeyRound,
+        roles: ['SUPER_ADMIN'],
+      },
+      {
+        href: '/dashboard/super-admin/configurations/lead-integrations',
+        label: 'Lead Integrations',
+        icon: Webhook,
         roles: ['SUPER_ADMIN'],
       },
     ],
