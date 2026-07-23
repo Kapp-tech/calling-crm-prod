@@ -84,6 +84,24 @@ const config: Config = {
           from: { opacity: '0', transform: 'scale(0.96)' },
           to: { opacity: '1', transform: 'scale(1)' },
         },
+        'gradient-move': {
+          '0%, 100%': { backgroundPosition: '0% 50%' },
+          '50%': { backgroundPosition: '100% 50%' },
+        },
+        'shimmer-sweep': {
+          '0%': { left: '-40%' },
+          '100%': { left: '140%' },
+        },
+        'float-particle': {
+          '0%': { transform: 'translateY(0) scale(0.7)', opacity: '0' },
+          '15%': { opacity: '1' },
+          '85%': { opacity: '1' },
+          '100%': { transform: 'translateY(-34px) scale(1)', opacity: '0' },
+        },
+        'pulse-glow': {
+          '0%, 100%': { transform: 'scale(1)', opacity: '0.5' },
+          '50%': { transform: 'scale(1.25)', opacity: '0.85' },
+        },
       },
       animation: {
         'accordion-down': 'accordion-down 0.2s ease-out',
@@ -92,6 +110,10 @@ const config: Config = {
         'fade-in': 'fade-in 0.4s ease-out both',
         'fade-in-up': 'fade-in-up 0.5s cubic-bezier(0.22, 1, 0.36, 1) both',
         'scale-in': 'scale-in 0.35s cubic-bezier(0.22, 1, 0.36, 1) both',
+        'gradient-move': 'gradient-move 6s ease infinite',
+        'shimmer-sweep': 'shimmer-sweep 3.5s ease-in-out infinite',
+        'float-particle': 'float-particle 4s ease-in-out infinite',
+        'pulse-glow': 'pulse-glow 2.4s ease-in-out infinite',
       },
       transitionTimingFunction: {
         premium: 'cubic-bezier(0.22, 1, 0.36, 1)',

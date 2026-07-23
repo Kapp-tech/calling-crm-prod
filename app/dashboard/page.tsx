@@ -16,6 +16,7 @@ import {
 import { cn } from '@/lib/utils';
 import { Sparkline } from '@/components/shared/sparkline';
 import { Leaderboard } from '@/components/shared/leaderboard';
+import { HolidayGreeting } from '@/components/shared/holiday-greeting';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -690,6 +691,8 @@ export default function DashboardPage() {
 
   return (
     <div className="flex flex-col gap-6 pb-6">
+      <HolidayGreeting />
+
       {/* ── Header ── */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>

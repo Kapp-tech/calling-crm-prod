@@ -765,3 +765,18 @@ model AdminActionUnlock {
   @@unique([userId, action])
   @@index([expiresAt])
 }
+
+// Caches a full year's holiday list from the Calendarific API, one row per
+// (country, year). Fetched at most once per year — the API returns every
+// holiday for the whole year in a single call, so there's no need to hit it
+// daily; "today's holiday" is just a lookup against the cached data. Keeps
+// us far under Calendarific's 500 calls/month free-tier limit.
+model HolidayCache {
+  id        String   @id @default(cuid())
+  country   String
+  year      Int
+  data      Json
+  fetchedAt DateTime @default(now())
+
+  @@unique([country, year])
+}
