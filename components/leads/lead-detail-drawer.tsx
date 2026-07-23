@@ -732,7 +732,7 @@ interface ScheduledCallItem {
   status: 'PENDING' | 'DONE' | 'CANCELLED';
 }
 
-function CallsTab({ leadId, feedbacks, archivedFeedbacks = [] }: { leadId: string; feedbacks: Feedback[]; archivedFeedbacks?: ArchivedFeedback[] }) {
+function CallsTab({ leadId }: { leadId: string }) {
   const qc = useQueryClient();
   const { toast } = useToast();
 
@@ -809,69 +809,10 @@ function CallsTab({ leadId, feedbacks, archivedFeedbacks = [] }: { leadId: strin
         </div>
       )}
 
-      {/* Call log */}
-      <div>
-        <p className="mb-2 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Call Log</p>
-        {feedbacks.length === 0 ? (
-          <div className="flex flex-col items-center gap-2 py-8 text-center text-muted-foreground">
-            <Phone className="h-8 w-8 opacity-30" />
-            <p className="text-sm">No calls logged yet.</p>
-          </div>
-        ) : (
-          <div className="space-y-2">
-            {feedbacks.map((f) => (
-              <div key={f.id} className="rounded-lg border border-border/60 p-3 space-y-1.5 text-sm">
-                <div className="flex items-center justify-between">
-                  <span className="font-medium text-xs">Follow-up #{f.followUpNumber}</span>
-                  <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-semibold bg-primary/15 text-primary border border-primary/30">
-                    {f.feedbackOption.label}
-                  </span>
-                </div>
-                {f.remarks && <p className="text-foreground">{f.remarks}</p>}
-                <p className="text-xs text-muted-foreground">
-                  {new Date(f.createdAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })} · {f.agent.name}
-                </p>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-
-      {/* Previous assignment history — feedback archived by a "reassign as fresh"
-          reset. Only ever populated for roles other than the assigned agent. */}
-      {archivedFeedbacks.length > 0 && (
-        <div>
-          <p className="mb-2 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
-            Previous Assignment History
-          </p>
-          <div className="space-y-2">
-            {Object.entries(
-              archivedFeedbacks.reduce<Record<number, ArchivedFeedback[]>>((acc, f) => {
-                (acc[f.cycle] ??= []).push(f);
-                return acc;
-              }, {})
-            ).map(([cycle, items]) => (
-              <div key={cycle} className="space-y-2">
-                <p className="text-[10px] font-semibold text-muted-foreground/70">Cycle {cycle}</p>
-                {items.map((f) => (
-                  <div key={f.id} className="rounded-lg border border-dashed border-border/60 bg-muted/30 p-3 space-y-1.5 text-sm">
-                    <div className="flex items-center justify-between">
-                      <span className="font-medium text-xs">Follow-up #{f.followUpNumber}</span>
-                      <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-semibold bg-muted text-muted-foreground border border-border">
-                        {f.feedbackOption.label}
-                      </span>
-                    </div>
-                    {f.remarks && <p className="text-foreground">{f.remarks}</p>}
-                    <p className="text-xs text-muted-foreground">
-                      {new Date(f.createdAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })} · {f.agent.name}
-                    </p>
-                  </div>
-                ))}
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
+      {/* Call recordings — TODO: fetch and show recordings from the calling
+          system here. Feedback/follow-up history intentionally hidden from
+          this tab for now; it's still visible on the Follow-Ups and Timeline
+          tabs. */}
 
       <div>
         {/* Past schedules */}
@@ -1164,7 +1105,7 @@ export function LeadDetailDrawer({ leadId, onClose, canSubmitFeedback = false }:
 
               {/* ── CALLS ─────────────────────────────────────────── */}
               {activeTab === 'calls' && (
-                <CallsTab leadId={lead.id} feedbacks={feedbacks} archivedFeedbacks={lead.archivedFeedbacks} />
+                <CallsTab leadId={lead.id} />
               )}
 
               {/* ── TIMELINE ──────────────────────────────────────── */}
