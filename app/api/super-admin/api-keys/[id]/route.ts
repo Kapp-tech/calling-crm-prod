@@ -3,6 +3,8 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import { logActivity } from '@/lib/permissions';
+import { isActionUnlocked } from '@/lib/security-pin';
+import { PIN_GATED_ACTIONS } from '@/lib/pin-gated-actions';
 
 // Revoke a key. Deliberately no way to "un-revoke" — if it's needed again,
 // generate a fresh one. Deliberately no hard delete either, so leads already
@@ -12,6 +14,9 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     const session = await getServerSession(authOptions);
     if (!session || session.user.role !== 'SUPER_ADMIN') {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+    if (!(await isActionUnlocked(session.user.id, PIN_GATED_ACTIONS.API_KEYS))) {
+      return NextResponse.json({ error: 'This tool is PIN-locked — verify your security PIN first', code: 'PIN_LOCKED' }, { status: 423 });
     }
 
     const body = await req.json().catch(() => null);

@@ -12,6 +12,8 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import { useToast } from '@/components/ui/use-toast';
 import { useUndoable } from '@/components/shared/use-undoable';
+import { PinGate } from '@/components/shared/pin-gate';
+import { PIN_GATED_ACTIONS } from '@/lib/pin-gated-actions';
 import { cn, formatDateTime } from '@/lib/utils';
 
 interface ApiKeyRow {
@@ -38,6 +40,14 @@ function timeAgo(iso: string | null): string {
 }
 
 export default function ApiKeysPage() {
+  return (
+    <PinGate action={PIN_GATED_ACTIONS.API_KEYS} title="API Keys">
+      <ApiKeysContent />
+    </PinGate>
+  );
+}
+
+function ApiKeysContent() {
   const qc = useQueryClient();
   const { toast } = useToast();
   const undoable = useUndoable();
