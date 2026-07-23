@@ -5,6 +5,8 @@ import { authOptions } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import { getLeadWhereClause } from '@/lib/lead-access';
 import { nonFeedbackQuerySchema, buildNonFeedbackFilters, hasAnyFilter } from '@/lib/lead-query-filters';
+import { isActionUnlocked } from '@/lib/security-pin';
+import { PIN_GATED_ACTIONS } from '@/lib/pin-gated-actions';
 
 const SAMPLE_SIZE = 50;
 
@@ -18,6 +20,9 @@ export async function GET(req: NextRequest) {
     if (!session) return NextResponse.json({ success: false, error: 'Unauthorized', code: 'UNAUTHORIZED' }, { status: 401 });
     if (session.user.role !== 'SUPER_ADMIN') {
       return NextResponse.json({ success: false, error: 'Only Super Admin can use this tool', code: 'FORBIDDEN' }, { status: 403 });
+    }
+    if (!(await isActionUnlocked(session.user.id, PIN_GATED_ACTIONS.BULK_DELETE_LEADS))) {
+      return NextResponse.json({ success: false, error: 'This tool is PIN-locked — verify your security PIN first', code: 'PIN_LOCKED' }, { status: 423 });
     }
 
     const { searchParams } = new URL(req.url);

@@ -129,6 +129,8 @@ enum ActivityAction {
   API_KEY_CREATED
   API_KEY_REVOKED
   LEAD_CREATED_VIA_API
+  SECURITY_PIN_CHANGED
+  SECURITY_ACTION_UNLOCKED
 }
 
 // ─── Core Models ──────────────────────────────────────────────────────────────
@@ -147,6 +149,15 @@ model User {
   joiningDate  DateTime   @default(now())
   createdAt    DateTime   @default(now())
   updatedAt    DateTime   @updatedAt
+
+  // Second-factor 6-digit PIN gating especially destructive Super Admin
+  // tools (e.g. Bulk Delete Leads) — separate from the account password.
+  // Null until the admin sets one up from their profile page.
+  securityPinHash           String?
+  securityPinSetAt          DateTime?
+  securityPinFailedAttempts Int       @default(0)
+  securityPinLockedUntil    DateTime?
+  adminActionUnlocks        AdminActionUnlock[]
 
   @@index([role])
   @@index([teamId])
@@ -736,4 +747,21 @@ model ApiKey {
 
   @@index([keyHash])
   @@index([createdById])
+}
+
+// A short-lived grant that a Super Admin has verified their security PIN for
+// a specific gated action (e.g. "BULK_DELETE_LEADS"). Scoped per action, not
+// global, so unlocking one PIN-gated tool never unlocks another. Checked
+// server-side by the protected routes themselves — the frontend PIN prompt
+// is UX, this row is the actual enforcement.
+model AdminActionUnlock {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  action    String
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@unique([userId, action])
+  @@index([expiresAt])
 }

@@ -16,6 +16,8 @@ import {
 } from '@/components/ui/dialog';
 import { useToast } from '@/components/ui/use-toast';
 import { MultiSelectFilter, type MultiSelectOption } from '@/components/shared/multi-select-filter';
+import { PinGate } from '@/components/shared/pin-gate';
+import { PIN_GATED_ACTIONS } from '@/lib/pin-gated-actions';
 import { cn } from '@/lib/utils';
 
 interface UploadBatchOption {
@@ -122,6 +124,14 @@ function buildParams(f: FilterState): URLSearchParams {
 }
 
 export default function BulkDeleteLeadsPage() {
+  return (
+    <PinGate action={PIN_GATED_ACTIONS.BULK_DELETE_LEADS} title="Bulk Delete Leads">
+      <BulkDeleteLeadsContent />
+    </PinGate>
+  );
+}
+
+function BulkDeleteLeadsContent() {
   const { toast } = useToast();
   const qc = useQueryClient();
 
@@ -473,12 +483,12 @@ export default function BulkDeleteLeadsPage() {
           </DialogHeader>
           <div className="space-y-2 py-1">
             <Label className="text-xs font-semibold text-foreground/80">
-              Type <strong className="font-mono">{total}</strong> to confirm
+              Type <strong className="font-mono">DELETE</strong> to confirm
             </Label>
             <Input
               value={confirmText}
               onChange={(e) => setConfirmText(e.target.value)}
-              placeholder={String(total)}
+              placeholder="DELETE"
               autoFocus
             />
           </div>
@@ -488,7 +498,7 @@ export default function BulkDeleteLeadsPage() {
             </Button>
             <Button
               variant="destructive"
-              disabled={confirmText.trim() !== String(total) || deleteMutation.isPending}
+              disabled={confirmText.trim() !== 'DELETE' || deleteMutation.isPending}
               onClick={() => deleteMutation.mutate()}
             >
               {deleteMutation.isPending && <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />}

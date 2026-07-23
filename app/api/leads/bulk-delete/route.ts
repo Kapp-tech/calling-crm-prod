@@ -7,6 +7,8 @@ import { prisma } from '@/lib/prisma';
 import { logActivity } from '@/lib/permissions';
 import { getLeadWhereClause } from '@/lib/lead-access';
 import { nonFeedbackQuerySchema, buildNonFeedbackFilters, hasAnyFilter } from '@/lib/lead-query-filters';
+import { isActionUnlocked } from '@/lib/security-pin';
+import { PIN_GATED_ACTIONS } from '@/lib/pin-gated-actions';
 
 // Hard cap per request — a safety net against an unexpectedly broad filter
 // wiping the entire table in one shot. Narrow the filters (e.g. by upload
@@ -32,6 +34,9 @@ export async function POST(req: NextRequest) {
     if (!session) return NextResponse.json({ success: false, error: 'Unauthorized', code: 'UNAUTHORIZED' }, { status: 401 });
     if (session.user.role !== 'SUPER_ADMIN') {
       return NextResponse.json({ success: false, error: 'Only Super Admin can use this tool', code: 'FORBIDDEN' }, { status: 403 });
+    }
+    if (!(await isActionUnlocked(session.user.id, PIN_GATED_ACTIONS.BULK_DELETE_LEADS))) {
+      return NextResponse.json({ success: false, error: 'This tool is PIN-locked — verify your security PIN first', code: 'PIN_LOCKED' }, { status: 423 });
     }
 
     const body = await req.json().catch(() => null);

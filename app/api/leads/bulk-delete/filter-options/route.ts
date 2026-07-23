@@ -8,6 +8,10 @@ import { prisma } from '@/lib/prisma';
 // the All Leads page ever shows), this deliberately covers EVERY status —
 // a mistaken upload is often still PENDING or was DISAPPROVED, and hiding
 // its city/college/etc. from the dropdown would make it impossible to find.
+//
+// Deliberately NOT PIN-gated like preview/execute below it: it only returns
+// aggregate distinct field values (no lead PII), and the frontend never
+// calls it before the security PIN gate has already been unlocked anyway.
 export async function GET() {
   try {
     const session = await getServerSession(authOptions);

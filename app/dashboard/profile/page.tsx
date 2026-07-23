@@ -7,7 +7,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import {
   Eye, EyeOff, Loader2, User, Lock, Phone, Mail,
-  Calendar, Clock, Building2, Pencil, X, Check, ShieldCheck, Home, Briefcase, UserCog,
+  Calendar, Clock, Building2, Pencil, X, Check, UserCog, KeyRound,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -52,36 +52,6 @@ function getPasswordStrength(pwd: string) {
   if (hasUpper && hasNumber) return { label: 'Strong', color: 'bg-green-500', width: 'w-full', level: 'strong' };
   if (hasUpper || hasNumber) return { label: 'Medium', color: 'bg-amber-500', width: 'w-2/3', level: 'medium' };
   return { label: 'Weak', color: 'bg-red-500', width: 'w-1/3', level: 'weak' };
-}
-
-// ─── Read-only meta row (used for account/employment details) ─────────────────
-
-function MetaRow({
-  icon: Icon, label, value, sublabel, badge,
-}: {
-  icon: React.ComponentType<{ className?: string }>;
-  label: string; value: string; sublabel?: string;
-  badge?: { text: string; variant: 'success' | 'warning' | 'outline' | 'secondary' };
-}) {
-  return (
-    <div className="flex items-center gap-4 px-5 py-4">
-      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-muted">
-        <Icon className="h-[18px] w-[18px] text-muted-foreground" />
-      </div>
-      <div className="flex-1 min-w-0">
-        <p className="text-[10px] font-semibold tracking-widest text-muted-foreground uppercase mb-0.5">
-          {label}
-        </p>
-        <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-sm font-semibold text-foreground truncate">{value}</span>
-          {badge && (
-            <Badge variant={badge.variant} className="text-[10px] px-2">{badge.text}</Badge>
-          )}
-        </div>
-        {sublabel && <p className="text-xs text-muted-foreground truncate mt-0.5">{sublabel}</p>}
-      </div>
-    </div>
-  );
 }
 
 // ─── Inline-editable info row ─────────────────────────────────────────────────
@@ -308,6 +278,181 @@ function ChangePasswordForm() {
   );
 }
 
+// ─── Security PIN form (Super Admin only) ──────────────────────────────────────
+// Gates destructive tools like Bulk Delete Leads. Changing it always
+// requires the account password (proves it's really this admin), plus the
+// current PIN if one is already set (proves continuity of possession).
+//
+// Deliberately uses the same single-line masked-input style as the password
+// form right above it (not the segmented digit boxes from PinInput) — this
+// is a settings form where you type a PIN you already know, not a one-time
+// OTP-style entry moment, so it should look and behave like every other
+// field on this page.
+
+interface PinStatus {
+  isSet: boolean;
+  setAt: string | null;
+}
+
+type PinShowState = { old: boolean; new: boolean; confirm: boolean; password: boolean };
+
+function PinField({
+  id, label, value, onChange, showKey, show, onToggleShow, error, placeholder,
+}: {
+  id: string;
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  showKey: keyof PinShowState;
+  show: PinShowState;
+  onToggleShow: (key: keyof PinShowState) => void;
+  error?: string;
+  placeholder?: string;
+}) {
+  return (
+    <div className="space-y-1.5">
+      <Label htmlFor={id} className="text-[11px] font-semibold uppercase tracking-widest text-muted-foreground">
+        {label}
+      </Label>
+      <div className="relative">
+        <Input
+          id={id}
+          type={show[showKey] ? 'text' : 'password'}
+          inputMode="numeric"
+          autoComplete="off"
+          maxLength={6}
+          value={value}
+          onChange={(e) => onChange(e.target.value.replace(/\D/g, '').slice(0, 6))}
+          placeholder={placeholder ?? '6-digit PIN'}
+          className="pr-10 h-10 rounded-xl bg-muted/30 border-border/60 focus:bg-background tracking-[0.35em]"
+        />
+        <button type="button" tabIndex={-1}
+          className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+          onClick={() => onToggleShow(showKey)}>
+          {show[showKey] ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+        </button>
+      </div>
+      {error && <p className="text-xs text-destructive">{error}</p>}
+    </div>
+  );
+}
+
+function SecurityPinForm() {
+  const { toast } = useToast();
+  const qc = useQueryClient();
+  const [show, setShow] = useState<PinShowState>({ old: false, new: false, confirm: false, password: false });
+  const [password, setPassword] = useState('');
+  const [oldPin, setOldPin] = useState('');
+  const [newPin, setNewPin] = useState('');
+  const [confirmPin, setConfirmPin] = useState('');
+  const [apiError, setApiError] = useState<string | null>(null);
+
+  const toggleShow = (key: keyof PinShowState) => setShow((s) => ({ ...s, [key]: !s[key] }));
+
+  const { data: status, isLoading } = useQuery<PinStatus>({
+    queryKey: ['security-pin-status'],
+    queryFn: () => fetch('/api/super-admin/security-pin').then((r) => r.json()),
+  });
+
+  const mutation = useMutation({
+    mutationFn: async () => {
+      const r = await fetch('/api/super-admin/security-pin', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password, oldPin: status?.isSet ? oldPin : undefined, newPin }),
+      });
+      const json = await r.json();
+      if (!json.success) throw new Error(json.error ?? 'Something went wrong');
+      return json;
+    },
+    onSuccess: (json) => {
+      toast({ title: json.message ?? 'PIN updated' });
+      setPassword(''); setOldPin(''); setNewPin(''); setConfirmPin(''); setApiError(null);
+      qc.invalidateQueries({ queryKey: ['security-pin-status'] });
+    },
+    onError: (err: Error) => setApiError(err.message),
+  });
+
+  const formValid =
+    password.length > 0 &&
+    (!status?.isSet || oldPin.length === 6) &&
+    newPin.length === 6 &&
+    confirmPin.length === 6 &&
+    newPin === confirmPin;
+
+  if (isLoading) {
+    return <div className="flex justify-center py-6"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>;
+  }
+
+  return (
+    <form
+      onSubmit={(e) => { e.preventDefault(); setApiError(null); mutation.mutate(); }}
+      className="space-y-5"
+    >
+      <div className="flex items-center gap-2">
+        <Badge variant={status?.isSet ? 'success' : 'outline'} className="text-[10px]">
+          {status?.isSet ? 'PIN configured' : 'Not configured'}
+        </Badge>
+        {status?.isSet && status.setAt && (
+          <span className="text-xs text-muted-foreground">Last set {formatDateTime(status.setAt)}</span>
+        )}
+      </div>
+
+      <div className={cn('grid gap-4', status?.isSet && 'sm:grid-cols-2')}>
+        {status?.isSet && (
+          <PinField
+            id="oldPin" label="Current PIN" value={oldPin} onChange={setOldPin}
+            showKey="old" show={show} onToggleShow={toggleShow}
+          />
+        )}
+        <PinField
+          id="newPin" label={status?.isSet ? 'New PIN' : 'Set a 6-digit PIN'} value={newPin} onChange={setNewPin}
+          showKey="new" show={show} onToggleShow={toggleShow}
+        />
+        <PinField
+          id="confirmPin" label="Confirm New PIN" value={confirmPin} onChange={setConfirmPin}
+          showKey="confirm" show={show} onToggleShow={toggleShow}
+          error={confirmPin.length === 6 && confirmPin !== newPin ? 'PINs do not match' : undefined}
+        />
+      </div>
+
+      <div className="space-y-1.5">
+        <Label htmlFor="pinPassword" className="text-[11px] font-semibold uppercase tracking-widest text-muted-foreground">
+          Account Password
+        </Label>
+        <div className="relative">
+          <Input
+            id="pinPassword"
+            type={show.password ? 'text' : 'password'}
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            placeholder="Confirm it's you"
+            className="pr-10 h-10 rounded-xl bg-muted/30 border-border/60 focus:bg-background"
+          />
+          <button type="button" tabIndex={-1}
+            className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+            onClick={() => toggleShow('password')}>
+            {show.password ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+          </button>
+        </div>
+      </div>
+
+      {apiError && (
+        <div className="rounded-xl bg-destructive/10 border border-destructive/20 px-4 py-3 text-sm text-destructive">
+          {apiError}
+        </div>
+      )}
+
+      <Button type="submit" disabled={!formValid || mutation.isPending} className="w-full h-10 rounded-xl font-semibold">
+        {mutation.isPending
+          ? <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+          : <KeyRound className="mr-2 h-4 w-4" />}
+        {status?.isSet ? 'Update PIN' : 'Set PIN'}
+      </Button>
+    </form>
+  );
+}
+
 // ─── Main page ────────────────────────────────────────────────────────────────
 
 export default function ProfilePage() {
@@ -361,15 +506,17 @@ export default function ProfilePage() {
         <p className="text-sm text-muted-foreground">Your account information</p>
       </div>
 
-      {/* ── Two-column layout ────────────────────────────────────────────────── */}
-      <div className="grid grid-cols-1 gap-5 lg:grid-cols-5">
+      {/* ── Layout: short identity sidebar + one settings column ────────────────
+          Deliberately NOT trying to height-match two columns — the sidebar is
+          short by nature (just identity), the settings column is long by
+          nature (five sections). Forcing them to look "balanced" is what
+          caused the empty gaps / lopsided pairing in earlier passes. */}
+      <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
 
-        {/* ── Left column (2 / 5) ─────────────────────────────────────────────── */}
-        <div className="lg:col-span-2 space-y-4">
-
-          {/* Hero card */}
-          <Card className="overflow-hidden rounded-2xl border-0 shadow-md">
-            <div className="h-28 bg-gradient-to-br from-blue-500 via-blue-600 to-indigo-600" />
+        {/* ── Sidebar (1 / 3) ──────────────────────────────────────────────────── */}
+        <div className="lg:col-span-1">
+          <Card className="overflow-hidden rounded-2xl border-0 shadow-md lg:sticky lg:top-5">
+            <div className="h-24 bg-gradient-to-br from-blue-500 via-blue-600 to-indigo-600" />
             <div className="px-6 pb-6">
               <div className="-mt-11 mb-4">
                 <div className="relative inline-block">
@@ -383,44 +530,50 @@ export default function ProfilePage() {
               </div>
               <h2 className="text-xl font-bold leading-tight">{user.name}</h2>
               <p className="text-sm text-muted-foreground mt-0.5">{roleLabel}</p>
+
+              <div className="mt-4 flex flex-wrap gap-1.5">
+                <Badge variant={user.status === 'ACTIVE' ? 'success' : 'warning'} className="text-[10px]">
+                  {user.status}
+                </Badge>
+                <Badge variant="outline" className="text-[10px]">
+                  {user.workType === 'WFH' ? 'Work From Home' : 'Work From Office'}
+                </Badge>
+              </div>
+
+              <div className="mt-5 space-y-3 border-t border-border/60 pt-4">
+                {user.manager && (
+                  <div className="flex items-center gap-2.5 text-xs">
+                    <UserCog className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                    <span className="text-muted-foreground">Reports to</span>
+                    <span className="ml-auto font-medium text-foreground">{user.manager.name}</span>
+                  </div>
+                )}
+                <div className="flex items-center gap-2.5 text-xs">
+                  <Calendar className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                  <span className="text-muted-foreground">Joined</span>
+                  <span className="ml-auto font-medium text-foreground">{formatDateTime(user.joiningDate)}</span>
+                </div>
+                <div className="flex items-center gap-2.5 text-xs">
+                  <Clock className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                  <span className="text-muted-foreground">Account created</span>
+                  <span className="ml-auto font-medium text-foreground">{formatDateTime(user.createdAt)}</span>
+                </div>
+                {group && (
+                  <div className="flex items-center gap-2.5 text-xs">
+                    <Building2 className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                    <span className="text-muted-foreground">{groupLabel}</span>
+                    <span className="ml-auto font-medium text-foreground">{group}</span>
+                  </div>
+                )}
+              </div>
             </div>
           </Card>
-
-          {/* Employment details card */}
-          <Card className="overflow-hidden rounded-2xl border-0 shadow-sm">
-            <div className="px-5 pt-4 pb-1">
-              <h3 className="text-sm font-semibold text-foreground">Employment Details</h3>
-            </div>
-            <div className="divide-y divide-border/60 mt-1">
-              <MetaRow
-                icon={ShieldCheck} label="Role & Status" value={roleLabel}
-                badge={{ text: user.status, variant: user.status === 'ACTIVE' ? 'success' : 'warning' }}
-              />
-              <MetaRow
-                icon={user.workType === 'WFH' ? Home : Briefcase}
-                label="Employee Type"
-                value={user.workType === 'WFH' ? 'Work From Home' : 'Work From Office'}
-              />
-              {user.manager && (
-                <MetaRow
-                  icon={UserCog} label="Reporting Manager" value={user.manager.name}
-                  sublabel={ROLE_LABELS[user.manager.role] ?? user.manager.role.replace(/_/g, ' ')}
-                />
-              )}
-              <MetaRow icon={Calendar} label="Joining Date" value={formatDateTime(user.joiningDate)} />
-              <MetaRow icon={Clock} label="User Created" value={formatDateTime(user.createdAt)} />
-            </div>
-          </Card>
-
         </div>
 
-        {/* ── Right column (3 / 5) ────────────────────────────────────────────── */}
-        <div className="lg:col-span-3 space-y-4">
+        {/* ── Settings column (2 / 3) ──────────────────────────────────────────── */}
+        <div className="lg:col-span-2 space-y-4">
 
-          {/* Feedback activity heatmap — renders nothing for users with no activity */}
-          <ActivityHeatmap />
-
-          {/* Info rows card */}
+          {/* Personal information card */}
           <Card className="overflow-hidden rounded-2xl border-0 shadow-sm">
             <div className="px-5 pt-4 pb-1">
               <h3 className="text-sm font-semibold text-foreground">Personal Information</h3>
@@ -444,14 +597,11 @@ export default function ProfilePage() {
                 onSave={(val) => updateMutation.mutateAsync({ phone: val })}
                 onClear={() => updateMutation.mutateAsync({ phone: null })}
               />
-              {group && (
-                <InfoRow
-                  icon={Building2}
-                  label={groupLabel} value={group}
-                />
-              )}
             </div>
           </Card>
+
+          {/* Feedback activity heatmap — renders nothing for users with no activity */}
+          <ActivityHeatmap />
 
           {/* Security card */}
           <Card className="rounded-2xl border-0 shadow-sm">
@@ -470,6 +620,28 @@ export default function ProfilePage() {
               <ChangePasswordForm />
             </CardContent>
           </Card>
+
+          {/* Security PIN card — Super Admin only */}
+          {user.role === 'SUPER_ADMIN' && (
+            <Card id="security-pin" className="rounded-2xl border-0 shadow-sm scroll-mt-4">
+              <CardHeader className="px-5 pb-3 pt-5">
+                <div className="flex items-center gap-3">
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-muted">
+                    <KeyRound className="h-[18px] w-[18px] text-muted-foreground" />
+                  </div>
+                  <div>
+                    <CardTitle className="text-base">Security PIN</CardTitle>
+                    <CardDescription className="text-xs">
+                      Required to unlock destructive tools like Bulk Delete Leads
+                    </CardDescription>
+                  </div>
+                </div>
+              </CardHeader>
+              <CardContent className="px-5 pb-5 pt-1">
+                <SecurityPinForm />
+              </CardContent>
+            </Card>
+          )}
 
         </div>
       </div>
