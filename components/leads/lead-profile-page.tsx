@@ -339,11 +339,17 @@ function MultiSelect({
             {filtered.length === 0 && (
               <li className="px-3 py-2 text-xs text-muted-foreground">No results</li>
             )}
-            {filtered.map((opt) => {
+            {filtered.map((opt, i) => {
               const checked = selected.includes(opt.value);
               return (
                 <li
-                  key={opt.value}
+                  // Index-qualified: city/state names repeat across different
+                  // states (e.g. two "Bilaspur"s), so opt.value alone isn't a
+                  // unique key — a duplicate key breaks React's list
+                  // reconciliation as the filtered list shrinks/grows on each
+                  // keystroke, leaving stale rows on screen from an earlier,
+                  // unrelated filter pass.
+                  key={`${opt.value}-${i}`}
                   onClick={() => toggle(opt.value)}
                   className="flex cursor-pointer items-center gap-2 px-3 py-1.5 text-[13px] hover:bg-muted/50"
                 >
