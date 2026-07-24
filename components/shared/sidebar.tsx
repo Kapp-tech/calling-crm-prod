@@ -12,7 +12,7 @@ import {
   UserCircle, UserCheck, ClipboardList, LogOut, ChevronRight, ChevronDown,
   GitBranch, CalendarClock, X, ChevronsLeft, ChevronsRight,
   GraduationCap, Tag, Globe2, MapPin, CheckSquare, ShieldCheck, Phone,
-  Megaphone, Gauge, Receipt, Layers, KeyRound, Settings, Handshake, Trash2, Webhook,
+  Megaphone, Gauge, Receipt, Layers, KeyRound, Settings, Handshake, Trash2, Webhook, Search,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -129,6 +129,13 @@ const NAV: NavEntry[] = [
         exact: true,
       },
     ],
+  },
+  {
+    type: 'leaf',
+    href: '/dashboard/college-search',
+    label: 'College/Course Search',
+    icon: Search,
+    roles: ['SUPER_ADMIN', 'REPORTS', 'OPERATIONS', 'COUNSELLING_TL', 'COUNSELLING_AGENT'],
   },
   {
     type: 'group',

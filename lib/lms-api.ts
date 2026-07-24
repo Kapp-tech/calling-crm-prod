@@ -95,3 +95,122 @@ export function toCanonicalMap(names: string[]): Map<string, string> {
   for (const n of names) map.set(n.trim().toLowerCase(), n.trim());
   return map;
 }
+
+// ─── College/Course Search ──────────────────────────────────────────────────
+// A different upstream endpoint (college-course-lookup, not unified-data) on
+// the same LMS host/key — backs the College/Course Search page's fee and
+// brochure lookup. Kept in this file since it's the same external client
+// and API key, just a different resource.
+
+const COLLEGE_COURSE_LOOKUP_BASE = 'https://api.lms.kollegeapply.com/api/leads/college-course-lookup';
+
+export interface LmsBrochure {
+  brochure_file: string;
+  brochure_title: string;
+}
+
+export interface LmsCollegeSearchResult {
+  college_id: number;
+  college_name: string;
+  short_name: string | null;
+  city_name: string | null;
+  state_name: string | null;
+  slug: string;
+  brochures: LmsBrochure[];
+}
+
+export interface LmsCollegeSearchResponse {
+  data: LmsCollegeSearchResult[];
+  total: number;
+  page: number;
+  limit: number;
+}
+
+export interface LmsExamAccepted {
+  name: string;
+  slug: string;
+}
+
+export interface LmsCourseGroup {
+  course_group_id: number;
+  course_group_name: string;
+  course_group_full_name: string;
+  duration: string | null;
+  median_salary: string | null;
+  min_fees: string | null;
+  max_fees: string | null;
+  course_mode: string | null;
+  exam_accepted: LmsExamAccepted[];
+  eligibility: string | null;
+  brochures: LmsBrochure[];
+}
+
+export interface LmsCourse {
+  course_id: number;
+  course_name: string;
+  duration_type: string | null;
+  course_mode: string | null;
+  median_salary: string | null;
+  min_fees: string | null;
+  max_fees: string | null;
+  exam_accepted: LmsExamAccepted[];
+  course_brochure: unknown[];
+  brochures: LmsBrochure[];
+}
+
+async function fetchCollegeCourseLookup(params: Record<string, string | number>): Promise<unknown> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  const qs = new URLSearchParams(Object.entries(params).map(([k, v]) => [k, String(v)])).toString();
+  try {
+    const res = await fetch(`${COLLEGE_COURSE_LOOKUP_BASE}?${qs}`, {
+      headers: { 'x-api-key': LMS_API_KEY },
+      next: { revalidate: 3600 },
+      signal: controller.signal,
+    });
+    if (!res.ok) {
+      throw new Error(`College/course lookup failed for ${qs}: HTTP ${res.status}`);
+    }
+    return await res.json();
+  } catch (err) {
+    if (err instanceof Error && err.name === 'AbortError') {
+      throw new Error(`College/course lookup for ${qs} timed out after ${FETCH_TIMEOUT_MS / 1000}s`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+/** Paginated college search — server-side `search` matches college name, city, and state. */
+export async function searchLmsColleges(opts: {
+  search?: string;
+  page: number;
+  limit: number;
+}): Promise<LmsCollegeSearchResponse> {
+  const params: Record<string, string | number> = { option: 'college', page: opts.page, limit: opts.limit };
+  if (opts.search?.trim()) params.search = opts.search.trim();
+  const json = (await fetchCollegeCourseLookup(params)) as Partial<LmsCollegeSearchResponse>;
+  return {
+    data: json.data ?? [],
+    total: json.total ?? 0,
+    page: json.page ?? opts.page,
+    limit: json.limit ?? opts.limit,
+  };
+}
+
+/** Full (unpaginated) course-group list for one college. */
+export async function fetchLmsCourseGroups(collegeId: number): Promise<LmsCourseGroup[]> {
+  const json = (await fetchCollegeCourseLookup({ option: 'course_group', college_id: collegeId })) as { data?: LmsCourseGroup[] };
+  return json.data ?? [];
+}
+
+/** Full (unpaginated) course list for one college + course group. */
+export async function fetchLmsCourses(collegeId: number, courseGroupId: number): Promise<LmsCourse[]> {
+  const json = (await fetchCollegeCourseLookup({
+    option: 'course',
+    college_id: collegeId,
+    course_group_id: courseGroupId,
+  })) as { data?: LmsCourse[] };
+  return json.data ?? [];
+}
