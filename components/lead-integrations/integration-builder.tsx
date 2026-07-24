@@ -14,6 +14,7 @@ import { Switch } from '@/components/ui/switch';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useToast } from '@/components/ui/use-toast';
+import { PaginationBar } from '@/components/shared/pagination-bar';
 import { cn, formatDateTime } from '@/lib/utils';
 import { FIELD_CATALOG, SAMPLE_LEAD_DATA, type FieldGroup } from '@/lib/lead-integration-fields';
 import { renderTemplate, TEMPLATE_HELPERS } from '@/lib/lead-integration-template';
@@ -118,6 +119,11 @@ export function LeadIntegrationBuilder({ integrationId }: { integrationId?: stri
   const [testSending, setTestSending] = useState(false);
   const [testResult, setTestResult] = useState<TestResult | null>(null);
   const [retryingId, setRetryingId] = useState<string | null>(null);
+
+  const [logsPage, setLogsPage] = useState(1);
+  const [logsLimit, setLogsLimit] = useState(25);
+  const [logsFrom, setLogsFrom] = useState('');
+  const [logsTo, setLogsTo] = useState('');
 
   const { data: integration } = useQuery<IntegrationDetail>({
     queryKey: ['lead-integration', integrationId],
@@ -309,10 +315,22 @@ export function LeadIntegrationBuilder({ integrationId }: { integrationId?: stri
     }
   }
 
-  const { data: logsData, isLoading: logsLoading } = useQuery<{ logs: LogRow[] }>({
-    queryKey: ['lead-integration-logs', integrationId],
-    queryFn: () => fetch(`/api/super-admin/lead-integrations/${integrationId}/logs`).then((r) => r.json()),
+  const { data: logsData, isLoading: logsLoading, isFetching: logsFetching } = useQuery<{
+    logs: LogRow[];
+    total: number;
+    page: number;
+    limit: number;
+    totalPages: number;
+  }>({
+    queryKey: ['lead-integration-logs', integrationId, logsPage, logsLimit, logsFrom, logsTo],
+    queryFn: () => {
+      const p = new URLSearchParams({ page: String(logsPage), limit: String(logsLimit) });
+      if (logsFrom) p.set('from', logsFrom);
+      if (logsTo) p.set('to', logsTo);
+      return fetch(`/api/super-admin/lead-integrations/${integrationId}/logs?${p}`).then((r) => r.json());
+    },
     enabled: isEdit && tab === 'logs',
+    placeholderData: (prev) => prev,
   });
 
   async function handleRetry(logId: string) {
@@ -793,6 +811,46 @@ export function LeadIntegrationBuilder({ integrationId }: { integrationId?: stri
             <CardDescription>Every automatic push, test send, and retry — success or failure.</CardDescription>
           </CardHeader>
           <CardContent className="p-0">
+            <div className="flex flex-wrap items-end gap-3 border-b border-border/60 px-5 py-3.5">
+              <div className="space-y-1">
+                <Label className="text-[11px] text-muted-foreground">From</Label>
+                <Input
+                  type="date"
+                  value={logsFrom}
+                  onChange={(e) => {
+                    setLogsFrom(e.target.value);
+                    setLogsPage(1);
+                  }}
+                  className="h-9 w-[150px]"
+                />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-[11px] text-muted-foreground">To</Label>
+                <Input
+                  type="date"
+                  value={logsTo}
+                  onChange={(e) => {
+                    setLogsTo(e.target.value);
+                    setLogsPage(1);
+                  }}
+                  className="h-9 w-[150px]"
+                />
+              </div>
+              {(logsFrom || logsTo) && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    setLogsFrom('');
+                    setLogsTo('');
+                    setLogsPage(1);
+                  }}
+                >
+                  Clear
+                </Button>
+              )}
+            </div>
+
             {logsLoading ? (
               <div className="flex justify-center py-12">
                 <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
@@ -800,14 +858,31 @@ export function LeadIntegrationBuilder({ integrationId }: { integrationId?: stri
             ) : !logsData?.logs.length ? (
               <div className="flex flex-col items-center gap-2 py-12 text-center">
                 <Webhook className="h-8 w-8 text-muted-foreground/30" />
-                <p className="text-sm font-medium text-muted-foreground">No push attempts yet</p>
+                <p className="text-sm font-medium text-muted-foreground">
+                  {logsFrom || logsTo ? 'No push attempts in this date range' : 'No push attempts yet'}
+                </p>
               </div>
             ) : (
-              <div className="divide-y">
-                {logsData.logs.map((log) => (
-                  <LogRowItem key={log.id} log={log} onRetry={() => handleRetry(log.id)} retrying={retryingId === log.id} />
-                ))}
-              </div>
+              <>
+                <div className={cn('divide-y transition-opacity', logsFetching && 'opacity-60')}>
+                  {logsData.logs.map((log) => (
+                    <LogRowItem key={log.id} log={log} onRetry={() => handleRetry(log.id)} retrying={retryingId === log.id} />
+                  ))}
+                </div>
+                <PaginationBar
+                  page={logsPage}
+                  totalPages={logsData.totalPages}
+                  total={logsData.total}
+                  limit={logsLimit}
+                  onPageChange={setLogsPage}
+                  onLimitChange={(l) => {
+                    setLogsLimit(l);
+                    setLogsPage(1);
+                  }}
+                  disabled={logsFetching}
+                  className="px-5"
+                />
+              </>
             )}
           </CardContent>
         </Card>
