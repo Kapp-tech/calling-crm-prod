@@ -654,7 +654,9 @@ export function LeadIntegrationBuilder({ integrationId }: { integrationId?: stri
             </CardContent>
           </Card>
 
-          <div className="space-y-4">
+          {/* min-w-0: a `1fr` grid track has an auto minimum, so the wide
+              code previews inside would otherwise stretch the whole page. */}
+          <div className="min-w-0 space-y-4">
             <Card>
               <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2 space-y-0 pb-3">
                 <div>
@@ -736,7 +738,7 @@ export function LeadIntegrationBuilder({ integrationId }: { integrationId?: stri
                 {dataSource === 'lead' && leadPickerBlock}
                 <pre
                   className={cn(
-                    'max-h-64 overflow-auto rounded-lg border p-3 font-mono text-xs leading-relaxed',
+                    'max-h-64 max-w-full overflow-auto rounded-lg border p-3 font-mono text-xs leading-relaxed',
                     rendered.valid ? 'border-border bg-muted/20' : 'border-red-300/50 bg-red-500/5 text-red-700 dark:text-red-400'
                   )}
                 >
@@ -796,7 +798,7 @@ export function LeadIntegrationBuilder({ integrationId }: { integrationId?: stri
                     : testResult.errorMessage ?? `HTTP ${testResult.responseStatus ?? '—'}`}
                 </p>
                 {testResult.responseBody && (
-                  <pre className="mt-2 max-h-56 overflow-auto rounded-md bg-background/60 p-2 font-mono text-xs">{testResult.responseBody}</pre>
+                  <pre className="mt-2 max-h-56 max-w-full overflow-y-auto whitespace-pre-wrap break-all rounded-md bg-background/60 p-2 font-mono text-xs">{testResult.responseBody}</pre>
                 )}
               </div>
             )}
@@ -925,19 +927,22 @@ function LogRowItem({ log, onRetry, retrying }: { log: LogRow; onRetry: () => vo
         {expanded ? <ChevronUp className="h-4 w-4 shrink-0 text-muted-foreground" /> : <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />}
       </button>
       {expanded && (
-        <div className="mt-3 space-y-2 pl-6">
-          <div>
+        <div className="mt-3 min-w-0 space-y-2 pl-6">
+          <div className="min-w-0">
             <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Request</p>
-            <pre className="mt-1 max-h-40 overflow-auto rounded-md bg-muted/30 p-2 font-mono text-[11px]">
+            {/* Wrap rather than scroll horizontally — request/response bodies are
+                often one unbroken JSON line, which would otherwise size the
+                `pre` to its content and stretch the page. */}
+            <pre className="mt-1 max-h-40 max-w-full overflow-y-auto whitespace-pre-wrap break-all rounded-md bg-muted/30 p-2 font-mono text-[11px]">
               {log.requestUrl}
               {'\n\n'}
               {log.requestBody}
             </pre>
           </div>
           {(log.responseBody || log.errorMessage) && (
-            <div>
+            <div className="min-w-0">
               <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Response</p>
-              <pre className="mt-1 max-h-40 overflow-auto rounded-md bg-muted/30 p-2 font-mono text-[11px]">
+              <pre className="mt-1 max-h-40 max-w-full overflow-y-auto whitespace-pre-wrap break-all rounded-md bg-muted/30 p-2 font-mono text-[11px]">
                 {log.responseBody ?? log.errorMessage}
               </pre>
             </div>

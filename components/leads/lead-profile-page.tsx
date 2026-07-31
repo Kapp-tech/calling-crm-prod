@@ -1410,7 +1410,7 @@ function ReferralsSection({ leadId }: { leadId: string }) {
           {referrals.map((r, i) => (
             <li
               key={r.id}
-              className="flex flex-col gap-1 px-4 sm:px-5 py-3 animate-fade-in-up transition-colors hover:bg-muted/30"
+              className="flex min-w-0 flex-col gap-1 px-4 sm:px-5 py-3 animate-fade-in-up transition-colors hover:bg-muted/30"
               style={{ animationDelay: `${Math.min(i, 8) * 50}ms` }}
             >
               <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
@@ -1570,11 +1570,11 @@ function ReferralPushStatus({ logs }: { logs: ReferralIntegrationLog[] }) {
   }
 
   return (
-    <div className="text-[11px]">
+    <div className="min-w-0 max-w-full text-[11px]">
       <button
         type="button"
         onClick={() => setExpanded((v) => !v)}
-        className="flex items-center gap-1 text-muted-foreground transition-colors hover:text-foreground"
+        className="flex max-w-full flex-wrap items-center gap-x-1 gap-y-0.5 text-left text-muted-foreground transition-colors hover:text-foreground"
       >
         {latest.success ? (
           <CheckCircle2 className="h-3 w-3 text-emerald-600" />
@@ -1589,10 +1589,10 @@ function ReferralPushStatus({ logs }: { logs: ReferralIntegrationLog[] }) {
       </button>
 
       {expanded && (
-        <div className="mt-2 space-y-2 rounded-lg border border-border/60 bg-muted/20 p-2.5">
+        <div className="mt-2 min-w-0 max-w-full space-y-2 rounded-lg border border-border/60 bg-muted/20 p-2.5">
           {logs.map((log) => (
-            <div key={log.id} className="space-y-1 border-b border-border/40 pb-2 last:border-0 last:pb-0">
-              <p className="flex items-center gap-1 font-semibold text-muted-foreground">
+            <div key={log.id} className="min-w-0 space-y-1 border-b border-border/40 pb-2 last:border-0 last:pb-0">
+              <p className="flex flex-wrap items-center gap-x-1 gap-y-0.5 font-semibold text-muted-foreground">
                 {log.success ? (
                   <CheckCircle2 className="h-3 w-3 text-emerald-600" />
                 ) : (
@@ -1602,7 +1602,10 @@ function ReferralPushStatus({ logs }: { logs: ReferralIntegrationLog[] }) {
                 {log.isTest && <span className="rounded border border-border px-1 py-0 text-[9px]">TEST</span>}
               </p>
               <p className="break-all font-mono text-[10px] text-muted-foreground">{log.requestUrl}</p>
-              <pre className="max-h-32 overflow-auto rounded bg-background/60 p-1.5 font-mono text-[10px]">
+              {/* API responses are often one unbroken JSON line — `pre` alone
+                  would size to its content and stretch the whole page, so wrap
+                  and break instead of relying on horizontal overflow. */}
+              <pre className="max-h-32 max-w-full overflow-y-auto whitespace-pre-wrap break-all rounded bg-background/60 p-1.5 font-mono text-[10px]">
                 {log.responseBody ?? log.errorMessage ?? 'No response'}
               </pre>
             </div>
