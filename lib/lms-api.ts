@@ -76,17 +76,45 @@ export async function fetchLmsStateNames(): Promise<string[]> {
   return records.map((s) => s.name);
 }
 
-/** Canonical course names, e.g. ["B.Tech", "MBA/PGDM", ...]. */
-export async function fetchLmsCourseNames(): Promise<string[]> {
+/** The course-group endpoint has been seen returning both a bare array and a
+ * `{ data: [...] }` envelope, so normalize before reading either shape. */
+async function fetchCourseGroupRows(): Promise<Record<string, unknown>[]> {
   const json = await fetchLmsUnifiedData('course-group');
-  const raw: Record<string, unknown>[] = Array.isArray(json)
+  return Array.isArray(json)
     ? (json as Record<string, unknown>[])
     : Array.isArray((json as { data?: unknown })?.data)
-    ? ((json as { data: Record<string, unknown>[] }).data)
+    ? (json as { data: Record<string, unknown>[] }).data
     : [];
+}
+
+function courseGroupName(item: Record<string, unknown>): string | undefined {
+  return (item.name ?? item.group_name ?? item.course_name) as string | undefined;
+}
+
+/** Canonical course names, e.g. ["B.Tech", "MBA/PGDM", ...]. */
+export async function fetchLmsCourseNames(): Promise<string[]> {
+  const raw = await fetchCourseGroupRows();
+  // Deliberately does NOT require a usable id — this list backs CSV-upload and
+  // lead-ingestion validation, so a row with a name but no id must still be
+  // accepted rather than silently rejecting a legitimate course.
+  return raw.map(courseGroupName).filter((v): v is string => !!v);
+}
+
+export interface LmsCourseGroupRecord {
+  course_group_id: number;
+  name: string;
+}
+
+/** Course-group records (id + name) — the source of truth for the LMS's own
+ * course_group_id, used by lib/lms-course-lookup.ts. */
+export async function fetchLmsCourseGroupRecords(): Promise<LmsCourseGroupRecord[]> {
+  const raw = await fetchCourseGroupRows();
   return raw
-    .map((item) => (item.name ?? item.group_name ?? item.course_name) as string | undefined)
-    .filter((v): v is string => !!v);
+    .map((item) => ({
+      course_group_id: Number(item.course_group_id ?? item.id),
+      name: courseGroupName(item),
+    }))
+    .filter((r): r is LmsCourseGroupRecord => !!r.name && Number.isFinite(r.course_group_id));
 }
 
 /** Builds a lowercase-name → canonical-name map for case-insensitive matching. */

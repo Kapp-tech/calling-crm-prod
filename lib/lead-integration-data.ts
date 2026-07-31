@@ -1,10 +1,12 @@
 import type { Lead, LeadProfile } from '@prisma/client';
 import { resolveCityId, resolveStateId } from '@/lib/lms-location-lookup';
+import { resolveCourseGroupId } from '@/lib/lms-course-lookup';
 
-// Server-only: resolves cityId/stateId against the LMS's live unified-data
-// API, so this must never be imported from a 'use client' component (that
-// chain eventually reaches lib/lms-api.ts's hardcoded API key). The static,
-// client-safe field catalog/sample data live in lib/lead-integration-fields.ts.
+// Server-only: resolves cityId/stateId/courseId against the LMS's live
+// unified-data API, so this must never be imported from a 'use client'
+// component (that chain eventually reaches lib/lms-api.ts's hardcoded API
+// key). The static, client-safe field catalog/sample data live in
+// lib/lead-integration-fields.ts.
 
 export type LeadForTemplate = Lead & {
   profile?: LeadProfile | null;
@@ -15,7 +17,11 @@ export type LeadForTemplate = Lead & {
 /** Flattens a fetched lead (+ relations) into the flat key/value shape FIELD_CATALOG describes. */
 export async function buildLeadTemplateData(lead: LeadForTemplate): Promise<Record<string, unknown>> {
   const profile = lead.profile;
-  const [cityId, stateId] = await Promise.all([resolveCityId(lead.city), resolveStateId(lead.state)]);
+  const [cityId, stateId, courseId] = await Promise.all([
+    resolveCityId(lead.city),
+    resolveStateId(lead.state),
+    resolveCourseGroupId(lead.course),
+  ]);
 
   return {
     id: lead.id,
@@ -27,6 +33,7 @@ export async function buildLeadTemplateData(lead: LeadForTemplate): Promise<Reco
     cityId,
     stateId,
     course: lead.course,
+    courseId,
     college: lead.college,
     kappCollegeId: lead.kappCollegeId,
     campaign: lead.campaign,

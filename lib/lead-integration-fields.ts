@@ -24,7 +24,8 @@ export const FIELD_CATALOG: FieldDef[] = [
   { key: 'state', label: 'State (name)', group: 'Lead' },
   { key: 'cityId', label: 'City ID (LMS)', group: 'Lead' },
   { key: 'stateId', label: 'State ID (LMS)', group: 'Lead' },
-  { key: 'course', label: 'Course', group: 'Lead' },
+  { key: 'courseId', label: 'Course ID (LMS)', group: 'Lead' },
+  { key: 'course', label: 'Course (name)', group: 'Lead' },
   { key: 'college', label: 'College', group: 'Lead' },
   { key: 'kappCollegeId', label: 'KAPP College ID', group: 'Lead' },
   { key: 'campaign', label: 'Campaign', group: 'Lead' },
@@ -81,6 +82,7 @@ export const SAMPLE_LEAD_DATA: Record<string, unknown> = {
   cityId: 1287,
   stateId: 6,
   course: 'B.Tech',
+  courseId: 334, // B.Tech's real LMS course_group_id
   college: 'Sample Institute of Technology',
   kappCollegeId: '7034171',
   campaign: 'Referral',
