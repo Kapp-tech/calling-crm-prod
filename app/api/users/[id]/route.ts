@@ -4,15 +4,32 @@ import { z } from 'zod';
 import bcrypt from 'bcryptjs';
 import { authOptions } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
-import { Role } from '@prisma/client';
+import { Role, WorkType } from '@prisma/client';
 import { logActivity } from '@/lib/permissions';
+
+// Optional, but must be a real 10-digit number when provided. An empty string
+// becomes NULL so clearing the field in the edit form actually clears it —
+// whereas omitting the key entirely leaves the stored value untouched.
+const phoneField = z
+  .string()
+  .nullish()
+  .transform((v) => {
+    const t = (v ?? '').trim();
+    return t === '' ? null : t;
+  })
+  .refine((v) => v === null || /^\d{10}$/.test(v), {
+    message: 'Phone must be exactly 10 digits',
+  })
+  .optional();
 
 const updateUserSchema = z.object({
   name: z.string().min(2).optional(),
   email: z.string().email().optional(),
   password: z.string().min(8).optional(),
   role: z.nativeEnum(Role).optional(),
-  phone: z.string().optional(),
+  phone: phoneField,
+  workType: z.nativeEnum(WorkType).optional(),
+  joiningDate: z.coerce.date().optional(),
   isActive: z.boolean().optional(),
   teamId: z.string().nullable().optional(),
   managedById: z.string().nullable().optional(),

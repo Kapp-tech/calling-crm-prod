@@ -7,13 +7,28 @@ import { prisma } from '@/lib/prisma';
 import { Role, UserStatus, WorkType } from '@prisma/client';
 import { generateEmployeeCode, logActivity } from '@/lib/permissions';
 
+// Optional, but must be a real 10-digit number when provided. An empty string
+// stores NULL rather than "". Matches the referral form's existing rule in
+// /api/leads/[id]/referrals.
+const phoneField = z
+  .string()
+  .nullish()
+  .transform((v) => {
+    const t = (v ?? '').trim();
+    return t === '' ? null : t;
+  })
+  .refine((v) => v === null || /^\d{10}$/.test(v), {
+    message: 'Phone must be exactly 10 digits',
+  })
+  .optional();
+
 const createUserSchema = z.object({
   name: z.string().min(2),
   email: z.string().email(),
   password: z.string().min(8),
   role: z.nativeEnum(Role),
   workType: z.nativeEnum(WorkType).optional(),
-  phone: z.string().optional(),
+  phone: phoneField,
   teamId: z.string().optional().nullable(),
   operationsGroupId: z.string().optional().nullable(),
   managerId: z.string().optional().nullable(),
@@ -72,7 +87,7 @@ export async function GET(req: NextRequest) {
     select: {
       id: true, name: true, email: true, role: true, workType: true, isActive: true, status: true,
       employeeCode: true, phone: true, joiningDate: true, createdAt: true,
-      managedById: true, teamId: true, operationsGroupId: true,
+      managedById: true, managerId: true, teamId: true, operationsGroupId: true,
       managedBy: { select: { id: true, name: true } },
       team: { select: { id: true, name: true } },
       operationsGroup: { select: { id: true, name: true } },

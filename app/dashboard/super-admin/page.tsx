@@ -39,10 +39,17 @@ import { formatDateTime } from '@/lib/utils';
 const ROLES = ['SUPER_ADMIN', 'REPORTS', 'OPERATIONS', 'COUNSELLING_TL', 'COUNSELLING_AGENT'] as const;
 const WORK_TYPES = ['WFH', 'WFO'] as const;
 
+/** Optional, but exactly 10 digits when filled — mirrors the server rule. */
+const phoneField = z
+  .string()
+  .optional()
+  .refine((v) => !v || /^\d{10}$/.test(v), 'Phone must be exactly 10 digits');
+
 const userSchema = z.object({
   name: z.string().min(2, 'Name must be at least 2 characters'),
   email: z.string().email('Invalid email'),
   password: z.string().min(8, 'Password must be at least 8 characters'),
+  phone: phoneField,
   role: z.enum(ROLES),
   workType: z.enum(WORK_TYPES),
   managedById: z.string().optional(),
@@ -52,15 +59,28 @@ const userSchema = z.object({
 
 type UserForm = z.infer<typeof userSchema>;
 
+/** Same as create, but the password is only set when the admin types one. */
+const editSchema = userSchema.extend({
+  password: z
+    .string()
+    .optional()
+    .refine((v) => !v || v.length >= 8, 'Password must be at least 8 characters'),
+});
+
+type EditForm = z.infer<typeof editSchema>;
+
 interface UserRecord {
   id: string;
   name: string;
   email: string;
+  phone?: string | null;
   role: string;
   workType: 'WFH' | 'WFO';
   isActive: boolean;
   createdAt: string;
   joiningDate: string;
+  managedById?: string | null;
+  managerId?: string | null;
   managedBy?: { id: string; name: string } | null;
   _count: { assignedLeads: number };
 }
@@ -100,6 +120,51 @@ export default function SuperAdminPage() {
   });
 
   const watchRole = watch('role');
+
+  // A separate form instance so opening the edit dialog can't clobber a
+  // half-filled create form (and vice versa).
+  const editForm = useForm<EditForm>({ resolver: zodResolver(editSchema) });
+  const editRole = editForm.watch('role');
+
+  /** Loads a user's current values into the edit dialog. */
+  function openEdit(user: UserRecord) {
+    editForm.reset({
+      name: user.name,
+      email: user.email,
+      password: '',
+      phone: user.phone ?? '',
+      role: user.role as typeof ROLES[number],
+      workType: user.workType,
+      managedById: user.managedById ?? undefined,
+      managerId: user.managerId ?? undefined,
+      joiningDate: user.joiningDate ? new Date(user.joiningDate).toISOString().slice(0, 10) : '',
+    });
+    setEditUser(user);
+  }
+
+  const updateMutation = useMutation({
+    mutationFn: ({ id, data }: { id: string; data: EditForm }) => {
+      // Omit password entirely unless the admin actually set a new one.
+      const { password, ...rest } = data;
+      const payload: Record<string, unknown> = { ...rest };
+      if (password) payload.password = password;
+      return fetch(`/api/users/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      }).then((r) => r.json());
+    },
+    onSuccess: (data) => {
+      if (data.error) {
+        toast({ variant: 'destructive', title: 'Could not save', description: typeof data.error === 'string' ? data.error : JSON.stringify(data.error) });
+        return;
+      }
+      toast({ title: 'User updated' });
+      queryClient.invalidateQueries({ queryKey: ['users'] });
+      setEditUser(null);
+    },
+    onError: (err: Error) => toast({ variant: 'destructive', title: 'Could not save', description: err.message }),
+  });
 
   const createMutation = useMutation({
     mutationFn: (data: UserForm) =>
@@ -221,6 +286,7 @@ export default function SuperAdminPage() {
                 <TableRow>
                   <TableHead>Name</TableHead>
                   <TableHead>Email</TableHead>
+                  <TableHead>Phone</TableHead>
                   <TableHead>Role</TableHead>
                   <TableHead>Type</TableHead>
                   <TableHead>Manager</TableHead>
@@ -236,6 +302,7 @@ export default function SuperAdminPage() {
                   <TableRow key={user.id}>
                     <TableCell className="font-medium">{user.name}</TableCell>
                     <TableCell className="text-muted-foreground">{user.email}</TableCell>
+                    <TableCell className="text-muted-foreground tabular-nums">{user.phone || '—'}</TableCell>
                     <TableCell>
                       <Badge variant="secondary">{user.role.replace(/_/g, ' ')}</Badge>
                     </TableCell>
@@ -258,6 +325,9 @@ export default function SuperAdminPage() {
                       {formatDateTime(user.createdAt)}
                     </TableCell>
                     <TableCell className="text-right">
+                      <Button variant="ghost" size="icon" title="Edit user" onClick={() => openEdit(user)}>
+                        <Pencil className="h-4 w-4" />
+                      </Button>
                       <Button
                         variant="ghost"
                         size="icon"
@@ -275,7 +345,7 @@ export default function SuperAdminPage() {
                 ))}
                 {filteredUsers.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={10} className="text-center text-muted-foreground py-8">
+                    <TableCell colSpan={11} className="text-center text-muted-foreground py-8">
                       No users found
                     </TableCell>
                   </TableRow>
@@ -307,6 +377,21 @@ export default function SuperAdminPage() {
               <Label>Password</Label>
               <Input {...register('password')} type="password" placeholder="Min 8 characters" />
               {errors.password && <p className="text-xs text-destructive">{errors.password.message}</p>}
+            </div>
+            <div className="space-y-2">
+              <Label>Phone Number</Label>
+              <Input
+                {...register('phone')}
+                type="tel"
+                inputMode="numeric"
+                maxLength={10}
+                placeholder="10-digit mobile number"
+                onChange={(e) => {
+                  e.target.value = e.target.value.replace(/\D/g, '').slice(0, 10);
+                  register('phone').onChange(e);
+                }}
+              />
+              {errors.phone && <p className="text-xs text-destructive">{errors.phone.message}</p>}
             </div>
             <div className="space-y-2">
               <Label>Role</Label>
@@ -378,6 +463,117 @@ export default function SuperAdminPage() {
               <Button type="submit" disabled={createMutation.isPending}>
                 {createMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                 Create User
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit User Dialog */}
+      <Dialog open={!!editUser} onOpenChange={(open) => { if (!open) setEditUser(null); }}>
+        <DialogContent className="max-h-[90dvh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Edit User</DialogTitle>
+          </DialogHeader>
+          <form
+            onSubmit={editForm.handleSubmit((data) => {
+              if (!editUser) return;
+              updateMutation.mutate({ id: editUser.id, data });
+            })}
+            className="space-y-4"
+          >
+            <div className="space-y-2">
+              <Label>Name</Label>
+              <Input {...editForm.register('name')} placeholder="Full name" />
+              {editForm.formState.errors.name && <p className="text-xs text-destructive">{editForm.formState.errors.name.message}</p>}
+            </div>
+            <div className="space-y-2">
+              <Label>Email</Label>
+              <Input {...editForm.register('email')} type="email" placeholder="email@example.com" />
+              {editForm.formState.errors.email && <p className="text-xs text-destructive">{editForm.formState.errors.email.message}</p>}
+            </div>
+            <div className="space-y-2">
+              <Label>Phone Number</Label>
+              <Input
+                {...editForm.register('phone')}
+                type="tel"
+                inputMode="numeric"
+                maxLength={10}
+                placeholder="10-digit mobile number"
+                onChange={(e) => {
+                  e.target.value = e.target.value.replace(/\D/g, '').slice(0, 10);
+                  editForm.register('phone').onChange(e);
+                }}
+              />
+              {editForm.formState.errors.phone && <p className="text-xs text-destructive">{editForm.formState.errors.phone.message}</p>}
+            </div>
+            <div className="space-y-2">
+              <Label>New Password</Label>
+              <Input {...editForm.register('password')} type="password" placeholder="Leave blank to keep current password" />
+              {editForm.formState.errors.password && <p className="text-xs text-destructive">{editForm.formState.errors.password.message}</p>}
+            </div>
+            <div className="space-y-2">
+              <Label>Role</Label>
+              <Select value={editRole} onValueChange={(v) => editForm.setValue('role', v as typeof ROLES[number])}>
+                <SelectTrigger><SelectValue placeholder="Select role" /></SelectTrigger>
+                <SelectContent>
+                  {ROLES.map((role) => (
+                    <SelectItem key={role} value={role}>{role.replace(/_/g, ' ')}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {editForm.formState.errors.role && <p className="text-xs text-destructive">{editForm.formState.errors.role.message}</p>}
+            </div>
+            <div className="space-y-2">
+              <Label>Type</Label>
+              <Select value={editForm.watch('workType')} onValueChange={(v) => editForm.setValue('workType', v as typeof WORK_TYPES[number])}>
+                <SelectTrigger><SelectValue placeholder="Select type" /></SelectTrigger>
+                <SelectContent>
+                  {WORK_TYPES.map((type) => (
+                    <SelectItem key={type} value={type}>{type}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {editForm.formState.errors.workType && <p className="text-xs text-destructive">{editForm.formState.errors.workType.message}</p>}
+            </div>
+            {editRole === 'COUNSELLING_AGENT' && (
+              <div className="space-y-2">
+                <Label>Assign to TL</Label>
+                <Select value={editForm.watch('managedById') ?? undefined} onValueChange={(v) => editForm.setValue('managedById', v)}>
+                  <SelectTrigger><SelectValue placeholder="Select TL" /></SelectTrigger>
+                  <SelectContent>
+                    {tls.map((tl) => (
+                      <SelectItem key={tl.id} value={tl.id}>{tl.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+            {editRole && editRole !== 'COUNSELLING_AGENT' && (
+              <div className="space-y-2">
+                <Label>Reporting Manager (optional)</Label>
+                <Select value={editForm.watch('managerId') ?? undefined} onValueChange={(v) => editForm.setValue('managerId', v)}>
+                  <SelectTrigger><SelectValue placeholder="Select manager" /></SelectTrigger>
+                  <SelectContent>
+                    {users.filter((u) => u.id !== editUser?.id).map((u) => (
+                      <SelectItem key={u.id} value={u.id}>{u.name} — {ROLE_LABELS[u.role] ?? u.role}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+            <div className="space-y-2">
+              <Label>Joining Date</Label>
+              <Input {...editForm.register('joiningDate')} type="date" />
+              {editForm.formState.errors.joiningDate && <p className="text-xs text-destructive">{editForm.formState.errors.joiningDate.message}</p>}
+            </div>
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setEditUser(null)}>
+                Cancel
+              </Button>
+              <Button type="submit" disabled={updateMutation.isPending}>
+                {updateMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                Save Changes
               </Button>
             </DialogFooter>
           </form>
