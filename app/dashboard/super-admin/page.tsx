@@ -34,7 +34,7 @@ import {
 } from '@/components/ui/table';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useToast } from '@/components/ui/use-toast';
-import { formatDateTime } from '@/lib/utils';
+import { formatDate } from '@/lib/utils';
 
 const ROLES = ['SUPER_ADMIN', 'REPORTS', 'OPERATIONS', 'COUNSELLING_TL', 'COUNSELLING_AGENT'] as const;
 const WORK_TYPES = ['WFH', 'WFO'] as const;
@@ -71,6 +71,7 @@ type EditForm = z.infer<typeof editSchema>;
 
 interface UserRecord {
   id: string;
+  employeeCode: string;
   name: string;
   email: string;
   phone?: string | null;
@@ -195,6 +196,7 @@ export default function SuperAdminPage() {
     if (search) {
       const q = search.toLowerCase();
       return (
+        (u.employeeCode ?? '').toLowerCase().includes(q) ||
         u.name.toLowerCase().includes(q) ||
         u.email.toLowerCase().includes(q) ||
         u.role.toLowerCase().includes(q) ||
@@ -223,7 +225,7 @@ export default function SuperAdminPage() {
             <div className="relative flex-1 min-w-[200px]">
               <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <Input
-                placeholder="Search by name, email, role or manager..."
+                placeholder="Search by user ID, name, email, role or manager..."
                 className="pl-9"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
@@ -281,71 +283,85 @@ export default function SuperAdminPage() {
               <Loader2 className="h-6 w-6 animate-spin" />
             </div>
           ) : (
-            <Table>
+            // Compact density is scoped here via descendant selectors rather
+            // than changing components/ui/table.tsx, which 9 other pages share.
+            <Table className="[&_td]:px-3 [&_td]:py-2 [&_th]:h-9 [&_th]:px-3">
               <TableHeader>
                 <TableRow>
+                  <TableHead>User ID</TableHead>
                   <TableHead>Name</TableHead>
                   <TableHead>Email</TableHead>
                   <TableHead>Phone</TableHead>
                   <TableHead>Role</TableHead>
                   <TableHead>Type</TableHead>
                   <TableHead>Manager</TableHead>
-                  <TableHead>Leads</TableHead>
+                  <TableHead className="text-right">Leads</TableHead>
                   <TableHead>Status</TableHead>
-                  <TableHead>Joining Date</TableHead>
-                  <TableHead>Created</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
+                  <TableHead className="whitespace-nowrap">Joining Date</TableHead>
+                  <TableHead className="whitespace-nowrap">Created</TableHead>
+                  {/* Pinned right so Edit stays reachable when the table
+                      scrolls horizontally. Needs an opaque bg or the scrolled
+                      columns show through underneath. */}
+                  <TableHead className="sticky right-0 z-10 border-l bg-card text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {filteredUsers.map((user) => (
-                  <TableRow key={user.id}>
-                    <TableCell className="font-medium">{user.name}</TableCell>
-                    <TableCell className="text-muted-foreground">{user.email}</TableCell>
-                    <TableCell className="text-muted-foreground tabular-nums">{user.phone || '—'}</TableCell>
+                  <TableRow key={user.id} className="group">
+                    {/* employeeCode is this app's user-facing ID — it's what the
+                        team pages, activity logs and profile all display. */}
+                    <TableCell className="whitespace-nowrap font-mono text-xs text-muted-foreground">{user.employeeCode}</TableCell>
+                    <TableCell className="whitespace-nowrap font-medium">{user.name}</TableCell>
+                    <TableCell className="whitespace-nowrap text-muted-foreground">{user.email}</TableCell>
+                    <TableCell className="whitespace-nowrap text-muted-foreground tabular-nums">{user.phone || '—'}</TableCell>
                     <TableCell>
-                      <Badge variant="secondary">{user.role.replace(/_/g, ' ')}</Badge>
+                      <Badge variant="secondary" className="whitespace-nowrap">{ROLE_LABELS[user.role] ?? user.role.replace(/_/g, ' ')}</Badge>
                     </TableCell>
                     <TableCell>
                       <Badge variant={user.workType === 'WFH' ? 'outline' : 'secondary'}>
                         {user.workType}
                       </Badge>
                     </TableCell>
-                    <TableCell>{user.managedBy?.name ?? '—'}</TableCell>
-                    <TableCell>{user._count.assignedLeads}</TableCell>
+                    <TableCell className="whitespace-nowrap">{user.managedBy?.name ?? '—'}</TableCell>
+                    <TableCell className="text-right tabular-nums">{user._count.assignedLeads}</TableCell>
                     <TableCell>
                       <Badge variant={user.isActive ? 'success' : 'outline'}>
                         {user.isActive ? 'Active' : 'Inactive'}
                       </Badge>
                     </TableCell>
-                    <TableCell className="text-sm text-muted-foreground">
-                      {formatDateTime(user.joiningDate)}
+                    {/* Date only — the stored time is a midnight-UTC artifact, so
+                        rendering it just added noise and forced a line wrap. */}
+                    <TableCell className="whitespace-nowrap text-sm text-muted-foreground">
+                      {formatDate(user.joiningDate)}
                     </TableCell>
-                    <TableCell className="text-sm text-muted-foreground">
-                      {formatDateTime(user.createdAt)}
+                    <TableCell className="whitespace-nowrap text-sm text-muted-foreground">
+                      {formatDate(user.createdAt)}
                     </TableCell>
-                    <TableCell className="text-right">
-                      <Button variant="ghost" size="icon" title="Edit user" onClick={() => openEdit(user)}>
-                        <Pencil className="h-4 w-4" />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        title={user.isActive ? 'Deactivate' : 'Activate'}
-                        onClick={() => toggleActiveMutation.mutate({ id: user.id, isActive: !user.isActive })}
-                      >
-                        {user.isActive ? (
-                          <UserX className="h-4 w-4 text-destructive" />
-                        ) : (
-                          <UserCheck className="h-4 w-4 text-green-600" />
-                        )}
-                      </Button>
+                    <TableCell className="sticky right-0 z-10 border-l bg-card group-hover:bg-muted/50">
+                      <div className="flex items-center justify-end gap-0.5">
+                        <Button variant="ghost" size="icon" className="h-8 w-8" title="Edit user" onClick={() => openEdit(user)}>
+                          <Pencil className="h-4 w-4" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8"
+                          title={user.isActive ? 'Deactivate' : 'Activate'}
+                          onClick={() => toggleActiveMutation.mutate({ id: user.id, isActive: !user.isActive })}
+                        >
+                          {user.isActive ? (
+                            <UserX className="h-4 w-4 text-destructive" />
+                          ) : (
+                            <UserCheck className="h-4 w-4 text-green-600" />
+                          )}
+                        </Button>
+                      </div>
                     </TableCell>
                   </TableRow>
                 ))}
                 {filteredUsers.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={11} className="text-center text-muted-foreground py-8">
+                    <TableCell colSpan={12} className="text-center text-muted-foreground py-8">
                       No users found
                     </TableCell>
                   </TableRow>
