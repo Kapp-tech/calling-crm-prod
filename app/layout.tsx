@@ -16,7 +16,14 @@ export const metadata: Metadata = {
     title: 'Counselling CRM',
   },
   icons: {
-    icon: '/api/pwa/icon/192',
+    // Declared here rather than via an app/icon.* file on purpose: the file
+    // convention overrides this whole `icons` object, which silently drops
+    // the apple-touch-icon tag.
+    //
+    // Browser tabs get the vector mark so it stays crisp at any size; Apple
+    // home-screen icons must be raster on an opaque background, so those use
+    // the generated PNG route.
+    icon: [{ url: '/favicon.svg', type: 'image/svg+xml' }],
     apple: '/api/pwa/icon/192',
   },
 };
