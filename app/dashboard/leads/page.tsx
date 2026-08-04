@@ -5,7 +5,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useQuery } from '@tanstack/react-query';
 import { useSession } from 'next-auth/react';
 import { usePermissions } from '@/lib/usePermissions';
-import { Search, SlidersHorizontal, X, ChevronDown, Check, Download, Loader2, ListFilter } from 'lucide-react';
+import { Search, SlidersHorizontal, X, ChevronDown, Check, Minus, Download, Loader2, ListFilter } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { LeadDetailDrawer } from '@/components/leads/lead-detail-drawer';
 import { PaginationBar } from '@/components/shared/pagination-bar';
@@ -253,6 +253,46 @@ export default function AllLeadsPage() {
     staleTime: Infinity,
   });
 
+  const UNCATEGORISED = '__uncategorised__';
+
+  /** categoryId (or UNCATEGORISED) → its options. */
+  const optionsByCategory = useMemo(() => {
+    const map = new Map<string, FeedbackOption[]>();
+    for (const o of feedbackOptions) {
+      const key = o.categoryId ?? UNCATEGORISED;
+      if (!map.has(key)) map.set(key, []);
+      map.get(key)!.push(o);
+    }
+    return map;
+  }, [feedbackOptions]);
+
+  /** Options ordered so each category's pills sit together, uncategorised last. */
+  const orderedOptions = useMemo(() => {
+    const out: FeedbackOption[] = [];
+    const seen = new Set<string>();
+    const push = (o: FeedbackOption) => { if (!seen.has(o.id)) { seen.add(o.id); out.push(o); } };
+    for (const c of feedbackCategories) (optionsByCategory.get(c.id) ?? []).forEach(push);
+    (optionsByCategory.get(UNCATEGORISED) ?? []).forEach(push);
+    feedbackOptions.forEach(push); // any option whose category isn't in the list
+    return out;
+  }, [feedbackCategories, optionsByCategory, feedbackOptions]);
+
+  /** 'all' when the whole category is on, 'some' when only part of it is. */
+  function categorySelectionState(catId: string): 'none' | 'some' | 'all' {
+    if (selectedCategoryIds.includes(catId)) return 'all';
+    const members = optionsByCategory.get(catId) ?? [];
+    if (members.length === 0) return 'none';
+    const picked = members.filter((m) => selectedOptIds.includes(m.id)).length;
+    if (picked === 0) return 'none';
+    return picked === members.length ? 'all' : 'some';
+  }
+
+  /** True when this option is filtered — directly, or via its whole category. */
+  function isOptionSelected(opt: FeedbackOption): boolean {
+    return selectedOptIds.includes(opt.id)
+      || (!!opt.categoryId && selectedCategoryIds.includes(opt.categoryId));
+  }
+
   // Base filter params shared by the main leads query and the category-count
   // badges — keeping this in one place is what guarantees the badge numbers
   // can never drift out of sync with what clicking the pill actually shows.
@@ -437,22 +477,49 @@ export default function AllLeadsPage() {
     setSelectedIds((prev) => prev.includes(id) ? prev.filter((i) => i !== id) : [...prev, id]);
   const toggleAll = () => setSelectedIds(allSelected ? [] : allIds);
 
-  function toggleFeedbackOption(id: string) {
-    setSelectedOptIds((prev) => {
-      const next = prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id];
-      setFeedbackMode(next.length > 0 || selectedCategoryIds.length > 0 ? 'options' : 'all');
-      return next;
-    });
+  /** Applies a new feedback selection and keeps All/Fresh/options in sync. */
+  function applyFeedbackSelection(nextCategoryIds: string[], nextOptIds: string[]) {
+    setSelectedCategoryIds(nextCategoryIds);
+    setSelectedOptIds(nextOptIds);
+    setFeedbackMode(nextCategoryIds.length > 0 || nextOptIds.length > 0 ? 'options' : 'all');
     setPage(1); setSelectedIds([]);
   }
 
-  function toggleFeedbackCategory(id: string) {
-    setSelectedCategoryIds((prev) => {
-      const next = prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id];
-      setFeedbackMode(next.length > 0 || selectedOptIds.length > 0 ? 'options' : 'all');
-      return next;
-    });
-    setPage(1); setSelectedIds([]);
+  /** Selecting a whole category is stored as the category id rather than its
+   *  member option ids, because the server expands a category to *all* its
+   *  options — including retired ones that aren't shown as pills. */
+  function toggleFeedbackCategory(catId: string) {
+    const memberIds = (optionsByCategory.get(catId) ?? []).map((o) => o.id);
+    const isOn = categorySelectionState(catId) !== 'none';
+    applyFeedbackSelection(
+      isOn ? selectedCategoryIds.filter((x) => x !== catId) : [...selectedCategoryIds, catId],
+      // Drop now-redundant explicit member picks either way.
+      selectedOptIds.filter((id) => !memberIds.includes(id)),
+    );
+  }
+
+  function toggleFeedbackOption(id: string) {
+    const opt = feedbackOptions.find((o) => o.id === id);
+    const catId = opt?.categoryId ?? null;
+
+    // Deselecting one option out of a whole-category selection: expand the
+    // category into its explicit members minus this one, so the chips always
+    // reflect exactly what's being filtered rather than silently disagreeing.
+    if (catId && selectedCategoryIds.includes(catId)) {
+      const remaining = (optionsByCategory.get(catId) ?? [])
+        .map((o) => o.id)
+        .filter((x) => x !== id);
+      applyFeedbackSelection(
+        selectedCategoryIds.filter((x) => x !== catId),
+        Array.from(new Set([...selectedOptIds, ...remaining])),
+      );
+      return;
+    }
+
+    applyFeedbackSelection(
+      selectedCategoryIds,
+      selectedOptIds.includes(id) ? selectedOptIds.filter((x) => x !== id) : [...selectedOptIds, id],
+    );
   }
 
   function selectFeedbackMode(mode: 'all' | 'fresh') {
@@ -543,23 +610,37 @@ export default function AllLeadsPage() {
           <span className="mx-0.5 hidden sm:block w-px bg-border/60 self-stretch" />
         )}
         {feedbackCategories.map((cat) => {
-          const active = selectedCategoryIds.includes(cat.id);
+          const state = categorySelectionState(cat.id);
+          const active = state !== 'none';
           const tone = feedbackCategoryTone(cat.color);
           const count = categoryCounts[cat.id] ?? 0;
+          const members = optionsByCategory.get(cat.id) ?? [];
           return (
             <button
               key={cat.id}
               onClick={() => toggleFeedbackCategory(cat.id)}
-              aria-pressed={active}
+              // 'mixed' is the ARIA value for a partially-selected tri-state toggle.
+              aria-pressed={state === 'all' ? 'true' : state === 'some' ? 'mixed' : 'false'}
+              title={
+                members.length === 0
+                  ? `${cat.name} — no feedbacks in this category yet`
+                  : `${state === 'all' ? 'Clear' : 'Select'} all ${members.length} feedback${members.length === 1 ? '' : 's'} in ${cat.name}`
+              }
               style={active ? tone.chipActiveStyle : undefined}
               className={cn(
                 'flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-semibold border transition-all duration-150',
+                active && 'text-white',
                 !active && 'border-border/60 bg-background text-muted-foreground hover:border-foreground/40 hover:text-foreground',
               )}
             >
-              {active
-                ? <Check className="h-3 w-3 shrink-0" strokeWidth={3} />
-                : <span className="h-1.5 w-1.5 rounded-full shrink-0" style={tone.dotStyle} />}
+              {/* Tri-state: dash means only part of the category is selected. */}
+              {state === 'all' ? (
+                <Check className="h-3 w-3 shrink-0" strokeWidth={3} />
+              ) : state === 'some' ? (
+                <Minus className="h-3 w-3 shrink-0" strokeWidth={3} />
+              ) : (
+                <span className="h-1.5 w-1.5 rounded-full shrink-0" style={tone.dotStyle} />
+              )}
               {cat.name}
               <span
                 className={cn(
@@ -577,20 +658,30 @@ export default function AllLeadsPage() {
         {feedbackOptions.length > 0 && (
           <span className="mx-0.5 hidden sm:block w-px bg-border/60 self-stretch" />
         )}
-        {/* Dynamic feedback option capsules — multi-selectable */}
-        {feedbackOptions.map((opt) => {
-          const active = selectedOptIds.includes(opt.id);
+        {/* Option capsules — grouped by category so a category and its
+            feedbacks read as one block, and tinted in the category's colour
+            when selected so it's obvious which category they belong to. */}
+        {orderedOptions.map((opt) => {
+          const active = isOptionSelected(opt);
+          const tone = opt.category ? feedbackCategoryTone(opt.category.color) : null;
           return (
             <button
               key={opt.id}
               onClick={() => toggleFeedbackOption(opt.id)}
+              aria-pressed={active}
+              title={opt.category ? `${opt.label} · ${opt.category.name}` : opt.label}
+              style={active && tone ? tone.tagStyle : undefined}
               className={cn(
-                'px-3.5 py-1.5 rounded-full text-xs font-medium border transition-colors',
-                active
-                  ? 'bg-primary/20 border-primary/50 text-primary'
-                  : 'border-border/60 text-muted-foreground hover:border-border hover:text-foreground',
+                'flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-medium border transition-colors',
+                active && !tone && 'bg-primary/20 border-primary/50 text-primary',
+                !active && 'border-border/60 text-muted-foreground hover:border-border hover:text-foreground',
               )}
             >
+              {/* A dot ties an unselected pill to its category at a glance. */}
+              {!active && tone && (
+                <span className="h-1.5 w-1.5 rounded-full shrink-0 opacity-70" style={tone.dotStyle} />
+              )}
+              {active && <Check className="h-3 w-3 shrink-0" strokeWidth={3} />}
               {opt.label}
             </button>
           );
