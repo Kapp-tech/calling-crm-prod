@@ -1,14 +1,20 @@
 {
+  "id": "/dashboard",
   "name": "Counselling CRM",
   "short_name": "CRM",
   "description": "Lead management for KollegeApply counselling teams",
   "start_url": "/dashboard",
   "scope": "/",
   "display": "standalone",
+  "display_override": ["standalone", "minimal-ui"],
   "orientation": "portrait-primary",
   "background_color": "#ffffff",
   "theme_color": "#0d2455",
   "categories": ["business", "productivity"],
+  "prefer_related_applications": false,
+  "launch_handler": {
+    "client_mode": "navigate-existing"
+  },
   "icons": [
     {
       "src": "/api/pwa/icon/192",
@@ -33,6 +39,22 @@
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "maskable"
+    }
+  ],
+  "screenshots": [
+    {
+      "src": "/screenshots/mobile.png",
+      "sizes": "390x844",
+      "type": "image/png",
+      "form_factor": "narrow",
+      "label": "Sign in to Counselling CRM"
+    },
+    {
+      "src": "/screenshots/desktop.png",
+      "sizes": "1280x800",
+      "type": "image/png",
+      "form_factor": "wide",
+      "label": "Counselling CRM on desktop"
     }
   ],
   "shortcuts": [
