@@ -14,7 +14,8 @@ const PAGE_TITLES: Record<string, string> = {
   '/dashboard/super-admin/teams': 'Team Management',
   '/dashboard/super-admin/org-tree': 'Organisation Hierarchy',
   '/dashboard/super-admin/permissions': 'Permission Matrix',
-  '/dashboard/super-admin/performance': 'Performance Dashboard',
+  // Matches the sidebar label and the page's own heading — all three should agree.
+  '/dashboard/super-admin/performance': 'Reports & Performance',
   '/dashboard/super-admin/activity-logs': 'Activity Logs',
   '/dashboard/super-admin/feedback-options': 'Feedback Options',
   '/dashboard/operations': 'Upload Leads',

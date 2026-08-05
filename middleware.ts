@@ -25,6 +25,11 @@ const ROLE_ROUTES: Record<string, Role[]> = {
   // REPORTS can reach this one page if granted APPROVE_RECEIPTS via the
   // permission matrix (enforced client + API side by that feature flag).
   '/dashboard/super-admin/receipt-approvals': ['SUPER_ADMIN', 'REPORTS'],
+  // Same exception, same reasoning: the Reports & Performance page lives under
+  // /dashboard/super-admin/* but only reads /api/analytics/*, which gate on
+  // VIEW_REPORTS — a REPORTS default. Without this more-specific rule the
+  // blanket '/dashboard/super-admin' entry above redirects them to /dashboard.
+  '/dashboard/super-admin/performance': ['SUPER_ADMIN', 'REPORTS'],
 };
 
 export default withAuth(

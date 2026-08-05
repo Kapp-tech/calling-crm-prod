@@ -263,7 +263,13 @@ const NAV: NavEntry[] = [
     href: '/dashboard/super-admin/performance',
     label: 'Reports & Performance',
     icon: BarChart3,
-    roles: ['SUPER_ADMIN'],
+    // REPORTS included deliberately: the page only reads /api/analytics/*,
+    // which already gate on VIEW_REPORTS (a REPORTS default) and apply no
+    // extra scoping for this role. Needs the matching, more-specific rule in
+    // middleware.ts — the blanket '/dashboard/super-admin' rule would
+    // otherwise bounce them back to /dashboard.
+    roles: ['SUPER_ADMIN', 'REPORTS'],
+    features: ['VIEW_REPORTS'],
   },
   {
     type: 'leaf',
@@ -282,15 +288,6 @@ const NAV: NavEntry[] = [
   },
   {
     type: 'leaf',
-    href: '/dashboard/reports',
-    label: 'Reports & Performance',
-    icon: BarChart3,
-    roles: ['REPORTS'],
-    exact: true,
-    features: ['VIEW_REPORTS'],
-  },
-  {
-    type: 'leaf',
     href: '/dashboard/super-admin/activity-logs',
     label: 'Activity Logs',
     icon: Activity,
@@ -306,7 +303,12 @@ const NAV: NavEntry[] = [
     // this bounced straight back to /dashboard. They were also never
     // granted APPROVE_LEADS; uploaders reviewing their own uploads isn't
     // a workflow this app supports — approval is REPORTS/SUPER_ADMIN only.
-    roles: ['SUPER_ADMIN'],
+    //
+    // REPORTS previously had a SECOND entry for this same href mislabelled
+    // "Reports & Performance", so they landed on a page whose own header
+    // read "Lead Approvals". Merged here: REPORTS holds APPROVE_LEADS by
+    // default, so their access was always correct — only the label was wrong.
+    roles: ['SUPER_ADMIN', 'REPORTS'],
     exact: true,
     features: ['APPROVE_LEADS'],
   },
