@@ -86,6 +86,56 @@ function LoadingBlock() {
   );
 }
 
+/**
+ * College logo with a graceful fallback to the generic building icon when the
+ * URL is missing or fails to load.
+ *
+ * Uses a plain <img>, not next/image, deliberately: the LMS serves logos from
+ * several hosts (S3, CloudFront, assets.kollegeapply.com), each of which would
+ * need whitelisting in next.config.js — and would break silently if a new host
+ * appeared. It also avoids routing every logo through server-side image
+ * optimisation on a memory-constrained box for no real gain at this size.
+ *
+ * The tile is white because logos are authored for light backgrounds and many
+ * are transparent PNGs.
+ */
+function CollegeLogo({
+  src,
+  className,
+  iconClassName,
+}: {
+  src: string | null | undefined;
+  className?: string;
+  iconClassName?: string;
+}) {
+  const [failed, setFailed] = useState(false);
+  const url = src?.trim();
+  const showImage = !!url && !failed;
+
+  return (
+    <div
+      className={cn(
+        'flex shrink-0 items-center justify-center overflow-hidden rounded-lg border border-border/60 bg-white',
+        className,
+      )}
+    >
+      {showImage ? (
+        // eslint-disable-next-line @next/next/no-img-element -- plain <img> is deliberate; see the note above this component.
+        <img
+          src={url}
+          // Decorative: the college name always sits right beside it.
+          alt=""
+          loading="lazy"
+          onError={() => setFailed(true)}
+          className="h-full w-full object-contain p-1"
+        />
+      ) : (
+        <Building2 className={cn('text-primary', iconClassName)} />
+      )}
+    </div>
+  );
+}
+
 type Level = 'colleges' | 'course-groups' | 'courses';
 
 export default function CollegeSearchPage() {
@@ -264,9 +314,7 @@ export default function CollegeSearchPage() {
                   }}
                   className="group flex items-start gap-3 rounded-xl border border-border bg-card p-4 text-left shadow-sm transition-all hover:-translate-y-0.5 hover:border-primary/40 hover:shadow-md"
                 >
-                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10">
-                    <Building2 className="h-5 w-5 text-primary" />
-                  </div>
+                  <CollegeLogo src={c.logo_img} className="h-10 w-10" iconClassName="h-5 w-5" />
                   <div className="min-w-0 flex-1">
                     <p className="truncate font-semibold leading-tight">{c.college_name}</p>
                     {c.short_name && c.short_name !== c.college_name && (
@@ -308,9 +356,7 @@ export default function CollegeSearchPage() {
           {/* College info card — name/location and brochures live in clearly separated zones */}
           <div className="space-y-3 rounded-2xl border border-primary/20 bg-gradient-to-br from-primary/[0.06] to-transparent p-4 sm:p-5">
             <div className="flex items-start gap-3">
-              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-primary text-primary-foreground shadow-sm">
-                <Building2 className="h-5 w-5" />
-              </div>
+              <CollegeLogo src={selectedCollege.logo_img} className="h-12 w-12 rounded-xl shadow-sm" iconClassName="h-6 w-6" />
               <div className="min-w-0">
                 <h2 className="text-base font-bold leading-tight sm:text-lg">{selectedCollege.college_name}</h2>
                 <p className="mt-1 flex items-center gap-1 text-xs text-muted-foreground">

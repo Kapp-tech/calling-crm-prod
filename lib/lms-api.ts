@@ -141,6 +141,10 @@ export interface LmsCollegeSearchResult {
   college_id: number;
   college_name: string;
   short_name: string | null;
+  /** Absolute URL. Served from several different hosts (S3, CloudFront,
+   *  assets.kollegeapply.com) in jpg/png/svg/gif, so render it with a plain
+   *  <img> rather than next/image — see the CollegeLogo component. */
+  logo_img: string | null;
   city_name: string | null;
   state_name: string | null;
   slug: string;
