@@ -10,6 +10,7 @@ import {
 import { LeadDetailDrawer } from '@/components/leads/lead-detail-drawer';
 import { PaginationBar } from '@/components/shared/pagination-bar';
 import { cn } from '@/lib/utils';
+import { formatIstDateTime, formatIstTime, istDayKey, dayKeyAsUtcDate } from '@/lib/ist-time';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -46,29 +47,19 @@ type ViewMode = 'list' | 'calendar';
 
 const WEEK_DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
-function formatScheduled(iso: string) {
-  const d = new Date(iso);
-  return d.toLocaleString('en-IN', {
-    day: '2-digit', month: 'short', year: 'numeric',
-    hour: '2-digit', minute: '2-digit', hour12: true,
-  });
-}
-
-function formatTime(iso: string) {
-  return new Date(iso).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true });
-}
+const formatScheduled = formatIstDateTime;
+const formatTime = formatIstTime;
 
 function getScheduleState(scheduledAt: string, status: 'PENDING' | 'DONE' | 'CANCELLED') {
   if (status !== 'PENDING') return status;
   const now = new Date();
   const scheduled = new Date(scheduledAt);
-  const startOfToday = new Date(now);
-  startOfToday.setHours(0, 0, 0, 0);
-  const endOfToday = new Date(startOfToday);
-  endOfToday.setDate(endOfToday.getDate() + 1);
 
+  // "Today" means today in IST, not on whatever timezone the viewer's machine
+  // is set to — comparing IST day keys avoids setHours(), which would bucket
+  // late-evening calls into the wrong day for a non-IST browser.
   if (scheduled < now) return 'OVERDUE';
-  if (scheduled < endOfToday) return 'TODAY';
+  if (istDayKey(scheduled) === istDayKey(now)) return 'TODAY';
   return 'UPCOMING';
 }
 
@@ -138,8 +129,9 @@ function CalendarView({
   isLoading: boolean;
   session: { user: { role: string } } | null;
 }) {
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
+  // "Today" is the IST day, matching the IST-keyed cells and callsByDay below.
+  const todayKey = istDayKey(new Date());
+  const todayCal = dayKeyAsUtcDate(todayKey);
 
   const year  = calendarMonth.getFullYear();
   const month = calendarMonth.getMonth();
@@ -148,12 +140,12 @@ function CalendarView({
   const firstDay = new Date(year, month, 1).getDay();
   const daysInMonth = new Date(year, month + 1, 0).getDate();
 
-  // Map ISO date string YYYY-MM-DD → calls on that day
+  // Map ISO date string YYYY-MM-DD → calls on that day. Keyed by IST day so a
+  // call lands on the date the agent actually picked, not the viewer's date.
   const callsByDay = useMemo(() => {
     const map: Record<string, ScheduledCall[]> = {};
     for (const call of calls) {
-      const d = new Date(call.scheduledAt);
-      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      const key = istDayKey(call.scheduledAt);
       if (!map[key]) map[key] = [];
       map[key].push(call);
     }
@@ -162,7 +154,7 @@ function CalendarView({
 
   const prevMonth = () => onMonthChange(new Date(year, month - 1, 1));
   const nextMonth = () => onMonthChange(new Date(year, month + 1, 1));
-  const goToday   = () => onMonthChange(new Date(today.getFullYear(), today.getMonth(), 1));
+  const goToday   = () => onMonthChange(new Date(todayCal.getUTCFullYear(), todayCal.getUTCMonth(), 1));
 
   const monthLabel = calendarMonth.toLocaleString('en-IN', { month: 'long', year: 'numeric' });
 
@@ -228,8 +220,7 @@ function CalendarView({
                     <div key={`empty-${idx}`} className="min-h-[110px] border-b border-r border-border/40 bg-muted/20 last:border-r-0" />
                   );
                 }
-                const cellDate = new Date(year, month, cell.day);
-                const isToday = cellDate.getTime() === today.getTime();
+                const isToday = cell.dateKey === todayKey;
                 const dayCalls = callsByDay[cell.dateKey] ?? [];
 
                 return (

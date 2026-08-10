@@ -3,6 +3,7 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import { canAccessLead } from '@/lib/lead-access';
+import { formatIstDateTime } from '@/lib/ist-time';
 
 export type TimelineEventType =
   | 'CREATED'
@@ -168,10 +169,10 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
 
     // Scheduled calls
     for (const sc of scheduledCalls) {
-      const scheduledLabel = new Date(sc.scheduledAt).toLocaleString('en-IN', {
-        day: '2-digit', month: 'short', year: 'numeric',
-        hour: '2-digit', minute: '2-digit', hour12: true,
-      });
+      // Formatted server-side, so the zone has to be stated explicitly —
+      // otherwise this renders in the *server's* zone (UTC in production) and
+      // disagrees with the same time shown everywhere else in the UI.
+      const scheduledLabel = formatIstDateTime(sc.scheduledAt);
       events.push({
         id: `schedule-${sc.id}`,
         type: 'SCHEDULED_CALL',

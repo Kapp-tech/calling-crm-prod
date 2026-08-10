@@ -19,6 +19,7 @@ import { cn } from '@/lib/utils';
 import { triggerCelebration, isCelebrationFeedback } from '@/lib/celebrate';
 import { WhatsAppButton } from '@/components/shared/whatsapp-button';
 import { computeProfilingScore, profilingScoreTone } from '@/lib/lead-profiling';
+import { istWallClockToInstant, instantToIstWallClock, IST_TIMEZONE } from '@/lib/ist-time';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -555,19 +556,27 @@ function FollowUpSlot({
     resolver: zodResolver(followUpSchema),
   });
 
-  const minDateTime = new Date(Date.now() + 60_000).toISOString().slice(0, 16);
+  // Stated as an IST wall clock because that is the frame of reference the
+  // input itself displays — deriving it from toISOString() compared a UTC
+  // instant against a local-time input, leaving the bound 5h30m too loose.
+  const minDateTime = instantToIstWallClock(new Date(Date.now() + 60_000));
 
   const mutation = useMutation({
-    mutationFn: (data: FollowUpForm) =>
-      fetch(`/api/leads/${leadId}/feedback`, {
+    mutationFn: (data: FollowUpForm) => {
+      // Send an absolute instant, not the picker's bare wall clock: an
+      // offset-less string is parsed in the *server's* timezone, which put
+      // every production schedule 5h30m late. See lib/ist-time.ts.
+      const scheduledInstant = scheduledAt ? istWallClockToInstant(scheduledAt) : null;
+      return fetch(`/api/leads/${leadId}/feedback`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...data, scheduledAt: scheduledAt || null }),
+        body: JSON.stringify({ ...data, scheduledAt: scheduledInstant?.toISOString() ?? null }),
       }).then(async (r) => {
         const json = await r.json();
         if (json.error) throw new Error(typeof json.error === 'string' ? json.error : 'Failed to save');
         return json;
-      }),
+      });
+    },
     onSuccess: (_, variables) => {
       const selectedLabel = feedbackOptions.find((o) => o.id === variables.feedbackOptionId)?.label ?? '';
       if (isCelebrationFeedback(selectedLabel)) {
@@ -771,10 +780,10 @@ function CallsTab({ leadId }: { leadId: string }) {
                   <CalendarClock className="h-4 w-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
                   <div>
                     <p className="text-sm font-semibold text-amber-800 dark:text-amber-300">
-                      {new Date(s.scheduledAt).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })}
+                      {new Date(s.scheduledAt).toLocaleDateString('en-GB', { timeZone: IST_TIMEZONE, weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })}
                     </p>
                     <p className="text-xs text-amber-700 dark:text-amber-400">
-                      {new Date(s.scheduledAt).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}
+                      {new Date(s.scheduledAt).toLocaleTimeString('en-GB', { timeZone: IST_TIMEZONE, hour: '2-digit', minute: '2-digit' })}
                     </p>
                   </div>
                 </div>
@@ -821,7 +830,7 @@ function CallsTab({ leadId }: { leadId: string }) {
             <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Past Schedules</p>
             {past.map((s) => (
               <div key={s.id} className="flex items-center justify-between rounded-md border border-border/40 px-3 py-2 text-xs text-muted-foreground">
-                <span>{new Date(s.scheduledAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })} {new Date(s.scheduledAt).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}</span>
+                <span>{new Date(s.scheduledAt).toLocaleDateString('en-GB', { timeZone: IST_TIMEZONE, day: 'numeric', month: 'short' })} {new Date(s.scheduledAt).toLocaleTimeString('en-GB', { timeZone: IST_TIMEZONE, hour: '2-digit', minute: '2-digit' })}</span>
                 <span className={cn('font-semibold', s.status === 'DONE' ? 'text-green-500' : 'text-red-400')}>
                   {s.status}
                 </span>

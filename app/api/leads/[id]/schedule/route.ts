@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { authOptions } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import { canAccessLead } from '@/lib/lead-access';
+import { istWallClockToInstant } from '@/lib/ist-time';
 
 const scheduleSchema = z.object({
   scheduledAt: z.string().min(1),
@@ -35,8 +36,10 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   const parsed = scheduleSchema.safeParse(body);
   if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
 
-  const scheduledDate = new Date(parsed.data.scheduledAt);
-  if (isNaN(scheduledDate.getTime()) || scheduledDate <= new Date()) {
+  // Reads an offset-less wall clock as IST rather than as the server's local
+  // time; a value that already carries a zone is passed through untouched.
+  const scheduledDate = istWallClockToInstant(parsed.data.scheduledAt);
+  if (!scheduledDate || scheduledDate <= new Date()) {
     return NextResponse.json({ error: 'Scheduled time must be in the future' }, { status: 400 });
   }
 

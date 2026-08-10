@@ -5,6 +5,7 @@ import { authOptions } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import { hasPermission } from '@/lib/permissions';
 import { canAccessLead } from '@/lib/lead-access';
+import { istWallClockToInstant } from '@/lib/ist-time';
 import { Feature } from '@prisma/client';
 
 const feedbackSchema = z.object({
@@ -94,8 +95,10 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       });
 
       if (scheduledAt) {
-        const scheduledDate = new Date(scheduledAt);
-        if (!isNaN(scheduledDate.getTime()) && scheduledDate > new Date()) {
+        // Reads an offset-less wall clock as IST rather than as the server's
+        // local time; a value that already carries a zone passes through.
+        const scheduledDate = istWallClockToInstant(scheduledAt);
+        if (scheduledDate && scheduledDate > new Date()) {
           // Cancel previous pending scheduled calls for this lead + agent
           await tx.scheduledCall.updateMany({
             where: { leadId: params.id, agentId: session.user.id, status: 'PENDING' },
