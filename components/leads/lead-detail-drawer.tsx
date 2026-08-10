@@ -653,7 +653,13 @@ function FollowUpSlot({
           <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
             Feedback <span className="text-destructive">*</span>
           </label>
-          {feedbackOptions.length === 0 ? (
+          {/*
+            Only claim a missing configuration when the options fetch actually
+            ran. The query is gated on canSubmit, so an empty list otherwise
+            just means "not allowed to submit" — and reporting that as an admin
+            config problem sends people looking in the wrong place entirely.
+          */}
+          {canSubmit && feedbackOptions.length === 0 ? (
             <p className="text-xs text-destructive">
               No feedback options configured. Ask your admin to add options first.
             </p>

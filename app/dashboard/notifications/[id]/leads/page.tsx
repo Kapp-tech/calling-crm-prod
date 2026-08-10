@@ -23,6 +23,7 @@ import {
 import { useToast } from '@/components/ui/use-toast';
 import { triggerCelebration, isCelebrationFeedback } from '@/lib/celebrate';
 import { LeadDetailDrawer } from '@/components/leads/lead-detail-drawer';
+import { usePermissions } from '@/lib/usePermissions';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -58,6 +59,11 @@ export default function NotificationLeadsPage() {
   const router = useRouter();
   const { toast } = useToast();
   const qc = useQueryClient();
+
+  // Gates the drawer's submit button and its feedback-options fetch — without
+  // it the drawer reports that no options are configured. See the All Leads page.
+  const { can } = usePermissions();
+  const canSubmitFeedback = can('SUBMIT_FEEDBACK');
 
   const [feedbackLead, setFeedbackLead] = useState<NotificationLead | null>(null);
   const [drawerLead, setDrawerLead] = useState<NotificationLead | null>(null);
@@ -311,6 +317,7 @@ export default function NotificationLeadsPage() {
       <LeadDetailDrawer
         leadId={drawerLead?.id ?? null}
         onClose={() => setDrawerLead(null)}
+        canSubmitFeedback={canSubmitFeedback}
       />
     </div>
   );

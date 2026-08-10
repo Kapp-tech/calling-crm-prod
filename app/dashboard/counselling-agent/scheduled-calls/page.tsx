@@ -11,6 +11,7 @@ import { LeadDetailDrawer } from '@/components/leads/lead-detail-drawer';
 import { PaginationBar } from '@/components/shared/pagination-bar';
 import { cn } from '@/lib/utils';
 import { formatIstDateTime, formatIstTime, istDayKey, dayKeyAsUtcDate } from '@/lib/ist-time';
+import { usePermissions } from '@/lib/usePermissions';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -299,6 +300,11 @@ function CalendarView({
 
 export default function ScheduledCallsPage() {
   const { data: session } = useSession();
+  // Must be passed down to the drawer: it gates both the submit button AND the
+  // feedback-options fetch, so omitting it made the form claim no options were
+  // configured. Same source of truth as the All Leads page.
+  const { can } = usePermissions();
+  const canSubmitFeedback = can('SUBMIT_FEEDBACK');
   const [viewMode, setViewMode] = useState<ViewMode>('list');
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('PENDING');
   const [page, setPage] = useState(1);
@@ -591,6 +597,7 @@ export default function ScheduledCallsPage() {
         <LeadDetailDrawer
           leadId={selectedLeadId}
           onClose={() => setSelectedLeadId(null)}
+          canSubmitFeedback={canSubmitFeedback}
         />
       )}
     </div>
