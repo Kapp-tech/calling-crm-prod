@@ -4,6 +4,7 @@ import { authOptions } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import { hasPermission } from '@/lib/permissions';
 import { Feature } from '@prisma/client';
+import { istStartOfDay, istEndOfDay, istShiftDays } from '@/lib/ist-time';
 
 export async function GET(req: NextRequest) {
   try {
@@ -24,14 +25,16 @@ export async function GET(req: NextRequest) {
       effectiveTeamId = tl?.teamId ?? undefined;
     }
 
+    // IST calendar days — a bare date string parses as UTC and a trailing 'Z'
+    // pins the upper bound to UTC, both of which shift the range by 5h30m.
     const dateFilter = from && to
-      ? { createdAt: { gte: new Date(from), lte: new Date(`${to}T23:59:59.999Z`) } }
+      ? { createdAt: { gte: istStartOfDay(from), lte: istEndOfDay(to) } }
       : {};
 
     const teamFilter = effectiveTeamId ? { teamId: effectiveTeamId } : {};
     const approvedBase = { status: 'APPROVED' as const, ...teamFilter, ...dateFilter };
     const feedbackDateFilter = from && to
-      ? { createdAt: { gte: new Date(from), lte: new Date(`${to}T23:59:59.999Z`) } }
+      ? { createdAt: { gte: istStartOfDay(from), lte: istEndOfDay(to) } }
       : {};
 
     const [
@@ -85,11 +88,21 @@ export async function GET(req: NextRequest) {
     ]);
 
     // Timeline: last 60 days (or within date range) — daily lead creation counts
-    const timelineFrom = from ? new Date(from) : new Date(Date.now() - 60 * 24 * 60 * 60 * 1000);
-    const timelineTo   = to   ? new Date(`${to}T23:59:59.999Z`) : new Date();
+    const timelineFrom = from ? istStartOfDay(from) : istStartOfDay(istShiftDays(new Date(), -60));
+    const timelineTo   = to   ? istEndOfDay(to)     : new Date();
 
-    const timelineRaw = await prisma.$queryRaw<{ date: Date; count: bigint }[]>`
-      SELECT DATE_TRUNC('day', "createdAt")::date AS date, COUNT(*)::bigint AS count
+    // Grouped by IST day, not UTC day. "createdAt" is a timestamp WITHOUT time
+    // zone holding UTC, so DATE_TRUNC on it bucketed by UTC date — filing
+    // 18:30-24:00 IST activity under the following day. Shifting by the IST
+    // offset before truncating gives the real IST calendar day; a fixed offset
+    // is exact because India has never observed DST (see lib/ist-time.ts).
+    //
+    // Returned as TO_CHAR text rather than ::date so the day key never makes a
+    // round trip through a JS Date, where a driver-local parse could shift it
+    // back off by one.
+    const timelineRaw = await prisma.$queryRaw<{ date: string; count: bigint }[]>`
+      SELECT TO_CHAR("createdAt" + INTERVAL '5 hours 30 minutes', 'YYYY-MM-DD') AS date,
+             COUNT(*)::bigint AS count
       FROM "Lead"
       WHERE "createdAt" >= ${timelineFrom} AND "createdAt" <= ${timelineTo}
       GROUP BY 1
@@ -127,7 +140,7 @@ export async function GET(req: NextRequest) {
         .filter((f) => f._count.feedbacks > 0)
         .map((f) => ({ label: f.label, count: f._count.feedbacks })),
       timeline: timelineRaw.map((r) => ({
-        date: r.date.toISOString().split('T')[0],
+        date: r.date,
         count: Number(r.count),
       })),
       teams: teamStats.map((t) => ({ id: t.id, name: t.name, leads: t._count.leads })),
