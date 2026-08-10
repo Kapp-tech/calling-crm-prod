@@ -12,8 +12,10 @@ import {
   GraduationCap, Award, Search, RotateCcw, SlidersHorizontal, X,
   CalendarDays, ChevronDown, CheckSquare, Square, Check,
   MapPin, Map, BookOpen, Tag, Globe2, Megaphone, User, MessageSquare,
+  RefreshCw,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { Button } from '@/components/ui/button';
 import { istDayKey, istShiftDays } from '@/lib/ist-time';
 import { Sparkline } from '@/components/shared/sparkline';
 import { Leaderboard } from '@/components/shared/leaderboard';
@@ -543,7 +545,7 @@ export default function DashboardPage() {
   }, [dateRange, appliedFilters]);
 
   // ── Data queries ──────────────────────────────────────────────────────────
-  const { data: stats, isLoading } = useQuery<DashboardStats>({
+  const { data: stats, isLoading, isFetching, refetch } = useQuery<DashboardStats>({
     queryKey: ['dashboard-stats', queryParams],
     queryFn: async () => {
       const res = await fetch(`/api/dashboard-stats?${queryParams}`);
@@ -704,9 +706,28 @@ export default function DashboardPage() {
             )}
           </p>
         </div>
-        {!hasRoleFixedCards && (
-          <CardSelector selectedExtras={selectedExtras} onChange={setSelectedExtras} />
-        )}
+        <div className="flex items-center gap-2">
+          {/*
+            Refetches the stats query in place rather than reloading the page.
+            Keyed to isFetching, not isLoading, so the cards keep showing the
+            previous numbers while the new ones load instead of collapsing back
+            to skeletons on every refresh.
+          */}
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-9 gap-1.5"
+            onClick={() => refetch()}
+            disabled={isFetching}
+            aria-label="Refresh dashboard data"
+          >
+            <RefreshCw className={cn('h-3.5 w-3.5', isFetching && 'animate-spin')} />
+            Refresh
+          </Button>
+          {!hasRoleFixedCards && (
+            <CardSelector selectedExtras={selectedExtras} onChange={setSelectedExtras} />
+          )}
+        </div>
       </div>
 
       {/* ── Date range chips ── */}
