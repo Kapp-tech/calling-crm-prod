@@ -4,6 +4,7 @@ import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Activity } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { istDayKey, istShiftDays, dayKeyAsUtcDate } from '@/lib/ist-time';
 
 interface DayCell {
   date: Date;
@@ -51,16 +52,18 @@ export function ActivityHeatmap() {
 
     // Build day cells from 181 days ago through today, then pad the front so
     // the first column starts on a Sunday (GitHub layout: rows = Sun..Sat).
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const startDay = new Date(today);
-    startDay.setDate(startDay.getDate() - 181);
-    startDay.setDate(startDay.getDate() - startDay.getDay());
+    //
+    // Keyed by IST day to match what /api/users/me/activity-heatmap returns.
+    // The old local-midnight + toISOString() pair disagreed by a day for any
+    // viewer east of UTC (IST midnight is 18:30Z the day before), so every
+    // square read the neighbouring day's count.
+    const todayKey = istDayKey(new Date());
+    const firstKey = istShiftDays(todayKey, -181);
+    const startKey = istShiftDays(firstKey, -dayKeyAsUtcDate(firstKey).getUTCDay());
 
     const days: DayCell[] = [];
-    for (let d = new Date(startDay); d <= today; d.setDate(d.getDate() + 1)) {
-      const key = d.toISOString().split('T')[0];
-      days.push({ date: new Date(d), key, count: countMap.get(key) ?? 0 });
+    for (let key = startKey; key <= todayKey; key = istShiftDays(key, 1)) {
+      days.push({ date: dayKeyAsUtcDate(key), key, count: countMap.get(key) ?? 0 });
     }
 
     const weeks: DayCell[][] = [];
@@ -90,8 +93,8 @@ export function ActivityHeatmap() {
           {/* Month labels — one per week column, shown where the month changes */}
           <div className="flex gap-[3px] text-[9px] leading-none text-muted-foreground">
             {weeks.map((week, i) => {
-              const m = week[0]!.date.getMonth();
-              const prev = i > 0 ? weeks[i - 1][0]!.date.getMonth() : -1;
+              const m = week[0]!.date.getUTCMonth();
+              const prev = i > 0 ? weeks[i - 1][0]!.date.getUTCMonth() : -1;
               return (
                 <span key={i} className="w-[11px]">
                   {m !== prev ? MONTHS[m] : ''}
@@ -105,7 +108,7 @@ export function ActivityHeatmap() {
                 {week.map((day) => (
                   <div
                     key={day.key}
-                    title={`${day.count} feedback${day.count !== 1 ? 's' : ''} · ${day.date.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}`}
+                    title={`${day.count} feedback${day.count !== 1 ? 's' : ''} · ${day.date.toLocaleDateString('en-IN', { timeZone: 'UTC', day: 'numeric', month: 'short', year: 'numeric' })}`}
                     className={cn('h-[11px] w-[11px] rounded-[3px]', LEVELS[levelFor(day.count)])}
                   />
                 ))}

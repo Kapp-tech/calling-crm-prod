@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
+import { istStartOfDay, istEndOfDay, istDayKey, istShiftDays } from '@/lib/ist-time';
 import { hasPermission } from '@/lib/permissions';
 import { Feature } from '@prisma/client';
 
@@ -18,7 +19,7 @@ export async function GET(req: NextRequest) {
   const teamId = searchParams.get('teamId');
 
   const dateFilter = fromDate && toDate
-    ? { createdAt: { gte: new Date(fromDate), lte: new Date(toDate) } }
+    ? { createdAt: { gte: istStartOfDay(fromDate), lte: istEndOfDay(toDate) } }
     : {};
 
   // TL: scoped to their team
@@ -64,18 +65,12 @@ export async function GET(req: NextRequest) {
       const feedbackCount = agent.feedbacks.length;
 
       // Last 7 days activity
+      // Buckets are IST calendar days — see lib/ist-time.ts.
       const last7 = Array.from({ length: 7 }).map((_, i) => {
-        const d = new Date();
-        d.setDate(d.getDate() - (6 - i));
-        d.setHours(0, 0, 0, 0);
-        const next = new Date(d);
-        next.setDate(next.getDate() + 1);
+        const dayKey = istShiftDays(new Date(), i - 6);
         return {
-          date: d.toISOString().split('T')[0],
-          count: agent.feedbacks.filter((f) => {
-            const fd = new Date(f.createdAt);
-            return fd >= d && fd < next;
-          }).length,
+          date: dayKey,
+          count: agent.feedbacks.filter((f) => istDayKey(f.createdAt) === dayKey).length,
         };
       });
 

@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
+import { istStartOfDay, istEndOfDay, istStartOfToday, istDayKey, istShiftDays } from '@/lib/ist-time';
 import { Prisma } from '@prisma/client';
 
 export async function GET(request: Request) {
@@ -28,8 +29,10 @@ export async function GET(request: Request) {
     const dateRange =
       from && to
         ? {
-            gte: new Date(from + 'T00:00:00.000Z'),
-            lte: new Date(to + 'T23:59:59.999Z'),
+            // IST calendar days, not UTC days — a trailing 'Z' made the range
+            // run 05:30 IST to 05:30 IST. See lib/ist-time.ts.
+            gte: istStartOfDay(from),
+            lte: istEndOfDay(to),
           }
         : undefined;
 
@@ -195,8 +198,7 @@ export async function GET(request: Request) {
       });
       if (topFeedbacks.length > 0) {
         const agentIds = topFeedbacks.map((f) => f.agentId);
-        const todayStart = new Date();
-        todayStart.setHours(0, 0, 0, 0);
+        const todayStart = istStartOfToday();
         const [users, todayFeedbacks] = await Promise.all([
           prisma.user.findMany({
             where: { id: { in: agentIds } },
@@ -221,18 +223,15 @@ export async function GET(request: Request) {
 
     // ── 7-day sparklines for stat cards (always trailing 7 days, ignores the
     //    page date filter — they show recent momentum, not the filtered range) ─
-    const sparkStart = new Date();
-    sparkStart.setHours(0, 0, 0, 0);
-    sparkStart.setDate(sparkStart.getDate() - 6);
-    const last7Days = Array.from({ length: 7 }, (_, i) => {
-      const d = new Date(sparkStart);
-      d.setDate(d.getDate() + i);
-      return d.toISOString().split('T')[0];
-    });
+    const todayKey = istDayKey(new Date());
+    const last7Days = Array.from({ length: 7 }, (_, i) => istShiftDays(todayKey, i - 6));
+    const sparkStart = istStartOfDay(last7Days[0]);
     const toSeries = (dates: Date[]): number[] => {
       const counts = new Map<string, number>(last7Days.map((d) => [d, 0]));
       for (const dt of dates) {
-        const key = dt.toISOString().split('T')[0];
+        // istDayKey, not toISOString(): the UTC day of an IST evening is the
+        // next day, which would file 18:30-24:00 IST activity under tomorrow.
+        const key = istDayKey(dt);
         if (counts.has(key)) counts.set(key, (counts.get(key) ?? 0) + 1);
       }
       return last7Days.map((d) => counts.get(d) ?? 0);
@@ -270,7 +269,7 @@ export async function GET(request: Request) {
     // ── Leads over time (group by day) ───────────────────────────────────────
     const dayMap = new Map<string, number>();
     for (const lead of leadsForChart) {
-      const day = lead.createdAt.toISOString().split('T')[0];
+      const day = istDayKey(lead.createdAt);
       dayMap.set(day, (dayMap.get(day) ?? 0) + 1);
     }
     const leadsOverTime = Array.from(dayMap.entries()).map(([date, count]) => ({ date, count }));

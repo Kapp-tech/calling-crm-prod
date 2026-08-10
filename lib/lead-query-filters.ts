@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { PrismaClient, Role } from '@prisma/client';
 import { LeadStatus } from '@prisma/client';
+import { istStartOfDay, istEndOfDay } from '@/lib/ist-time';
 
 /**
  * The "other" leads-list filters — everything except feedback selection
@@ -103,18 +104,12 @@ export function buildNonFeedbackFilters(
   if (tlIds.length > 0 && sessionUser.role !== 'COUNSELLING_AGENT') {
     filters.push({ team: { teamLeadId: { in: tlIds } } });
   }
-  if (q.dateFrom) filters.push({ createdAt: { gte: new Date(q.dateFrom) } });
-  if (q.dateTo) {
-    const end = new Date(q.dateTo);
-    end.setHours(23, 59, 59, 999);
-    filters.push({ createdAt: { lte: end } });
-  }
-  if (q.updatedFrom) filters.push({ updatedAt: { gte: new Date(q.updatedFrom) } });
-  if (q.updatedTo) {
-    const end = new Date(q.updatedTo);
-    end.setHours(23, 59, 59, 999);
-    filters.push({ updatedAt: { lte: end } });
-  }
+  // Date filters denote IST calendar days — see lib/ist-time.ts for why the
+  // plain `new Date(day)` / `setHours(23,59,59,999)` pair got these wrong.
+  if (q.dateFrom) filters.push({ createdAt: { gte: istStartOfDay(q.dateFrom) } });
+  if (q.dateTo) filters.push({ createdAt: { lte: istEndOfDay(q.dateTo) } });
+  if (q.updatedFrom) filters.push({ updatedAt: { gte: istStartOfDay(q.updatedFrom) } });
+  if (q.updatedTo) filters.push({ updatedAt: { lte: istEndOfDay(q.updatedTo) } });
   if (q.primaryAppConfirm) {
     const vals = splitCsv(q.primaryAppConfirm);
     if (vals.length > 0) filters.push({ primaryApplicationConfirm: { in: vals } });

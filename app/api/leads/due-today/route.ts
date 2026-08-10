@@ -2,19 +2,18 @@ import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
+import { istStartOfToday, istStartOfDay, istShiftDays } from '@/lib/ist-time';
 
 export async function GET() {
   try {
   const session = await getServerSession(authOptions);
   if (!session) return NextResponse.json({ success: false, error: 'Unauthorized', code: 'UNAUTHORIZED' }, { status: 401 });
 
-  const now = new Date();
-  const startOfToday = new Date(now);
-  startOfToday.setHours(0, 0, 0, 0);
-  const startOfYesterday = new Date(startOfToday);
-  startOfYesterday.setDate(startOfYesterday.getDate() - 1);
-  const sevenDaysAgo = new Date(startOfToday);
-  sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+  // Day boundaries in IST, not the server's zone — on a UTC box "today"
+  // otherwise ran 05:30 IST to 05:30 IST and mis-bucketed early-morning work.
+  const startOfToday = istStartOfToday();
+  const startOfYesterday = istStartOfDay(istShiftDays(startOfToday, -1));
+  const sevenDaysAgo = istStartOfDay(istShiftDays(startOfToday, -7));
 
   // Recent feedbacks for this agent: today + last 7 days
   const feedbacks = await prisma.leadFeedback.findMany({

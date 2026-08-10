@@ -5,6 +5,7 @@ import { authOptions } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import { hasPermission } from '@/lib/permissions';
 import { getLeadWhereClause } from '@/lib/lead-access';
+import { istStartOfDay, istEndOfDay } from '@/lib/ist-time';
 import { Feature, LeadStatus } from '@prisma/client';
 
 function split(v: string | null): string[] {
@@ -98,18 +99,11 @@ export async function GET(req: NextRequest) {
     if (leadOrigins.length > 0) filters.push({ leadOrigin:{ in: leadOrigins, mode: 'insensitive' } });
     if (zones.length > 0)       filters.push({ leadZone:  { in: zones,       mode: 'insensitive' } });
     if (tlIds.length > 0)       filters.push({ team: { teamLeadId: { in: tlIds } } });
-    if (dateFrom) filters.push({ createdAt: { gte: new Date(dateFrom) } });
-    if (dateTo) {
-      const end = new Date(dateTo);
-      end.setHours(23, 59, 59, 999);
-      filters.push({ createdAt: { lte: end } });
-    }
-    if (parsed.data.updatedFrom) filters.push({ updatedAt: { gte: new Date(parsed.data.updatedFrom) } });
-    if (parsed.data.updatedTo) {
-      const end = new Date(parsed.data.updatedTo);
-      end.setHours(23, 59, 59, 999);
-      filters.push({ updatedAt: { lte: end } });
-    }
+    // IST calendar-day bounds — see lib/ist-time.ts.
+    if (dateFrom) filters.push({ createdAt: { gte: istStartOfDay(dateFrom) } });
+    if (dateTo) filters.push({ createdAt: { lte: istEndOfDay(dateTo) } });
+    if (parsed.data.updatedFrom) filters.push({ updatedAt: { gte: istStartOfDay(parsed.data.updatedFrom) } });
+    if (parsed.data.updatedTo) filters.push({ updatedAt: { lte: istEndOfDay(parsed.data.updatedTo) } });
     if (feedbackTab && feedbackTab !== 'all') {
       if (feedbackTab === 'fresh')          filters.push({ feedbacks: { none: {} } });
       if (feedbackTab === 'followup')       filters.push({ feedbacks: { some: {} } });

@@ -14,6 +14,7 @@ import {
   MapPin, Map, BookOpen, Tag, Globe2, Megaphone, User, MessageSquare,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { istDayKey, istShiftDays } from '@/lib/ist-time';
 import { Sparkline } from '@/components/shared/sparkline';
 import { Leaderboard } from '@/components/shared/leaderboard';
 import { HolidayGreeting } from '@/components/shared/holiday-greeting';
@@ -100,17 +101,14 @@ const FEEDBACK_COLORS = ['#6366f1', '#8b5cf6', '#a78bfa', '#06b6d4', '#f59e0b', 
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-function fmtDate(d: Date) {
-  return d.toISOString().split('T')[0];
-}
-
+// Quick ranges are IST calendar days, because that is how the API interprets
+// `from`/`to`. toISOString() would hand over the UTC day, which before 05:30
+// IST is yesterday — so "Today" silently queried the wrong date each morning.
 function getQuickRange(filter: QuickFilter): { from: string; to: string } {
   if (filter === 'alltime' || filter === 'custom') return { from: '', to: '' };
-  const today = new Date();
+  const todayKey = istDayKey(new Date());
   const days: Record<string, number> = { today: 0, week: 7, month: 30, '3months': 90 };
-  const from = new Date(today);
-  from.setDate(from.getDate() - (days[filter] ?? 0));
-  return { from: fmtDate(from), to: fmtDate(today) };
+  return { from: istShiftDays(todayKey, -(days[filter] ?? 0)), to: todayKey };
 }
 
 function formatNum(n: number = 0) {
