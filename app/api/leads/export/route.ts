@@ -11,12 +11,12 @@ import { Feature, LeadStatus } from '@prisma/client';
 // Feedback timestamps are shown in IST, like the rest of the app — the bare
 // toLocaleString() used for the lead-level date columns renders in the server's
 // zone (UTC in production), which we deliberately don't want for these.
-// "DD/MM/YYYY, hh:mm am/pm" matches the en-GB date style already used here.
+// "DD/MM/YYYY, hh:mm:ss am/pm" matches the en-GB date style already used here.
 function fmtIstDateTime(d: Date | string): string {
   return new Date(d).toLocaleString('en-GB', {
     timeZone: IST_TIMEZONE,
     day: '2-digit', month: '2-digit', year: 'numeric',
-    hour: '2-digit', minute: '2-digit', hour12: true,
+    hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true,
   });
 }
 
