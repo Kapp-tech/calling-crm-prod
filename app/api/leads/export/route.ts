@@ -5,8 +5,20 @@ import { authOptions } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import { hasPermission } from '@/lib/permissions';
 import { getLeadWhereClause } from '@/lib/lead-access';
-import { istStartOfDay, istEndOfDay } from '@/lib/ist-time';
+import { istStartOfDay, istEndOfDay, IST_TIMEZONE } from '@/lib/ist-time';
 import { Feature, LeadStatus } from '@prisma/client';
+
+// Feedback timestamps are shown in IST, like the rest of the app — the bare
+// toLocaleString() used for the lead-level date columns renders in the server's
+// zone (UTC in production), which we deliberately don't want for these.
+// "DD/MM/YYYY, hh:mm am/pm" matches the en-GB date style already used here.
+function fmtIstDateTime(d: Date | string): string {
+  return new Date(d).toLocaleString('en-GB', {
+    timeZone: IST_TIMEZONE,
+    day: '2-digit', month: '2-digit', year: 'numeric',
+    hour: '2-digit', minute: '2-digit', hour12: true,
+  });
+}
 
 function split(v: string | null): string[] {
   return v ? v.split(',').map((s) => s.trim()).filter(Boolean) : [];
@@ -200,13 +212,15 @@ export async function GET(req: NextRequest) {
       'Budget', 'Course Type', 'College Type',
       'Preferred Courses', 'Preferred Colleges', 'Preferred Cities', 'Preferred States',
       'Total Feedbacks',
+      // Summary of the most recent feedback (highest follow-up number).
+      'Last Feedback', 'Last Feedback Remark', 'Last Feedback Date & Time',
     ];
 
     // Dynamic feedback columns — up to max feedbacks seen across all leads
     const maxFeedbacks = leads.reduce((m, l) => Math.max(m, l.feedbacks.length), 0);
     const feedbackHeaders: string[] = [];
     for (let i = 1; i <= maxFeedbacks; i++) {
-      feedbackHeaders.push(`Follow-up ${i} Status`, `Follow-up ${i} Remarks`, `Follow-up ${i} Date`);
+      feedbackHeaders.push(`Follow-up ${i} Status`, `Follow-up ${i} Remarks`, `Follow-up ${i} Date & Time`);
     }
 
     const allHeaders = [...fixedHeaders, ...feedbackHeaders];
@@ -228,6 +242,10 @@ export async function GET(req: NextRequest) {
     const rows = leads.map((l) => {
       const jsonArr = (v: unknown) =>
         Array.isArray(v) ? (v as string[]).join(', ') : '';
+
+      // feedbacks are ordered by followUpNumber asc (and unbounded here), so the
+      // last element is the most recent follow-up.
+      const lastFb = l.feedbacks.length > 0 ? l.feedbacks[l.feedbacks.length - 1] : null;
 
       const fixed = [
         displayId(l.id),
@@ -260,6 +278,9 @@ export async function GET(req: NextRequest) {
         jsonArr(l.profile?.preferredCityNames),
         jsonArr(l.profile?.preferredStateNames),
         String(l._count.feedbacks),
+        lastFb?.feedbackOption?.label ?? '',
+        lastFb?.remarks ?? '',
+        lastFb ? fmtIstDateTime(lastFb.createdAt) : '',
       ].map(esc);
 
       const fbCols: string[] = [];
@@ -269,7 +290,7 @@ export async function GET(req: NextRequest) {
           fbCols.push(
             esc(fb.feedbackOption?.label ?? ''),
             esc(fb.remarks ?? ''),
-            esc(new Date(fb.createdAt).toLocaleDateString('en-GB')),
+            esc(fmtIstDateTime(fb.createdAt)),
           );
         } else {
           fbCols.push('""', '""', '""');
