@@ -1285,8 +1285,8 @@ function IntroScriptAccordion({ lead, agentName }: { lead: LeadDetail; agentName
       {open && (
         <div className="px-4 pb-4">
           <p className="text-sm leading-relaxed text-amber-900 dark:text-amber-200">
-            &ldquo;Hello, am I speaking with {lead.name}? This is {agentName} calling from KollegeApply.
-            You recently showed interest in {lead.college || lead.course || '[College/Course]'}.
+            &ldquo;Hello, am I speaking with {lead.name}? This is {agentName} calling from {lead.college || '[College]'}.
+            You recently showed interest in Our University.
             Is this a good time to chat for 5–7 minutes about your admission journey?&rdquo;
           </p>
         </div>
