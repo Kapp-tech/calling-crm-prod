@@ -735,6 +735,7 @@ const FILTER_GROUPS: { group: string; filters: FilterDef[] }[] = [
     filters: [
       { key: 'feedback',  label: 'Feedback'         },
       { key: 'createdAt', label: 'Date Added Range' },
+      { key: 'updatedAt', label: 'Updated Date Range' },
     ],
   },
 ];
@@ -762,6 +763,8 @@ export default function CounsellingTLPage() {
   const [feedbackFilter,    setFeedbackFilter]    = useState<string[]>([]);
   const [dateFrom,          setDateFrom]          = useState('');
   const [dateTo,            setDateTo]            = useState('');
+  const [updatedFrom,       setUpdatedFrom]       = useState('');
+  const [updatedTo,         setUpdatedTo]         = useState('');
   const [agentFilters,      setAgentFilters]      = useState<string[]>([]);
   const [filterDialogOpen,  setFilterDialogOpen]  = useState(false);
   const [dialogFilters,     setDialogFilters]     = useState<string[]>([]);
@@ -796,7 +799,7 @@ export default function CounsellingTLPage() {
     setSelectedIds([]);
     setAllFilteredSelected(false);
     lastClickedIdxRef.current = -1;
-  }, [search, assignmentFilter, cityFilters, stateFilters, campaignFilters, courseFilters, collegeFilters, leadTypeFilters, leadOriginFilters, zoneFilters, agentFilters, feedbackFilter, dateFrom, dateTo, limit]);
+  }, [search, assignmentFilter, cityFilters, stateFilters, campaignFilters, courseFilters, collegeFilters, leadTypeFilters, leadOriginFilters, zoneFilters, agentFilters, feedbackFilter, dateFrom, dateTo, updatedFrom, updatedTo, limit]);
 
   // ── Data queries ──────────────────────────────────────────────────────────────
 
@@ -807,7 +810,7 @@ export default function CounsellingTLPage() {
   });
 
   const { data, isLoading, isFetching, refetch } = useQuery({
-    queryKey: ['tl-leads', { search, assignmentFilter, cityFilters, stateFilters, campaignFilters, courseFilters, collegeFilters, leadTypeFilters, leadOriginFilters, zoneFilters, agentFilters, feedbackFilter, dateFrom, dateTo, page, limit }],
+    queryKey: ['tl-leads', { search, assignmentFilter, cityFilters, stateFilters, campaignFilters, courseFilters, collegeFilters, leadTypeFilters, leadOriginFilters, zoneFilters, agentFilters, feedbackFilter, dateFrom, dateTo, updatedFrom, updatedTo, page, limit }],
     queryFn: () => {
       const p = new URLSearchParams({ page: String(page), limit: String(limit), status: 'APPROVED' });
       if (search) p.set('search', search);
@@ -829,6 +832,8 @@ export default function CounsellingTLPage() {
       }
       if (dateFrom) p.set('dateFrom', dateFrom);
       if (dateTo)   p.set('dateTo',   dateTo);
+      if (updatedFrom) p.set('updatedFrom', updatedFrom);
+      if (updatedTo)   p.set('updatedTo',   updatedTo);
       return fetch(`/api/leads?${p}`).then((r) => r.json());
     },
     enabled: !!session?.user?.id,
@@ -914,8 +919,10 @@ export default function CounsellingTLPage() {
         : (feedbackOptions.find((o) => o.id === v)?.label ?? v);
       chips.push({ key: `fb-${v}`, label: `Feedback: ${fbLabel}`, onRemove: () => setFeedbackFilter((prev) => prev.filter((x) => x !== v)) });
     });
-    if (dateFrom) chips.push({ key: 'from', label: `From: ${dateFrom}`, onRemove: () => setDateFrom('') });
-    if (dateTo)   chips.push({ key: 'to',   label: `To: ${dateTo}`,     onRemove: () => setDateTo('') });
+    if (dateFrom) chips.push({ key: 'from', label: `Added From: ${dateFrom}`, onRemove: () => setDateFrom('') });
+    if (dateTo)   chips.push({ key: 'to',   label: `Added To: ${dateTo}`,     onRemove: () => setDateTo('') });
+    if (updatedFrom) chips.push({ key: 'ufrom', label: `Updated From: ${updatedFrom}`, onRemove: () => setUpdatedFrom('') });
+    if (updatedTo)   chips.push({ key: 'uto',   label: `Updated To: ${updatedTo}`,     onRemove: () => setUpdatedTo('') });
     agentFilters.forEach((id) => {
       const agent = agents.find((a) => a.id === id);
       if (agent) chips.push({
@@ -925,7 +932,7 @@ export default function CounsellingTLPage() {
       });
     });
     return chips;
-  }, [assignmentFilter, cityFilters, stateFilters, campaignFilters, courseFilters, collegeFilters, leadTypeFilters, leadOriginFilters, zoneFilters, feedbackFilter, feedbackOptions, dateFrom, dateTo, agentFilters, agents]);
+  }, [assignmentFilter, cityFilters, stateFilters, campaignFilters, courseFilters, collegeFilters, leadTypeFilters, leadOriginFilters, zoneFilters, feedbackFilter, feedbackOptions, dateFrom, dateTo, updatedFrom, updatedTo, agentFilters, agents]);
 
   function clearAllFilters() {
     setAssignmentFilter('all');
@@ -940,6 +947,8 @@ export default function CounsellingTLPage() {
     setFeedbackFilter([]);
     setDateFrom('');
     setDateTo('');
+    setUpdatedFrom('');
+    setUpdatedTo('');
     setAgentFilters([]);
     setSelectedFilters([]);
     setDialogFilters([]);
@@ -1009,6 +1018,8 @@ export default function CounsellingTLPage() {
     }
     if (dateFrom) p.set('dateFrom', dateFrom);
     if (dateTo)   p.set('dateTo',   dateTo);
+    if (updatedFrom) p.set('updatedFrom', updatedFrom);
+    if (updatedTo)   p.set('updatedTo',   updatedTo);
     return p;
   }
 
@@ -1257,6 +1268,18 @@ export default function CounsellingTLPage() {
                   <div className="flex flex-col gap-1">
                     <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Date Added To</span>
                     <Input type="date" className="h-8 w-36 text-xs" value={dateTo} min={dateFrom || undefined} onChange={(e) => setDateTo(e.target.value)} />
+                  </div>
+                </>
+              )}
+              {selectedFilters.includes('updatedAt') && (
+                <>
+                  <div className="flex flex-col gap-1">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Updated From</span>
+                    <Input type="date" className="h-8 w-36 text-xs" value={updatedFrom} onChange={(e) => setUpdatedFrom(e.target.value)} />
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Updated To</span>
+                    <Input type="date" className="h-8 w-36 text-xs" value={updatedTo} min={updatedFrom || undefined} onChange={(e) => setUpdatedTo(e.target.value)} />
                   </div>
                 </>
               )}
