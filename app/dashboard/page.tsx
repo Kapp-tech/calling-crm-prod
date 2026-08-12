@@ -17,6 +17,7 @@ import {
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { istDayKey, istShiftDays } from '@/lib/ist-time';
+import { joinCsvFilterValues } from '@/lib/csv-filter-value';
 import { Sparkline } from '@/components/shared/sparkline';
 import { Leaderboard } from '@/components/shared/leaderboard';
 import { HolidayGreeting } from '@/components/shared/holiday-greeting';
@@ -539,7 +540,9 @@ export default function DashboardPage() {
     if (dateRange.from) p.set('from', dateRange.from);
     if (dateRange.to) p.set('to', dateRange.to);
     Object.entries(appliedFilters).forEach(([k, v]) => {
-      if (Array.isArray(v) && v.length > 0) p.set(k, v.join(','));
+      // joinCsvFilterValues, not a plain .join(',') — course/campaign/etc.
+      // values can themselves contain a literal comma. See lib/csv-filter-value.ts.
+      if (Array.isArray(v) && v.length > 0) p.set(k, joinCsvFilterValues(v));
     });
     return p.toString();
   }, [dateRange, appliedFilters]);

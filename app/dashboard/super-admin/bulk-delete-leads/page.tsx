@@ -19,6 +19,7 @@ import { MultiSelectFilter, type MultiSelectOption } from '@/components/shared/m
 import { PinGate } from '@/components/shared/pin-gate';
 import { PIN_GATED_ACTIONS } from '@/lib/pin-gated-actions';
 import { cn } from '@/lib/utils';
+import { joinCsvFilterValues } from '@/lib/csv-filter-value';
 
 interface UploadBatchOption {
   id: string;
@@ -109,14 +110,19 @@ function buildParams(f: FilterState): URLSearchParams {
   if (f.batchId) p.set('batchId', f.batchId);
   if (f.uploadedById) p.set('uploadedById', f.uploadedById);
   if (f.status) p.set('status', f.status);
-  if (f.campaign.length > 0) p.set('campaign', f.campaign.join(','));
-  if (f.city.length > 0) p.set('city', f.city.join(','));
-  if (f.state.length > 0) p.set('state', f.state.join(','));
-  if (f.course.length > 0) p.set('course', f.course.join(','));
-  if (f.college.length > 0) p.set('college', f.college.join(','));
-  if (f.leadType.length > 0) p.set('leadType', f.leadType.join(','));
-  if (f.leadOrigin.length > 0) p.set('leadOrigin', f.leadOrigin.join(','));
-  if (f.zone.length > 0) p.set('zone', f.zone.join(','));
+  // joinCsvFilterValues, not a plain .join(',') — a value here (college
+  // names especially) can itself contain a literal comma. This is a
+  // destructive bulk-delete filter, so a shredded value silently matching
+  // zero rows would be misleadingly "safe" rather than actually correct.
+  // See lib/csv-filter-value.ts.
+  if (f.campaign.length > 0) p.set('campaign', joinCsvFilterValues(f.campaign));
+  if (f.city.length > 0) p.set('city', joinCsvFilterValues(f.city));
+  if (f.state.length > 0) p.set('state', joinCsvFilterValues(f.state));
+  if (f.course.length > 0) p.set('course', joinCsvFilterValues(f.course));
+  if (f.college.length > 0) p.set('college', joinCsvFilterValues(f.college));
+  if (f.leadType.length > 0) p.set('leadType', joinCsvFilterValues(f.leadType));
+  if (f.leadOrigin.length > 0) p.set('leadOrigin', joinCsvFilterValues(f.leadOrigin));
+  if (f.zone.length > 0) p.set('zone', joinCsvFilterValues(f.zone));
   if (f.dateFrom) p.set('dateFrom', f.dateFrom);
   if (f.dateTo) p.set('dateTo', f.dateTo);
   if (f.search.trim()) p.set('search', f.search.trim());

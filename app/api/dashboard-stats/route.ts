@@ -3,6 +3,7 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import { istStartOfDay, istEndOfDay, istStartOfToday, istDayKey, istShiftDays } from '@/lib/ist-time';
+import { parseCsvFilterValues } from '@/lib/csv-filter-value';
 import { Prisma } from '@prisma/client';
 
 export async function GET(request: Request) {
@@ -13,7 +14,9 @@ export async function GET(request: Request) {
     const { searchParams } = new URL(request.url);
     const from = searchParams.get('from');
     const to = searchParams.get('to');
-    const parse = (key: string) => searchParams.get(key)?.split(',').filter(Boolean) ?? [];
+    // A value can itself contain a comma (college names are often "Name,
+    // City") — see lib/csv-filter-value.ts.
+    const parse = (key: string) => parseCsvFilterValues(searchParams.get(key));
     const assignedToIdParam = parse('assignedToId');
     const cityParam         = parse('city');
     const stateParam        = parse('state');

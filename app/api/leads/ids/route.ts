@@ -6,11 +6,8 @@ import { prisma } from '@/lib/prisma';
 import { hasPermission } from '@/lib/permissions';
 import { getLeadWhereClause } from '@/lib/lead-access';
 import { istStartOfDay, istEndOfDay } from '@/lib/ist-time';
+import { parseCsvFilterValues as split } from '@/lib/csv-filter-value';
 import { Feature, LeadStatus } from '@prisma/client';
-
-function split(v: string | undefined): string[] {
-  return v ? v.split(',').map((s) => s.trim()).filter(Boolean) : [];
-}
 
 const querySchema = z.object({
   status:            z.nativeEnum(LeadStatus).optional(),

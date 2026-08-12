@@ -2,6 +2,7 @@ import { z } from 'zod';
 import type { PrismaClient, Role } from '@prisma/client';
 import { LeadStatus } from '@prisma/client';
 import { istStartOfDay, istEndOfDay } from '@/lib/ist-time';
+import { parseCsvFilterValues } from '@/lib/csv-filter-value';
 
 /**
  * The "other" leads-list filters — everything except feedback selection
@@ -53,9 +54,10 @@ export function hasAnyFilter(q: NonFeedbackQuery): boolean {
   return Object.values(q).some((v) => v !== undefined && v !== '');
 }
 
-export function splitCsv(v: string | undefined): string[] {
-  return v ? v.split(',').map((s) => s.trim()).filter(Boolean) : [];
-}
+// A value here can itself contain a literal comma (college names are very
+// often "Name, City") — see lib/csv-filter-value.ts for why a plain
+// split(',') silently shredded those into fragments that matched nothing.
+export const splitCsv = parseCsvFilterValues;
 
 export function buildNonFeedbackFilters(
   q: NonFeedbackQuery,

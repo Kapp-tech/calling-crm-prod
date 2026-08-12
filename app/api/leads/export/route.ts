@@ -6,6 +6,7 @@ import { prisma } from '@/lib/prisma';
 import { hasPermission } from '@/lib/permissions';
 import { getLeadWhereClause } from '@/lib/lead-access';
 import { istStartOfDay, istEndOfDay, IST_TIMEZONE } from '@/lib/ist-time';
+import { parseCsvFilterValues as split } from '@/lib/csv-filter-value';
 import { Feature, LeadStatus } from '@prisma/client';
 
 // Feedback timestamps are shown in IST, like the rest of the app — the bare
@@ -18,10 +19,6 @@ function fmtIstDateTime(d: Date | string): string {
     day: '2-digit', month: '2-digit', year: 'numeric',
     hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true,
   });
-}
-
-function split(v: string | null): string[] {
-  return v ? v.split(',').map((s) => s.trim()).filter(Boolean) : [];
 }
 
 const querySchema = z.object({

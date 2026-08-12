@@ -11,6 +11,7 @@ import { LeadDetailDrawer } from '@/components/leads/lead-detail-drawer';
 import { PaginationBar } from '@/components/shared/pagination-bar';
 import { MultiSelectFilter, type MultiSelectOption } from '@/components/shared/multi-select-filter';
 import { cn } from '@/lib/utils';
+import { joinCsvFilterValues } from '@/lib/csv-filter-value';
 import { computeProfilingScore, profilingScoreTone } from '@/lib/lead-profiling';
 import { feedbackCategoryTone } from '@/lib/feedback-category-colors';
 
@@ -62,6 +63,12 @@ interface FilterOptions {
 interface FilterDef { key: string; label: string; }
 
 const FILTER_GROUPS: { group: string; filters: FilterDef[] }[] = [
+  {
+    group: 'Feedback',
+    filters: [
+      { key: 'lastFeedback', label: 'Last Feedback' },
+    ],
+  },
   {
     group: 'Lead Source',
     filters: [
@@ -214,6 +221,7 @@ export default function AllLeadsPage() {
 
   function clearFilterValue(key: string) {
     switch (key) {
+      case 'lastFeedback':      applyFeedbackSelection(selectedCategoryIds, []); break;
       case 'campaign':          setCampaigns([]);            break;
       case 'leadType':          setLeadTypes([]);            break;
       case 'leadOrigin':        setLeadOrigins([]);          break;
@@ -301,27 +309,30 @@ export default function AllLeadsPage() {
     // unassigned leads live in the TL's Assign Leads queue instead.
     const p = new URLSearchParams({ status: 'APPROVED', assignmentStatus: 'assigned' });
     if (search)           p.set('search', search);
-    if (cities.length)    p.set('city', cities.join(','));
-    if (states.length)    p.set('state', states.join(','));
-    if (courses.length)   p.set('course', courses.join(','));
-    if (colleges.length)  p.set('college', colleges.join(','));
+    // joinCsvFilterValues, not a plain .join(',') — a value here (college
+    // names especially) can itself contain a literal comma, e.g. "ICFAI
+    // Business School (IBS), Hyderabad". See lib/csv-filter-value.ts.
+    if (cities.length)    p.set('city', joinCsvFilterValues(cities));
+    if (states.length)    p.set('state', joinCsvFilterValues(states));
+    if (courses.length)   p.set('course', joinCsvFilterValues(courses));
+    if (colleges.length)  p.set('college', joinCsvFilterValues(colleges));
     if (dateFrom)         p.set('dateFrom', dateFrom);
     if (dateTo)           p.set('dateTo', dateTo);
     if (updatedDateFrom)  p.set('updatedFrom', updatedDateFrom);
     if (updatedDateTo)    p.set('updatedTo', updatedDateTo);
-    if (campaigns.length)         p.set('campaign',          campaigns.join(','));
-    if (leadTypes.length)         p.set('leadType',          leadTypes.join(','));
-    if (leadOrigins.length)       p.set('leadOrigin',        leadOrigins.join(','));
-    if (zones.length)             p.set('zone',              zones.join(','));
+    if (campaigns.length)         p.set('campaign',          joinCsvFilterValues(campaigns));
+    if (leadTypes.length)         p.set('leadType',          joinCsvFilterValues(leadTypes));
+    if (leadOrigins.length)       p.set('leadOrigin',        joinCsvFilterValues(leadOrigins));
+    if (zones.length)             p.set('zone',              joinCsvFilterValues(zones));
     if (tlIds.length)             p.set('tlId',              tlIds.join(','));
     if (agentIds.length)          p.set('assignedToId',      agentIds.join(','));
-    if (primaryAppConfirms.length)  p.set('primaryAppConfirm',  primaryAppConfirms.join(','));
-    if (primaryAdmConfirms.length)  p.set('primaryAdmConfirm',  primaryAdmConfirms.join(','));
-    if (leadConfirmations.length)   p.set('leadConfirmation',    leadConfirmations.join(','));
-    if (leadStages.length)          p.set('leadStage',           leadStages.join(','));
-    if (leadVerifications.length)   p.set('leadVerification',    leadVerifications.join(','));
-    if (dataCallingTypes.length)    p.set('dataCallingType',     dataCallingTypes.join(','));
-    if (dealTypes.length)           p.set('dealType',            dealTypes.join(','));
+    if (primaryAppConfirms.length)  p.set('primaryAppConfirm',  joinCsvFilterValues(primaryAppConfirms));
+    if (primaryAdmConfirms.length)  p.set('primaryAdmConfirm',  joinCsvFilterValues(primaryAdmConfirms));
+    if (leadConfirmations.length)   p.set('leadConfirmation',    joinCsvFilterValues(leadConfirmations));
+    if (leadStages.length)          p.set('leadStage',           joinCsvFilterValues(leadStages));
+    if (leadVerifications.length)   p.set('leadVerification',    joinCsvFilterValues(leadVerifications));
+    if (dataCallingTypes.length)    p.set('dataCallingType',     joinCsvFilterValues(dataCallingTypes));
+    if (dealTypes.length)           p.set('dealType',            joinCsvFilterValues(dealTypes));
     return p;
   }
 
@@ -374,6 +385,7 @@ export default function AllLeadsPage() {
   const str2opt  = (arr: string[] = []): MultiSelectOption[] => arr.map((v) => ({ value: v, label: v }));
 
   const cityOptions             = useMemo(() => str2opt(filterOpts?.cities),            [filterOpts]);
+  const feedbackFilterOptions   = useMemo<MultiSelectOption[]>(() => feedbackOptions.map((o) => ({ value: o.id, label: o.label })), [feedbackOptions]);
   const stateOptions            = useMemo(() => str2opt(filterOpts?.states),            [filterOpts]);
   const courseOptions           = useMemo(() => str2opt(filterOpts?.courses),           [filterOpts]);
   const collegeOptions          = useMemo(() => str2opt(filterOpts?.colleges),          [filterOpts]);
@@ -734,6 +746,13 @@ export default function AllLeadsPage() {
       {/* ── Active advanced filters ──────────────────────────────────────────── */}
       {activeFilters.length > 0 && (
         <div className="flex flex-wrap gap-3 mb-3 p-3 rounded-lg border border-border/60 bg-muted/10 items-end">
+          {activeFilters.includes('lastFeedback') && (
+            <div className="flex flex-col gap-1">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Last Feedback</span>
+              {/* Shares selectedOptIds with the feedback capsules above, so selecting here also lights up the matching capsule and vice-versa. */}
+              <MultiSelectFilter placeholder="All Feedback" options={feedbackFilterOptions} selected={selectedOptIds} onChange={(v) => applyFeedbackSelection(selectedCategoryIds, v)} loading={optsLoading} />
+            </div>
+          )}
           {activeFilters.includes('campaign') && (
             <div className="flex flex-col gap-1">
               <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Lead Code</span>

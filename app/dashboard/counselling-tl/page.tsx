@@ -20,6 +20,7 @@ import { LeadDetailModal } from '@/components/leads/lead-detail-modal';
 import { PaginationBar } from '@/components/shared/pagination-bar';
 import { cn } from '@/lib/utils';
 import { usePermissions } from '@/lib/usePermissions';
+import { joinCsvFilterValues } from '@/lib/csv-filter-value';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -733,7 +734,7 @@ const FILTER_GROUPS: { group: string; filters: FilterDef[] }[] = [
   {
     group: 'Other',
     filters: [
-      { key: 'feedback',  label: 'Feedback'         },
+      { key: 'feedback',  label: 'Last Feedback'    },
       { key: 'createdAt', label: 'Date Added Range' },
       { key: 'updatedAt', label: 'Updated Date Range' },
     ],
@@ -815,14 +816,17 @@ export default function CounsellingTLPage() {
       const p = new URLSearchParams({ page: String(page), limit: String(limit), status: 'APPROVED' });
       if (search) p.set('search', search);
       if (assignmentFilter !== 'all') p.set('assignmentStatus', assignmentFilter);
-      if (cityFilters.length > 0)       p.set('city',         cityFilters.join(','));
-      if (stateFilters.length > 0)      p.set('state',        stateFilters.join(','));
-      if (campaignFilters.length > 0)   p.set('campaign',     campaignFilters.join(','));
-      if (courseFilters.length > 0)     p.set('course',       courseFilters.join(','));
-      if (collegeFilters.length > 0)    p.set('college',      collegeFilters.join(','));
-      if (leadTypeFilters.length > 0)   p.set('leadType',     leadTypeFilters.join(','));
-      if (leadOriginFilters.length > 0) p.set('leadOrigin',   leadOriginFilters.join(','));
-      if (zoneFilters.length > 0)       p.set('zone',         zoneFilters.join(','));
+      // joinCsvFilterValues, not a plain .join(',') — a value here (college
+      // names especially) can itself contain a literal comma, e.g. "ICFAI
+      // Business School (IBS), Hyderabad". See lib/csv-filter-value.ts.
+      if (cityFilters.length > 0)       p.set('city',         joinCsvFilterValues(cityFilters));
+      if (stateFilters.length > 0)      p.set('state',        joinCsvFilterValues(stateFilters));
+      if (campaignFilters.length > 0)   p.set('campaign',     joinCsvFilterValues(campaignFilters));
+      if (courseFilters.length > 0)     p.set('course',       joinCsvFilterValues(courseFilters));
+      if (collegeFilters.length > 0)    p.set('college',      joinCsvFilterValues(collegeFilters));
+      if (leadTypeFilters.length > 0)   p.set('leadType',     joinCsvFilterValues(leadTypeFilters));
+      if (leadOriginFilters.length > 0) p.set('leadOrigin',   joinCsvFilterValues(leadOriginFilters));
+      if (zoneFilters.length > 0)       p.set('zone',         joinCsvFilterValues(zoneFilters));
       if (agentFilters.length > 0)      p.set('assignedToId', agentFilters.join(','));
       if (feedbackFilter.includes('__fresh__') && feedbackFilter.length === 1) {
         p.set('feedbackTab', 'fresh');
@@ -917,7 +921,7 @@ export default function CounsellingTLPage() {
       const fbLabel = v === '__fresh__'
         ? 'Fresh'
         : (feedbackOptions.find((o) => o.id === v)?.label ?? v);
-      chips.push({ key: `fb-${v}`, label: `Feedback: ${fbLabel}`, onRemove: () => setFeedbackFilter((prev) => prev.filter((x) => x !== v)) });
+      chips.push({ key: `fb-${v}`, label: `Last Feedback: ${fbLabel}`, onRemove: () => setFeedbackFilter((prev) => prev.filter((x) => x !== v)) });
     });
     if (dateFrom) chips.push({ key: 'from', label: `Added From: ${dateFrom}`, onRemove: () => setDateFrom('') });
     if (dateTo)   chips.push({ key: 'to',   label: `Added To: ${dateTo}`,     onRemove: () => setDateTo('') });
@@ -1001,14 +1005,15 @@ export default function CounsellingTLPage() {
     const p = new URLSearchParams({ status: 'APPROVED' });
     if (search) p.set('search', search);
     if (assignmentFilter !== 'all') p.set('assignmentStatus', assignmentFilter);
-    if (cityFilters.length > 0)       p.set('city',         cityFilters.join(','));
-    if (stateFilters.length > 0)      p.set('state',        stateFilters.join(','));
-    if (campaignFilters.length > 0)   p.set('campaign',     campaignFilters.join(','));
-    if (courseFilters.length > 0)     p.set('course',       courseFilters.join(','));
-    if (collegeFilters.length > 0)    p.set('college',      collegeFilters.join(','));
-    if (leadTypeFilters.length > 0)   p.set('leadType',     leadTypeFilters.join(','));
-    if (leadOriginFilters.length > 0) p.set('leadOrigin',   leadOriginFilters.join(','));
-    if (zoneFilters.length > 0)       p.set('zone',         zoneFilters.join(','));
+    // joinCsvFilterValues, not a plain .join(',') — see lib/csv-filter-value.ts.
+    if (cityFilters.length > 0)       p.set('city',         joinCsvFilterValues(cityFilters));
+    if (stateFilters.length > 0)      p.set('state',        joinCsvFilterValues(stateFilters));
+    if (campaignFilters.length > 0)   p.set('campaign',     joinCsvFilterValues(campaignFilters));
+    if (courseFilters.length > 0)     p.set('course',       joinCsvFilterValues(courseFilters));
+    if (collegeFilters.length > 0)    p.set('college',      joinCsvFilterValues(collegeFilters));
+    if (leadTypeFilters.length > 0)   p.set('leadType',     joinCsvFilterValues(leadTypeFilters));
+    if (leadOriginFilters.length > 0) p.set('leadOrigin',   joinCsvFilterValues(leadOriginFilters));
+    if (zoneFilters.length > 0)       p.set('zone',         joinCsvFilterValues(zoneFilters));
     if (agentFilters.length > 0)      p.set('assignedToId', agentFilters.join(','));
     if (feedbackFilter.includes('__fresh__') && feedbackFilter.length === 1) {
       p.set('feedbackTab', 'fresh');
@@ -1255,7 +1260,7 @@ export default function CounsellingTLPage() {
               )}
               {selectedFilters.includes('feedback') && (
                 <div className="flex flex-col gap-1">
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Feedback</span>
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Last Feedback</span>
                   <FeedbackMultiSelect options={feedbackOptions} selected={feedbackFilter} onChange={setFeedbackFilter} />
                 </div>
               )}
