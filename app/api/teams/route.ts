@@ -31,7 +31,17 @@ export async function GET(req: NextRequest) {
     where,
     include: {
       teamLead: { select: { id: true, name: true, email: true, employeeCode: true } },
-      _count: { select: { members: true, leads: true } },
+      // `members` is every user whose teamId points here, which includes the
+      // Team Lead themselves (a TL's own teamId is set to the team they lead).
+      // The Teams page labels this column "Agents", so count only agents —
+      // otherwise a brand-new team with no agents still reported 1, and every
+      // team's figure was one too high.
+      _count: {
+        select: {
+          members: { where: { role: 'COUNSELLING_AGENT' } },
+          leads: true,
+        },
+      },
     },
     orderBy: { createdAt: 'desc' },
   });
