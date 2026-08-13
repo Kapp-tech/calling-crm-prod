@@ -29,7 +29,10 @@ const ROLE_ROUTES: Record<string, Role[]> = {
   // /dashboard/super-admin/* but only reads /api/analytics/*, which gate on
   // VIEW_REPORTS — a REPORTS default. Without this more-specific rule the
   // blanket '/dashboard/super-admin' entry above redirects them to /dashboard.
-  '/dashboard/super-admin/performance': ['SUPER_ADMIN', 'REPORTS'],
+  // COUNSELLING_TL included as well: /api/analytics/summary and
+  // /api/analytics/breakdown pin a TL to their own team (ignoring any teamId
+  // in the request), so this page shows them their team's stats only.
+  '/dashboard/super-admin/performance': ['SUPER_ADMIN', 'REPORTS', 'COUNSELLING_TL'],
 };
 
 export default withAuth(

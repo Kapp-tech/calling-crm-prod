@@ -31,10 +31,14 @@ export async function GET(req: NextRequest) {
     const to       = searchParams.get('to');
     const rawTeamId = searchParams.get('teamId');
 
+    // A Team Lead is pinned to their own team regardless of the requested
+    // `teamId`. If they don't lead a team yet, fall back to a team id that
+    // cannot exist rather than to null — null drops the WHERE clause entirely
+    // and would return every team's rows.
     let effectiveTeamId: string | null = rawTeamId;
     if (session.user.role === 'COUNSELLING_TL') {
       const tl = await prisma.user.findUnique({ where: { id: session.user.id }, select: { teamId: true } });
-      effectiveTeamId = tl?.teamId ?? null;
+      effectiveTeamId = tl?.teamId ?? '__no_team__';
     }
 
     const dateFrom = from ? new Date(from) : null;

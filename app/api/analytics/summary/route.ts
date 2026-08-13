@@ -3,8 +3,12 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import { hasPermission } from '@/lib/permissions';
-import { Feature } from '@prisma/client';
+import { Feature, Prisma } from '@prisma/client';
 import { istStartOfDay, istEndOfDay, istShiftDays } from '@/lib/ist-time';
+
+// Stands in for "this user is scoped to a team, but has no team" so the
+// team-filtered queries match nothing instead of silently going org-wide.
+const NO_SUCH_TEAM = '__no_team__';
 
 export async function GET(req: NextRequest) {
   try {
@@ -18,11 +22,15 @@ export async function GET(req: NextRequest) {
     const to   = searchParams.get('to');
     const teamId = searchParams.get('teamId') ?? undefined;
 
-    // TL: always scoped to their own team
+    // A Team Lead always sees exactly their own team, whatever `teamId` the
+    // request asked for — so the param can't be used to read another team.
+    // A TL who doesn't lead a team yet must see NOTHING rather than falling
+    // through to the unscoped (org-wide) queries, hence the sentinel: it's a
+    // team id that cannot exist, so every team-filtered count comes back 0.
     let effectiveTeamId = teamId;
     if (session.user.role === 'COUNSELLING_TL') {
       const tl = await prisma.user.findUnique({ where: { id: session.user.id }, select: { teamId: true } });
-      effectiveTeamId = tl?.teamId ?? undefined;
+      effectiveTeamId = tl?.teamId ?? NO_SUCH_TEAM;
     }
 
     // IST calendar days — a bare date string parses as UTC and a trailing 'Z'
@@ -48,9 +56,13 @@ export async function GET(req: NextRequest) {
       feedbackDist,
       teamStats,
     ] = await Promise.all([
-      prisma.lead.count({ where: dateFilter }),
-      prisma.lead.count({ where: { status: 'PENDING', ...dateFilter } }),
-      prisma.lead.count({ where: { status: 'DISAPPROVED', ...dateFilter } }),
+      // These three carry teamFilter too. Without it a Team Lead saw org-wide
+      // Uploaded/Pending/Disapproved next to their own team's Approved and
+      // Assigned — leaking other teams' volumes, and making the derived rates
+      // ("Approval Rate" = team approved / global total) meaningless.
+      prisma.lead.count({ where: { ...teamFilter, ...dateFilter } }),
+      prisma.lead.count({ where: { status: 'PENDING', ...teamFilter, ...dateFilter } }),
+      prisma.lead.count({ where: { status: 'DISAPPROVED', ...teamFilter, ...dateFilter } }),
       prisma.lead.count({ where: approvedBase }),
       prisma.lead.count({ where: { ...approvedBase, assignedToId: { not: null } } }),
       prisma.lead.count({ where: { ...approvedBase, feedbacks: { some: {} } } }),
@@ -100,11 +112,18 @@ export async function GET(req: NextRequest) {
     // Returned as TO_CHAR text rather than ::date so the day key never makes a
     // round trip through a JS Date, where a driver-local parse could shift it
     // back off by one.
+    // Scoped to the same team as every other figure on the page — otherwise the
+    // trend chart plotted org-wide volume beside team-scoped KPIs.
+    const timelineTeamSql = effectiveTeamId
+      ? Prisma.sql`AND "teamId" = ${effectiveTeamId}`
+      : Prisma.empty;
+
     const timelineRaw = await prisma.$queryRaw<{ date: string; count: bigint }[]>`
       SELECT TO_CHAR("createdAt" + INTERVAL '5 hours 30 minutes', 'YYYY-MM-DD') AS date,
              COUNT(*)::bigint AS count
       FROM "Lead"
       WHERE "createdAt" >= ${timelineFrom} AND "createdAt" <= ${timelineTo}
+      ${timelineTeamSql}
       GROUP BY 1
       ORDER BY 1
     `;

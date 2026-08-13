@@ -263,12 +263,13 @@ const NAV: NavEntry[] = [
     href: '/dashboard/super-admin/performance',
     label: 'Reports & Performance',
     icon: BarChart3,
-    // REPORTS included deliberately: the page only reads /api/analytics/*,
-    // which already gate on VIEW_REPORTS (a REPORTS default) and apply no
-    // extra scoping for this role. Needs the matching, more-specific rule in
-    // middleware.ts — the blanket '/dashboard/super-admin' rule would
-    // otherwise bounce them back to /dashboard.
-    roles: ['SUPER_ADMIN', 'REPORTS'],
+    // REPORTS and COUNSELLING_TL included deliberately: the page only reads
+    // /api/analytics/*, which gate on VIEW_REPORTS (a default for both roles).
+    // REPORTS sees everything; a TL is pinned server-side to their own team, so
+    // the same page doubles as their team's scorecard. Needs the matching,
+    // more-specific rule in middleware.ts — the blanket '/dashboard/super-admin'
+    // rule would otherwise bounce them back to /dashboard.
+    roles: ['SUPER_ADMIN', 'REPORTS', 'COUNSELLING_TL'],
     features: ['VIEW_REPORTS'],
   },
   {
