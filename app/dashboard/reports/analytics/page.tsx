@@ -277,12 +277,31 @@ export default function AnalyticsPage() {
             <RefreshCw className={`mr-2 h-3.5 w-3.5 ${isFetching ? 'animate-spin' : ''}`} />
             Refresh
           </Button>
-          {data && data.rows.length > 0 && (
-            <Button variant="outline" size="sm" onClick={() => exportCSV(dims, filteredRows)}>
-              <Download className="mr-2 h-3.5 w-3.5" />
-              Export CSV
-            </Button>
-          )}
+          {/*
+            Always rendered, disabled when there's nothing to export, rather
+            than hidden — a missing button reads as "this feature isn't
+            available to me" (a TL whose team has logged no calls yet reported
+            exactly that), whereas a disabled one with a reason reads as "no
+            data yet". Matches the Export buttons on Reports & Performance.
+
+            Gated on filteredRows, not data.rows: the export sends the filtered
+            set, so a table search that matches nothing would otherwise still
+            download an empty file.
+          */}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => exportCSV(dims, filteredRows)}
+            disabled={filteredRows.length === 0}
+            title={
+              filteredRows.length === 0
+                ? 'Nothing to export yet — no call activity matches the current filters'
+                : undefined
+            }
+          >
+            <Download className="mr-2 h-3.5 w-3.5" />
+            Export CSV
+          </Button>
         </div>
       </div>
 

@@ -102,6 +102,34 @@ const EXTRA_CARD_OPTIONS = [
 const STATUS_PIE_COLORS = ['#10b981', '#f59e0b', '#ef4444'];
 const FEEDBACK_COLORS = ['#6366f1', '#8b5cf6', '#a78bfa', '#06b6d4', '#f59e0b', '#10b981', '#f43f5e', '#64748b'];
 
+// Space reserved for the Feedback Breakdown category labels, and the longest
+// label that fits it on one line at 11px (~6.1px per character, plus a gap
+// before the bars).
+const FEEDBACK_LABEL_WIDTH = 168;
+const FEEDBACK_LABEL_MAX_CHARS = 26;
+
+// Feedback option labels are admin-defined, so they can be arbitrarily long
+// ("Taken Admission in Other University"). Recharts' default tick wraps such a
+// label onto extra lines, which is what made neighbouring labels collide. This
+// renders each one as a single unwrappable line, elided if needed — the native
+// <title> and the chart tooltip both still show the full text.
+function FeedbackAxisTick({ x, y, payload }: any) {
+  const label = String(payload?.value ?? '');
+  const shown =
+    label.length > FEEDBACK_LABEL_MAX_CHARS
+      ? `${label.slice(0, FEEDBACK_LABEL_MAX_CHARS - 1).trimEnd()}…`
+      : label;
+  return (
+    <text
+      x={x} y={y} dy={4} textAnchor="end" fontSize={11}
+      fill="currentColor" className="text-muted-foreground"
+    >
+      <title>{label}</title>
+      {shown}
+    </text>
+  );
+}
+
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 // Quick ranges are IST calendar days, because that is how the API interprets
@@ -1021,14 +1049,24 @@ export default function DashboardPage() {
             <div className="rounded-xl border border-border/60 bg-card p-5">
               <h2 className="text-sm font-semibold mb-1">Feedback Breakdown</h2>
               <p className="text-xs text-muted-foreground mb-4">Top feedback categories</p>
+              {/*
+                The chart height grows with the row count rather than being
+                fixed: at a fixed 220px, eight categories left only ~27px per
+                row, which is what squeezed the labels together. 34px per row
+                gives every category its own band.
+              */}
               {isLoading ? (
                 <Skeleton className="h-52" />
               ) : (
-                <ResponsiveContainer width="100%" height={220}>
+                <ResponsiveContainer width="100%" height={Math.max(200, feedbackBreakdown.length * 34 + 16)}>
                   <BarChart
                     data={feedbackBreakdown}
                     layout="vertical"
-                    margin={{ top: 0, right: 16, left: 90, bottom: 0 }}
+                    // The YAxis `width` below reserves the room for labels; the
+                    // old left:90 margin stacked on top of it, reserving 175px
+                    // total while still only giving the text 85px to render in.
+                    margin={{ top: 0, right: 16, left: 0, bottom: 0 }}
+                    barCategoryGap={6}
                   >
                     <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="currentColor" className="text-border/40" />
                     <XAxis
@@ -1037,11 +1075,18 @@ export default function DashboardPage() {
                       tickLine={false} axisLine={false} allowDecimals={false}
                     />
                     <YAxis
-                      type="category" dataKey="label" tick={{ fontSize: 11 }}
+                      type="category" dataKey="label"
                       stroke="currentColor" className="text-muted-foreground"
-                      tickLine={false} axisLine={false} width={85}
+                      tickLine={false} axisLine={false} width={FEEDBACK_LABEL_WIDTH}
+                      interval={0} tick={<FeedbackAxisTick />}
                     />
-                    <Tooltip content={<ChartTooltip />} />
+                    {/*
+                      Recharts' default hover band is solid #ccc, which reads as
+                      a grey block over the row it is meant to highlight (and
+                      glares on the dark surface). A low-alpha slate tint works
+                      on both themes.
+                    */}
+                    <Tooltip content={<ChartTooltip />} cursor={{ fill: 'rgba(100,116,139,0.12)' }} />
                     <Bar dataKey="count" name="Count" radius={[0, 4, 4, 0]} animationDuration={800}>
                       {feedbackBreakdown.map((_, i) => (
                         <Cell key={i} fill={FEEDBACK_COLORS[i % FEEDBACK_COLORS.length]} />
