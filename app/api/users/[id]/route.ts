@@ -6,6 +6,7 @@ import { authOptions } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import { Role, WorkType } from '@prisma/client';
 import { logActivity } from '@/lib/permissions';
+import { moveAgentToTeamLead, moveAgentToTeam } from '@/lib/team-sync';
 
 // Optional, but must be a real 10-digit number when provided. An empty string
 // becomes NULL so clearing the field in the edit form actually clears it —
@@ -89,8 +90,25 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   const parsed = updateUserSchema.safeParse(body);
   if (!parsed.success) return NextResponse.json({ success: false, error: parsed.error.flatten(), code: 'VALIDATION_ERROR' }, { status: 400 });
 
+  const target = await prisma.user.findUnique({
+    where: { id: params.id },
+    select: { role: true },
+  });
+  if (!target) {
+    return NextResponse.json({ success: false, error: 'User not found', code: 'NOT_FOUND' }, { status: 404 });
+  }
+
   const { password, isActive, ...rest } = parsed.data;
   const updateData: Record<string, unknown> = { ...rest };
+
+  // Changing an agent's Team Lead has to move their team membership and
+  // re-stamp their leads too, or the CRM ends up disagreeing with itself —
+  // so hand those two fields to lib/team-sync instead of writing them raw here.
+  const effectiveRole = parsed.data.role ?? target.role;
+  const reconcileByManager = effectiveRole === Role.COUNSELLING_AGENT && 'managedById' in parsed.data;
+  const reconcileByTeam    = effectiveRole === Role.COUNSELLING_AGENT && 'teamId' in parsed.data;
+  if (reconcileByManager) { delete updateData.managedById; delete updateData.managerId; delete updateData.teamId; }
+  else if (reconcileByTeam) { delete updateData.teamId; delete updateData.managedById; delete updateData.managerId; }
 
   if (password) updateData.password = await bcrypt.hash(password, 12);
   if (isActive !== undefined) {
@@ -105,13 +123,23 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       select: { id: true, name: true, email: true, role: true, isActive: true, status: true, updatedAt: true },
     });
 
+    let moveNote = '';
+    if (reconcileByManager || reconcileByTeam) {
+      const moved = reconcileByManager
+        ? await moveAgentToTeamLead(tx, params.id, parsed.data.managedById ?? null)
+        : await moveAgentToTeam(tx, params.id, parsed.data.teamId ?? null);
+      if (!moved.alreadyInSync) {
+        moveNote = ` — moved to a new team; ${moved.leadsMoved} assigned lead(s) followed`;
+      }
+    }
+
     const action = isActive === false ? 'USER_DEACTIVATED' : 'USER_UPDATED';
     await logActivity({
       userId: session.user.id,
       action,
       targetId: params.id,
       targetType: 'User',
-      description: `${action.replace('_', ' ').toLowerCase()} for user "${u.name}"`,
+      description: `${action.replace('_', ' ').toLowerCase()} for user "${u.name}"${moveNote}`,
     });
 
     return u;

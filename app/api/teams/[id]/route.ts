@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { authOptions } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import { logActivity } from '@/lib/permissions';
+import { syncTeamMembersToLead } from '@/lib/team-sync';
 
 const updateSchema = z.object({
   name: z.string().min(2).optional(),
@@ -89,6 +90,9 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       if (teamLeadId) {
         await tx.user.update({ where: { id: teamLeadId }, data: { teamId: params.id } });
       }
+      // Re-point the members at the incoming lead too, or their "Manager"
+      // keeps naming whoever used to run this team. See lib/team-sync.ts.
+      await syncTeamMembersToLead(tx, params.id, teamLeadId ?? null);
     }
     const updated = await tx.team.update({
       where: { id: params.id },

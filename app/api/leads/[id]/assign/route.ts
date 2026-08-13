@@ -80,12 +80,23 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
         data:  { status: 'CANCELLED' },
       });
     }
+    // Stamp the lead with the assignee's team, exactly as bulk-assign and
+    // auto-assign do. Without this a singly-assigned lead keeps teamId = null,
+    // which makes it count toward no team AND — because getLeadWhereClause
+    // treats a null team as "unassigned, free to pick up" — leaves it visible
+    // to every Team Lead rather than only the assignee's own.
+    const assignee = await tx.user.findUnique({
+      where: { id: agentId },
+      select: { teamId: true },
+    });
+
     return tx.lead.update({
       where: { id: params.id },
       data: {
         assignedToId:    agentId,
         assignedById:    session.user.id,
         assignedAt:      new Date(),
+        teamId:          assignee?.teamId ?? null,
         assignedFromId:  lead.assignedToId  ?? null,
         prevAssignee2Id: lead.assignedById  ?? null,
         lastAssignmentWasFresh: !!resetFeedbacks,

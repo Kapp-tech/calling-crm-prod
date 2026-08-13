@@ -43,10 +43,15 @@ export async function POST(req: NextRequest) {
 
     let teamId: string | undefined;
     let opsGroupId: string | undefined;
+    // An imported agent needs their manager derived from the team too, not just
+    // team membership — otherwise the "Manager" column stays blank while the
+    // agent does belong to a team, the mirror image of the drift that
+    // lib/team-sync.ts exists to prevent.
+    let teamLeadId: string | null = null;
 
     if (row.team_name && row.role === Role.COUNSELLING_AGENT) {
       const team = await prisma.team.findFirst({ where: { name: { contains: row.team_name, mode: 'insensitive' } } });
-      if (team) teamId = team.id;
+      if (team) { teamId = team.id; teamLeadId = team.teamLeadId ?? null; }
     }
     if (row.group_name && row.role === Role.OPERATIONS) {
       const grp = await prisma.operationsGroup.findFirst({ where: { name: { contains: row.group_name, mode: 'insensitive' } } });
@@ -67,6 +72,7 @@ export async function POST(req: NextRequest) {
         employeeCode,
         joiningDate: new Date(),
         ...(teamId ? { teamId } : {}),
+        ...(teamLeadId ? { managedById: teamLeadId, managerId: teamLeadId } : {}),
         ...(opsGroupId ? { operationsGroupId: opsGroupId } : {}),
       },
     });

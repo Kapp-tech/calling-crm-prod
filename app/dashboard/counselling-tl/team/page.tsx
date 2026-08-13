@@ -187,6 +187,9 @@ function TeamHierarchyTree({
   sessionName?: string;
 }) {
   const N = agents.length;
+  // Summed from the same per-agent counts the child nodes render, so the TL
+  // node can never contradict the agents beneath it.
+  const totalLeads = agents.reduce((s, a) => s + a._count.assignedLeads, 0);
 
   return (
     <div className="overflow-x-auto">
@@ -198,7 +201,7 @@ function TeamHierarchyTree({
         <TLNode
           tl={team.teamLead}
           agentCount={N}
-          totalLeads={team._count.leads}
+          totalLeads={totalLeads}
           sessionName={sessionName}
         />
 
@@ -309,6 +312,11 @@ export default function TLTeamPage() {
   const activeAgents = agents.filter((a) => a.isActive && a.status !== 'PENDING_APPROVAL');
   const pendingAgents = agents.filter((a) => a.status === 'PENDING_APPROVAL');
   const totalCalls = agents.reduce((s, a) => s + a._count.feedbacks, 0);
+  // Summed per agent rather than read off team._count.leads (which counts by
+  // Lead.teamId). The per-agent numbers are what the tree nodes below show, so
+  // deriving the headline from the same source keeps them from contradicting
+  // each other if any lead's team stamp is ever out of step.
+  const totalLeads = agents.reduce((s, a) => s + a._count.assignedLeads, 0);
 
   const chartData = agents.map((a) => ({
     name: a.name.split(' ')[0],
@@ -369,7 +377,7 @@ export default function TLTeamPage() {
       {/* ── Quick stat pills ── */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <StatPill label="Active Agents" value={activeAgents.length} color="emerald" />
-        <StatPill label="Total Leads" value={team._count.leads} color="indigo" />
+        <StatPill label="Total Leads" value={totalLeads} color="indigo" />
         <StatPill label="Total Calls" value={totalCalls} color="teal" />
         <StatPill label="Pending Approval" value={pendingAgents.length} color={pendingAgents.length > 0 ? 'amber' : 'slate'} />
       </div>

@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { authOptions } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import { logActivity } from '@/lib/permissions';
+import { moveAgentToTeam } from '@/lib/team-sync';
 
 const transferSchema = z.object({
   targetTeamId: z.string().min(1),
@@ -34,21 +35,17 @@ export async function PATCH(
   if (!targetTeam) return NextResponse.json({ success: false, error: 'Target team not found', code: 'NOT_FOUND' }, { status: 404 });
 
   const updated = await prisma.$transaction(async (tx) => {
-    const u = await tx.user.update({
-      where: { id: params.agentId },
-      data: {
-        teamId: targetTeamId,
-        managerId: targetTeam.teamLeadId ?? undefined,
-        managedById: targetTeam.teamLeadId ?? undefined,
-      },
-    });
+    // Shared with the User Management "Manager" change so both entry points
+    // move the agent AND re-stamp their leads identically. See lib/team-sync.ts.
+    const moved = await moveAgentToTeam(tx, params.agentId, targetTeamId);
+    const u = await tx.user.findUnique({ where: { id: params.agentId } });
     await logActivity({
       userId: session.user.id,
       action: 'AGENT_TRANSFER',
       targetId: params.agentId,
       targetType: 'User',
-      description: `Transferred agent "${agent.name}" from team ${params.id} to team "${targetTeam.name}"`,
-      metadata: { fromTeamId: params.id, toTeamId: targetTeamId },
+      description: `Transferred agent "${agent.name}" from team ${params.id} to team "${targetTeam.name}" — ${moved.leadsMoved} assigned lead(s) followed`,
+      metadata: { fromTeamId: params.id, toTeamId: targetTeamId, leadsMoved: moved.leadsMoved },
     });
     return u;
   });

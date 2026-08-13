@@ -16,14 +16,24 @@ export function getLeadWhereClause(user: SessionUser): Prisma.LeadWhereInput {
   switch (user.role) {
     case 'COUNSELLING_TL':
       // TL sees APPROVED leads that are either:
-      //   (a) unassigned — available for them to assign to their agents
-      //   (b) already assigned to their team
+      //   (a) genuinely unassigned — available for them to assign
+      //   (b) stamped with their team
+      //   (c) held by an agent they manage, even if the stamp is stale
       // Pending/disapproved leads are never shown to TL.
       return {
         status: 'APPROVED',
         OR: [
-          { teamId: null },                        // unassigned, available to assign
-          { team: { teamLeadId: user.id } },       // already in this TL's team
+          // `assignedToId` must be checked alongside the null team: a lead that
+          // IS assigned but carries no team stamp would otherwise match here
+          // and be exposed to every TL rather than just the assignee's own.
+          { teamId: null, assignedToId: null },
+          { team: { teamLeadId: user.id } },
+          // Belt-and-braces against team/manager drift (see lib/team-sync.ts):
+          // a TL should always see what their own agents are working, even if
+          // an agent has no team yet or a lead's stamp hasn't caught up. This
+          // can only ever add leads the TL already owns via their agents — it
+          // never widens access to another team's work.
+          { assignedTo: { managedById: user.id } },
         ],
       };
 
