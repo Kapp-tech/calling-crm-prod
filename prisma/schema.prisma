@@ -134,6 +134,7 @@ enum ActivityAction {
   LEAD_INTEGRATION_CREATED
   LEAD_INTEGRATION_UPDATED
   LEAD_INTEGRATION_DELETED
+  LEADS_EXPORTED
 }
 
 // Which CRM event fires a configured push — only referral-lead creation for

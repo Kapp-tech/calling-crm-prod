@@ -7,6 +7,7 @@ import { hasPermission } from '@/lib/permissions';
 import { getLeadWhereClause } from '@/lib/lead-access';
 import { istStartOfDay, istEndOfDay, IST_TIMEZONE } from '@/lib/ist-time';
 import { parseCsvFilterValues as split } from '@/lib/csv-filter-value';
+import { logActivity } from '@/lib/permissions';
 import { Feature, LeadStatus } from '@prisma/client';
 
 // Feedback timestamps are shown in IST, like the rest of the app — the bare
@@ -299,6 +300,18 @@ export async function GET(req: NextRequest) {
 
     const csv = [allHeaders.map(esc).join(','), ...rows].join('\n');
     const filename = `leads-export-${new Date().toISOString().slice(0, 10)}.csv`;
+
+    // Exporting is the one action that can move a whole book of leads out of
+    // the CRM in a single click, so it's the highest-value thing to have an
+    // audit trail for — who exported, how many rows, and with which filters —
+    // for reviewing unusual activity (e.g. around a resignation).
+    await logActivity({
+      userId: session.user.id,
+      action: 'LEADS_EXPORTED',
+      targetType: 'Lead',
+      description: `Exported ${leads.length} lead(s) to CSV`,
+      metadata: { rowCount: leads.length, filters: parsed.data },
+    });
 
     return new NextResponse(csv, {
       headers: {
