@@ -706,7 +706,11 @@ function FollowUpSlot({
             value={scheduledAt}
             min={minDateTime}
             onChange={(e) => setScheduledAt(e.target.value)}
-            className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring [color-scheme:auto]"
+            // color-scheme drives the native calendar icon's color. `auto`
+            // follows the OS preference rather than this app's own dark-mode
+            // toggle, so a dark app theme on a light-OS machine rendered a
+            // dark icon on a dark input — nearly invisible.
+            className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring [color-scheme:light] dark:[color-scheme:dark]"
           />
           {scheduledAt && (
             <button
@@ -856,6 +860,8 @@ export function LeadDetailDrawer({ leadId, onClose, canSubmitFeedback = false }:
   const qc = useQueryClient();
   const { data: session } = useSession();
   const agentName = session?.user?.name ?? 'Your Counsellor';
+  // Counselling Agents shouldn't see lead-source info they have no use for.
+  const showLeadType = session?.user?.role !== 'COUNSELLING_AGENT';
 
   const { data: lead, isLoading } = useQuery<LeadDetail>({
     queryKey: ['lead-detail', leadId],
@@ -1003,8 +1009,8 @@ export function LeadDetailDrawer({ leadId, onClose, canSubmitFeedback = false }:
                 <div className="px-5 py-4 space-y-5">
                   <div className="space-y-3">
                     <div className="flex items-center gap-2">
-                      <PhoneCall className="h-5 w-5 text-[#e90000]" />
-                      <span className="text-2xl font-bold tracking-wide text-[#e90000]">
+                      <PhoneCall className="h-5 w-5 text-[#e90000] dark:text-white" />
+                      <span className="text-2xl font-bold tracking-wide text-[#e90000] dark:text-white">
                         {lead.phone}
                       </span>
                     </div>
@@ -1051,7 +1057,7 @@ export function LeadDetailDrawer({ leadId, onClose, canSubmitFeedback = false }:
                       <InfoRow label="State / City" value={[lead.state, lead.city].filter(Boolean).join(' / ')} />
                       <InfoRow label="Zone" value={lead.leadZone} />
                       <InfoRow label="Lead Code" value={lead.campaign} />
-                      <InfoRow label="Lead Type" value={lead.leadType} />
+                      {showLeadType && <InfoRow label="Lead Type" value={lead.leadType} />}
                       <InfoRow
                         label="Date Added"
                         value={lead.createdAt ? new Date(lead.createdAt).toLocaleDateString('en-CA') : undefined}

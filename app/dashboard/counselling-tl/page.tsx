@@ -27,7 +27,7 @@ import { joinCsvFilterValues } from '@/lib/csv-filter-value';
 interface Lead {
   id: string; name: string; email: string; phone: string;
   city?: string | null; state?: string | null;
-  course?: string | null; campaign?: string | null;
+  course?: string | null; college?: string | null; campaign?: string | null;
   status: string; createdAt: string;
   assignedTo?: { id: string; name: string } | null;
   assignedBy?: { id: string; name: string } | null;
@@ -1376,6 +1376,7 @@ export default function CounsellingTLPage() {
                     <th className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground whitespace-nowrap">Phone</th>
                     <th className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground whitespace-nowrap">City</th>
                     <th className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground whitespace-nowrap">Course</th>
+                    <th className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground whitespace-nowrap">College</th>
                     <th className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground whitespace-nowrap">Lead Code</th>
                     <th className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground whitespace-nowrap">Assigned To</th>
                     <th className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground whitespace-nowrap">Calls</th>
@@ -1388,7 +1389,7 @@ export default function CounsellingTLPage() {
                   {canAssign && allPageSelected && totalCount > leads.length && (
                     <tr>
                       <td
-                        colSpan={canAssign ? 11 : 10}
+                        colSpan={canAssign ? 12 : 11}
                         className="border-b border-primary/20 bg-primary/5 py-2 text-center text-xs"
                       >
                         {allFilteredSelected ? (
@@ -1450,6 +1451,7 @@ export default function CounsellingTLPage() {
                         <td className="px-4 py-3 text-sm text-muted-foreground whitespace-nowrap">{lead.phone}</td>
                         <td className="px-4 py-3 text-sm whitespace-nowrap">{lead.city ?? '—'}</td>
                         <td className="px-4 py-3 text-sm whitespace-nowrap max-w-[200px] truncate">{lead.course ?? '—'}</td>
+                        <td className="px-4 py-3 text-sm whitespace-nowrap max-w-[220px] truncate" title={lead.college ?? undefined}>{lead.college ?? '—'}</td>
                         <td className="px-4 py-3 text-sm whitespace-nowrap max-w-[200px] truncate">{lead.campaign ?? '—'}</td>
                         <td className="px-4 py-3">
                           {lead.assignedTo ? (
@@ -1497,7 +1499,7 @@ export default function CounsellingTLPage() {
                   {leads.length === 0 && (
                     <tr>
                       <td
-                        colSpan={canAssign ? 11 : 10}
+                        colSpan={canAssign ? 12 : 11}
                         className="py-12 text-center text-muted-foreground"
                       >
                         No approved leads match your filters.

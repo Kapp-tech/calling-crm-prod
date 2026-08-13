@@ -186,7 +186,8 @@ export function ReceiptUploadDialog({
   if (!form.campusId) missing.push('Campus Name');
   if (!form.paidDate) missing.push(copy.dateLabel);
   if (!form.receiptNumber.trim()) missing.push(copy.numberLabel);
-  if (!form.amountPaid.trim()) missing.push(copy.amountLabel);
+  if (!form.actualAmount.trim()) missing.push('Actual Amount of Form');
+  if (form.couponCodeApplied === 'Yes' && !form.amountPaid.trim()) missing.push(copy.amountLabel);
   if (!form.courseId) missing.push('Course');
   if (!form.studentName.trim()) missing.push('Student Name');
   if (!form.email.trim()) missing.push('Email');
@@ -204,7 +205,10 @@ export function ReceiptUploadDialog({
       fd.set('paidDate', form.paidDate);
       fd.set('receiptNumber', form.receiptNumber.trim());
       fd.set('actualAmount', form.actualAmount.trim());
-      fd.set('amountPaid', form.amountPaid.trim());
+      // Final Amount Paid is only collected (and shown) once a coupon is
+      // applied; without one it equals the actual form amount, so that's
+      // what's recorded as the amount paid.
+      fd.set('amountPaid', form.couponCodeApplied === 'Yes' ? form.amountPaid.trim() : form.actualAmount.trim());
       fd.set('courseId', form.courseId);
       fd.set('courseName', courseName);
       fd.set('studentName', form.studentName.trim());
@@ -275,15 +279,20 @@ export function ReceiptUploadDialog({
               onChange={(e) => patch({ receiptNumber: e.target.value })} />
           </Field>
 
-          <Field label="Actual Amount of Form">
+          <Field label="Actual Amount of Form" required>
             <input className={INPUT_CLASS} placeholder="₹" inputMode="decimal" value={form.actualAmount}
               onChange={(e) => patch({ actualAmount: e.target.value })} />
           </Field>
 
-          <Field label={copy.amountLabel} required>
-            <input className={INPUT_CLASS} placeholder="₹" inputMode="decimal" value={form.amountPaid}
-              onChange={(e) => patch({ amountPaid: e.target.value })} />
-          </Field>
+          {/* Only relevant once a coupon changes what was actually collected —
+              without one, amount paid equals the form's actual amount, so
+              asking for it separately is redundant. */}
+          {form.couponCodeApplied === 'Yes' && (
+            <Field label={copy.amountLabel} required>
+              <input className={INPUT_CLASS} placeholder="₹" inputMode="decimal" value={form.amountPaid}
+                onChange={(e) => patch({ amountPaid: e.target.value })} />
+            </Field>
+          )}
 
           <Field label="Course" required>
             <SearchableSelect options={courseOpts} value={form.courseId}
