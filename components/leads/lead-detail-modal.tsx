@@ -1,5 +1,6 @@
 'use client';
 
+import { useSession } from 'next-auth/react';
 import {
   Dialog,
   DialogContent,
@@ -31,10 +32,13 @@ interface LeadDetailModalProps {
 }
 
 export function LeadDetailModal({ lead, open, onClose, canUnmask = false }: LeadDetailModalProps) {
+  const { data: session } = useSession();
   if (!lead) return null;
 
   const displayPhone = canUnmask ? lead.phone : maskPhone(lead.phone);
   const displayEmail = canUnmask ? lead.email : maskEmail(lead.email);
+  // Counselling Agents shouldn't see lead-source info they have no use for.
+  const showLeadType = session?.user?.role !== 'COUNSELLING_AGENT';
 
   return (
     <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
@@ -66,7 +70,7 @@ export function LeadDetailModal({ lead, open, onClose, canUnmask = false }: Lead
             <InfoRow label="Course" value={lead.course} />
             <InfoRow label="College" value={lead.college} />
             <InfoRow label="Lead Code" value={lead.campaign} />
-            <InfoRow label="Lead Type" value={lead.leadType} />
+            {showLeadType && <InfoRow label="Lead Type" value={lead.leadType} />}
             <InfoRow label="Lead Origin" value={lead.leadOrigin} />
             <InfoRow label="Lead Zone" value={lead.leadZone} />
           </div>

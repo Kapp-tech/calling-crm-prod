@@ -130,12 +130,15 @@ function displayLeadId(id: string) {
 
 const SKELETON_WIDTHS = [4, 8, 20, 28, 40, 24, 16, 16, 20, 32, 16, 20, 20, 16, 24, 16, 20, 14, 24, 20, 20, 24, 24, 20, 20, 20, 28];
 
-function SkeletonRows() {
+function SkeletonRows({ hideLeadType = false }: { hideLeadType?: boolean }) {
+  // One placeholder per real column, or the loading skeleton is one cell
+  // wider than the settled table and everything shifts when data arrives.
+  const widths = hideLeadType ? SKELETON_WIDTHS.slice(0, -1) : SKELETON_WIDTHS;
   return (
     <>
       {Array.from({ length: 10 }).map((_, i) => (
         <tr key={i} className="border-b border-border/40 animate-pulse">
-          {SKELETON_WIDTHS.map((w, j) => (
+          {widths.map((w, j) => (
             <td key={j} className="px-3 py-2.5">
               <div className={`h-3 w-${w} rounded bg-muted`} />
             </td>
@@ -405,6 +408,9 @@ export default function AllLeadsPage() {
 
   const showTlFilter    = role === 'SUPER_ADMIN' || role === 'REPORTS';
   const showAgentFilter = role === 'SUPER_ADMIN' || role === 'REPORTS' || role === 'COUNSELLING_TL';
+  // Counselling Agents shouldn't see lead-source info they have no use for —
+  // keep it out of the column, the filter picker, and the filter bar itself.
+  const showLeadType    = role !== 'COUNSELLING_AGENT';
 
   const { data: tlsRaw = [] } = useQuery<{ id: string; name: string; workType: string }[]>({
     queryKey: ['tls-list'],
@@ -759,7 +765,7 @@ export default function AllLeadsPage() {
               <MultiSelectFilter placeholder="All Campaigns" options={campaignOptions} selected={campaigns} onChange={(v) => filterChange(() => setCampaigns(v))} loading={optsLoading} />
             </div>
           )}
-          {activeFilters.includes('leadType') && (
+          {activeFilters.includes('leadType') && showLeadType && (
             <div className="flex flex-col gap-1">
               <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Lead Type</span>
               <MultiSelectFilter placeholder="All Types" options={leadTypeOptions} selected={leadTypes} onChange={(v) => filterChange(() => setLeadTypes(v))} loading={optsLoading} />
@@ -905,7 +911,7 @@ export default function AllLeadsPage() {
               <th className="whitespace-nowrap px-3 py-2.5 text-left text-[10px] font-bold uppercase tracking-wider text-muted-foreground min-w-[160px]">Feedback</th>
               <th className="whitespace-nowrap px-3 py-2.5 text-left text-[10px] font-bold uppercase tracking-wider text-muted-foreground min-w-[130px]">Profile %</th>
               <th className="whitespace-nowrap px-3 py-2.5 text-left text-[10px] font-bold uppercase tracking-wider text-muted-foreground min-w-[130px]">Lead Code</th>
-              <th className="whitespace-nowrap px-3 py-2.5 text-left text-[10px] font-bold uppercase tracking-wider text-muted-foreground min-w-[120px]">Lead Type</th>
+              {showLeadType && <th className="whitespace-nowrap px-3 py-2.5 text-left text-[10px] font-bold uppercase tracking-wider text-muted-foreground min-w-[120px]">Lead Type</th>}
               <th className="whitespace-nowrap px-3 py-2.5 text-left text-[10px] font-bold uppercase tracking-wider text-muted-foreground min-w-[120px]">Lead Origin</th>
               <th className="whitespace-nowrap px-3 py-2.5 text-left text-[10px] font-bold uppercase tracking-wider text-muted-foreground min-w-[90px]">Zone</th>
               <th className="whitespace-nowrap px-3 py-2.5 text-center text-[10px] font-bold uppercase tracking-wider text-muted-foreground min-w-[160px]">Primary App. Confirm</th>
@@ -921,7 +927,7 @@ export default function AllLeadsPage() {
             </tr>
           </thead>
           <tbody>
-            {isLoading ? <SkeletonRows /> : (
+            {isLoading ? <SkeletonRows hideLeadType={!showLeadType} /> : (
               <AnimatePresence initial={false}>
                 {leads.map((lead, rowIdx) => {
                   const isSelected      = selectedLeadId === lead.id;
@@ -974,7 +980,7 @@ export default function AllLeadsPage() {
 
                       <td className="px-3 py-2.5 whitespace-nowrap font-semibold text-sm">{lead.name}</td>
                       <td className="px-3 py-2.5 whitespace-nowrap text-xs text-muted-foreground">{lead.email}</td>
-                      <td className="px-3 py-2.5 whitespace-nowrap text-[#e90000] font-medium text-sm">{lead.phone}</td>
+                      <td className="px-3 py-2.5 whitespace-nowrap text-[#e90000] dark:text-white font-medium text-sm">{lead.phone}</td>
                       <td className="px-3 py-2.5 whitespace-nowrap text-xs text-muted-foreground">{lead.city || '—'}</td>
                       <td className="px-3 py-2.5 whitespace-nowrap text-xs text-muted-foreground">{lead.state || '—'}</td>
                       <td className="px-3 py-2.5 whitespace-nowrap text-xs text-muted-foreground">{lead.course || '—'}</td>
@@ -1016,7 +1022,7 @@ export default function AllLeadsPage() {
 
                       <td className="px-3 py-2.5 whitespace-nowrap text-xs text-muted-foreground">{lead.campaign || '—'}</td>
 
-                      <td className="px-3 py-2.5 whitespace-nowrap text-xs text-muted-foreground">{lead.leadType || '—'}</td>
+                      {showLeadType && <td className="px-3 py-2.5 whitespace-nowrap text-xs text-muted-foreground">{lead.leadType || '—'}</td>}
 
                       <td className="px-3 py-2.5 whitespace-nowrap text-xs text-muted-foreground">{lead.leadOrigin || '—'}</td>
 
@@ -1090,9 +1096,10 @@ export default function AllLeadsPage() {
 
           <div className="py-2 space-y-5 max-h-[60vh] overflow-y-auto pr-1">
             {FILTER_GROUPS.map(({ group, filters }) => {
-              // hide TL/Agent if the role doesn't show them
+              // hide TL/Agent/Lead Type if the role doesn't show them
               const visible = filters.filter(
                 (f) => (f.key !== 'tl' || showTlFilter) && (f.key !== 'agent' || showAgentFilter)
+                    && (f.key !== 'leadType' || showLeadType)
               );
               if (visible.length === 0) return null;
               const allChecked = visible.every((f) => dialogFilters.includes(f.key));

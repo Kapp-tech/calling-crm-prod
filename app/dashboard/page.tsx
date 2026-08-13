@@ -687,6 +687,9 @@ export default function DashboardPage() {
   const topAgents = s.topAgents ?? [];
 
   const showAgentFilter = role === 'SUPER_ADMIN' || role === 'REPORTS';
+  // Counselling Agents shouldn't see or filter by lead-source info they have
+  // no use for.
+  const showLeadType    = role !== 'COUNSELLING_AGENT';
   const showTopAgents = (role === 'SUPER_ADMIN' || role === 'COUNSELLING_TL') && topAgents.length > 0;
   const showFeedback = feedbackBreakdown.length > 0;
 
@@ -855,14 +858,16 @@ export default function DashboardPage() {
                 onChange={setFilter('course')}
                 options={filterOptions.courses.map((c) => ({ value: c, label: c }))}
               />
-              <FilterDropdown
-                icon={Tag}
-                iconColor="text-rose-600" iconBg="bg-rose-500/10"
-                accentColor="text-rose-600" accentBg="bg-rose-500/10"
-                label="Lead Type" value={pendingFilters.leadType}
-                onChange={setFilter('leadType')}
-                options={filterOptions.leadTypes.map((t) => ({ value: t, label: t }))}
-              />
+              {showLeadType && (
+                <FilterDropdown
+                  icon={Tag}
+                  iconColor="text-rose-600" iconBg="bg-rose-500/10"
+                  accentColor="text-rose-600" accentBg="bg-rose-500/10"
+                  label="Lead Type" value={pendingFilters.leadType}
+                  onChange={setFilter('leadType')}
+                  options={filterOptions.leadTypes.map((t) => ({ value: t, label: t }))}
+                />
+              )}
               <FilterDropdown
                 icon={Globe2}
                 iconColor="text-cyan-600" iconBg="bg-cyan-500/10"
