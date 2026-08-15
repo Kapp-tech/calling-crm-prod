@@ -160,6 +160,9 @@ export async function POST(req: NextRequest) {
       if (toInsert.length > 0) {
         await tx.lead.createMany({
           data: toInsert.map((lead) => ({
+            // Not @updatedAt any more (see schema.prisma) — a new lead reads as
+            // its creation time until the first feedback advances it.
+            updatedAt:  new Date(),
             name:       lead.name.trim(),
             email:      lead.email.trim().toLowerCase(),
             phone:      lead.phone.trim(),

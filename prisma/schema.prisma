@@ -399,7 +399,20 @@ model Lead {
   category     String? // General, SC/ST, OBC, EWS
 
   createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  // Deliberately NOT `@updatedAt`. This column means "when feedback was last
+  // submitted for this lead", not "when the row last changed" — the Leads table
+  // shows it as UPDATED AT and the Updated Date Range filter reads it, and
+  // counsellors rely on it to see genuine call activity.
+  //
+  // With `@updatedAt`, any incidental write bumped it: moving an agent to a
+  // different Team Lead rewrites `teamId` on every one of their leads
+  // (lib/team-sync.ts), which restamped hundreds of rows to the same instant
+  // and buried the real activity.
+  //
+  // Because it has no default, Prisma requires it on create, so the compiler
+  // catches every new write site. Set it ONLY where feedback is submitted:
+  // app/api/leads/[id]/feedback/route.ts.
+  updatedAt DateTime
 
   @@index([status])
   @@index([assignedToId])

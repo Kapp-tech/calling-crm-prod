@@ -120,6 +120,9 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     const referral = await prisma.$transaction(async (tx) => {
       const created = await tx.lead.create({
         data: {
+          // Not @updatedAt any more (see schema.prisma) — a new lead reads as
+          // its creation time until the first feedback advances it.
+          updatedAt: new Date(),
           name: d.name,
           email: d.email,
           phone: d.phone,

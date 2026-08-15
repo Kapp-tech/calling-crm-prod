@@ -57,6 +57,9 @@ export async function POST(req: NextRequest) {
 
     const lead = await prisma.lead.create({
       data: {
+        // Not @updatedAt any more (see schema.prisma) — a new lead reads as
+        // its creation time until the first feedback advances it.
+        updatedAt:   new Date(),
         name:        d.name.trim(),
         email,
         phone:       d.phone.trim(),

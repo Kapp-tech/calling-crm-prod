@@ -281,6 +281,8 @@ export async function POST(req: NextRequest) {
       const now = new Date();
       const lead = await prisma.lead.create({
         data: {
+          // Not @updatedAt any more (see schema.prisma).
+          updatedAt: new Date(),
           name: d.name, email, phone: d.phone,
           city: resolved.city, state: resolved.state, course: resolved.course, college,
           kappCollegeId: d.kappCollegeId, campaign: d.leadCode,
@@ -373,6 +375,8 @@ export async function POST(req: NextRequest) {
           const { resolved } = resolveAndValidate(d, maps); // cheap, re-derive canonical city/state/course
           const lead = await prisma.lead.create({
             data: {
+              // Not @updatedAt any more (see schema.prisma).
+              updatedAt: new Date(),
               name: d.name, email: d.email.toLowerCase(), phone: d.phone,
               city: resolved.city, state: resolved.state, course: resolved.course, college,
               kappCollegeId: d.kappCollegeId, campaign: d.leadCode,

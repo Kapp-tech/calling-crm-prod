@@ -88,10 +88,14 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
         },
       });
 
-      // Keep Lead.currentFeedbackOptionId in sync with the latest feedback
+      // Keep Lead.currentFeedbackOptionId in sync with the latest feedback.
+      // This is the ONLY place Lead.updatedAt is advanced — see the note on the
+      // field in schema.prisma. It is stamped by hand because the field is not
+      // `@updatedAt`, so that reassignments and other incidental writes leave
+      // the lead's "last activity" time alone.
       await tx.lead.update({
         where: { id: params.id },
-        data:  { currentFeedbackOptionId: feedbackOptionId },
+        data:  { currentFeedbackOptionId: feedbackOptionId, updatedAt: new Date() },
       });
 
       if (scheduledAt) {

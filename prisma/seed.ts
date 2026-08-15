@@ -287,7 +287,8 @@ async function main() {
     });
   }
 
-  await prisma.lead.createMany({ data: leadInserts });
+  // updatedAt is no longer @updatedAt (see schema.prisma), so seeds must set it.
+  await prisma.lead.createMany({ data: leadInserts.map((l) => ({ ...l, updatedAt: new Date() })) });
   const leads = await prisma.lead.findMany({ where: { assignedToId: { not: null } }, take: 20 });
 
   // ── Feedback Options ──────────────────────────────────────────────────────────
