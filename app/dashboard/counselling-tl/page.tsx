@@ -1036,6 +1036,16 @@ export default function CounsellingTLPage() {
       if (data.ids) {
         setSelectedIds(data.ids);
         setAllFilteredSelected(true);
+        // The endpoint returns at most 10,000 ids. Silently selecting a subset
+        // and then assigning it would look like a completed bulk action while
+        // leaving the rest behind, so say so.
+        if (typeof data.total === 'number' && data.total > data.ids.length) {
+          toast({
+            variant: 'destructive',
+            title: `Only the first ${data.ids.length.toLocaleString()} of ${data.total.toLocaleString()} leads were selected`,
+            description: 'Narrow the filters and assign in batches so none are missed.',
+          });
+        }
       }
     } finally {
       setLoadingAllIds(false);
@@ -1057,7 +1067,14 @@ export default function CounsellingTLPage() {
       const data = await res.json();
       if (data.ids && data.ids.length > 0) {
         setSelectedIds((prev) => Array.from(new Set([...prev, ...data.ids])));
-        toast({ title: `${data.ids.length} lead${data.ids.length !== 1 ? 's' : ''} selected (rows ${from}–${from + data.ids.length - 1})` });
+        // Fewer ids than the requested range means it ran past the last match.
+        const short = data.ids.length < take;
+        toast({
+          title: `${data.ids.length} lead${data.ids.length !== 1 ? 's' : ''} selected (rows ${from}–${from + data.ids.length - 1})`,
+          description: short ? `Only ${data.total ?? data.ids.length} lead(s) match the current filters.` : undefined,
+        });
+      } else {
+        toast({ variant: 'destructive', title: 'No leads in that range', description: 'The range starts past the last matching lead.' });
       }
     } finally {
       setLoadingRange(false);
