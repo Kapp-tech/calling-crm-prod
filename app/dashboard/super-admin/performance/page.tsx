@@ -465,7 +465,7 @@ export default function PerformancePage() {
         <Card className="lg:col-span-2">
           <CardHeader className="pb-2">
             <CardTitle className="text-base">Feedback Distribution</CardTitle>
-            <CardDescription>Breakdown by feedback type</CardDescription>
+            <CardDescription>Leads by their latest feedback</CardDescription>
           </CardHeader>
           <CardContent className="pt-1">
             {isLoading ? <Skel className="h-64" /> : fbDist.length === 0

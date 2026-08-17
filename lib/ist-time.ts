@@ -129,6 +129,23 @@ export function istEndOfDay(value: string | Date): Date {
   return new Date(`${toIstDayKey(value)}T23:59:59.999${IST_UTC_OFFSET}`);
 }
 
+/**
+ * Formats an instant as a UTC timestamp literal for raw SQL, e.g.
+ * "2026-08-10 18:30:00.000".
+ *
+ * Needed because "createdAt" is `timestamp WITHOUT time zone` holding UTC, and
+ * the Postgres driver serialises a JS Date using the *Node process* timezone
+ * ("2026-08-11 00:00:00+05:30" on an IST machine). Casting that to `timestamp`
+ * discards the offset, so the comparison silently shifts by whatever timezone
+ * the server happens to run in — correct on a UTC box, 5h30m out on an IST one.
+ * Passing the UTC wall clock explicitly makes raw-SQL date filters deterministic
+ * everywhere. Prisma's own query builder already handles this; only $queryRaw
+ * needs it.
+ */
+export function toUtcSqlTimestamp(value: Date): string {
+  return value.toISOString().replace('T', ' ').replace('Z', '');
+}
+
 /** First instant of today, in IST. */
 export function istStartOfToday(): Date {
   return istStartOfDay(new Date());
