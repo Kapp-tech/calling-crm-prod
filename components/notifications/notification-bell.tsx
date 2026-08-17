@@ -72,6 +72,11 @@ const TYPE_META = {
   RECEIPT_DISAPPROVED: { Icon: XCircle,       color: 'bg-red-100 text-red-600 dark:bg-red-950 dark:text-red-400' },
 } as const;
 
+// How many notifications the dropdown previews. The panel is a glance, not an
+// archive — anything beyond this is one click away on /dashboard/notifications,
+// and the footer says how many there are in total.
+const PREVIEW_COUNT = 6;
+
 function timeAgo(iso: string): string {
   const diff = Date.now() - new Date(iso).getTime();
   const m    = Math.floor(diff / 60_000);
@@ -252,10 +257,16 @@ export function NotificationBell() {
 
       {/* Dropdown panel */}
       {open && (
-        <div className="fixed inset-x-3 top-16 z-50 sm:absolute sm:inset-x-auto sm:right-0 sm:top-11 sm:w-[340px] overflow-hidden rounded-xl border border-border bg-background shadow-2xl ring-1 ring-black/5 dark:ring-white/5">
+        // A bounded, three-part panel: fixed header, scrolling list, pinned
+        // footer. Previously the list simply grew — ten notifications with
+        // wrapping bodies made the panel taller than the viewport, so the
+        // "See all notifications" link at the bottom was pushed off-screen and
+        // could never be reached. Capping the height keeps both ends visible
+        // and confines the overflow to the list itself.
+        <div className="fixed inset-x-3 top-16 z-50 flex max-h-[min(75vh,32rem)] flex-col sm:absolute sm:inset-x-auto sm:right-0 sm:top-11 sm:w-[380px] overflow-hidden rounded-xl border border-border bg-background shadow-2xl ring-1 ring-black/5 dark:ring-white/5">
 
           {/* Header */}
-          <div className="flex items-center justify-between border-b border-border px-4 py-3">
+          <div className="flex shrink-0 items-center justify-between border-b border-border px-4 py-3">
             <div className="flex items-center gap-2">
               <span className="text-sm font-semibold">Notifications</span>
               {unread > 0 && (
@@ -279,8 +290,9 @@ export function NotificationBell() {
             </div>
           </div>
 
-          {/* Notification list — max 10 items */}
-          <div className="divide-y divide-border/50">
+          {/* Notification list — scrolls within the panel; overscroll-contain
+              stops the page behind it scrolling once the list hits its end. */}
+          <div className="min-h-0 flex-1 divide-y divide-border/50 overflow-y-auto overscroll-contain">
             {notifications.length === 0 ? (
               <div className="flex flex-col items-center gap-2 py-10 text-center">
                 <Bell className="h-8 w-8 text-muted-foreground/25" />
@@ -288,7 +300,7 @@ export function NotificationBell() {
                 <p className="text-xs text-muted-foreground/60">You&apos;ll be notified of lead assignments and call reminders here.</p>
               </div>
             ) : (
-              notifications.slice(0, 10).map((n) => {
+              notifications.slice(0, PREVIEW_COUNT).map((n) => {
                 const { Icon, color } = TYPE_META[n.type] ?? TYPE_META.LEAD_ASSIGNED;
                 const target = notificationTarget(n);
                 return (
@@ -300,7 +312,7 @@ export function NotificationBell() {
                       if (target) router.push(target.href);
                     }}
                     className={cn(
-                      'flex w-full items-start gap-3 px-4 py-3 text-left transition-colors hover:bg-muted/60',
+                      'flex w-full items-start gap-3 px-4 py-2.5 text-left transition-colors hover:bg-muted/60',
                       !n.read && 'bg-primary/[0.04]',
                       target && 'cursor-pointer',
                     )}
@@ -309,19 +321,23 @@ export function NotificationBell() {
                       <Icon className="h-3.5 w-3.5" />
                     </div>
                     <div className="min-w-0 flex-1">
-                      <p className={cn('text-[13px] leading-snug', !n.read ? 'font-semibold text-foreground' : 'font-medium text-foreground/80')}>
-                        {n.title}
-                      </p>
-                      <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">{n.body}</p>
-                      <div className="mt-1 flex items-center gap-2">
-                        <p className="text-[10px] text-muted-foreground/60">{timeAgo(n.createdAt)}</p>
-                        {target && (
-                          <span className="text-[10px] font-medium text-primary">{target.label} →</span>
-                        )}
+                      {/* Title and time on one line, so every row is the same
+                          height regardless of how long the message is. */}
+                      <div className="flex items-baseline justify-between gap-2">
+                        <p className={cn('truncate text-[13px] leading-snug', !n.read ? 'font-semibold text-foreground' : 'font-medium text-foreground/80')}>
+                          {n.title}
+                        </p>
+                        <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground/60">{timeAgo(n.createdAt)}</span>
                       </div>
+                      {/* Clamped to two lines — an unclamped body was what made
+                          rows tall enough to overflow the panel. */}
+                      <p className="mt-0.5 line-clamp-2 text-xs leading-relaxed text-muted-foreground">{n.body}</p>
+                      {target && (
+                        <span className="mt-1 inline-block text-[10px] font-medium text-primary">{target.label} →</span>
+                      )}
                     </div>
                     {!n.read && (
-                      <div className="mt-2 h-2 w-2 shrink-0 rounded-full bg-primary" />
+                      <div className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-primary" aria-label="Unread" />
                     )}
                   </button>
                 );
@@ -329,15 +345,18 @@ export function NotificationBell() {
             )}
           </div>
 
-          {/* See more footer */}
+          {/* Footer — shrink-0 so it stays pinned while the list scrolls */}
           {notifications.length > 0 && (
-            <div className="border-t border-border">
+            <div className="shrink-0 border-t border-border bg-background">
               <Link
                 href="/dashboard/notifications"
                 onClick={() => setOpen(false)}
-                className="flex w-full items-center justify-center gap-1.5 py-3 text-xs font-medium text-primary transition-colors hover:bg-muted/50"
+                className="flex w-full items-center justify-center gap-1.5 py-2.5 text-xs font-medium text-primary transition-colors hover:bg-muted/50"
               >
-                See all notifications <ArrowRight className="h-3.5 w-3.5" />
+                {notifications.length > PREVIEW_COUNT
+                  ? `See all notifications (${notifications.length})`
+                  : 'See all notifications'}
+                <ArrowRight className="h-3.5 w-3.5" />
               </Link>
             </div>
           )}
