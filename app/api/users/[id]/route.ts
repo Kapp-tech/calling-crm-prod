@@ -36,6 +36,8 @@ const updateUserSchema = z.object({
   managedById: z.string().nullable().optional(),
   managerId: z.string().nullable().optional(),
   rejectionReason: z.string().optional(),
+  // DialShree dialer seat — see the note on the field in schema.prisma.
+  dialshreeId: z.string().trim().max(64).optional().nullable(),
 });
 
 export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
@@ -110,6 +112,9 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   if (reconcileByManager) { delete updateData.managedById; delete updateData.managerId; delete updateData.teamId; }
   else if (reconcileByTeam) { delete updateData.teamId; delete updateData.managedById; delete updateData.managerId; }
 
+  // Same NULL-not-empty-string rule as on create — see app/api/users/route.ts.
+  if ('dialshreeId' in parsed.data) updateData.dialshreeId = parsed.data.dialshreeId?.trim() || null;
+
   if (password) updateData.password = await bcrypt.hash(password, 12);
   if (isActive !== undefined) {
     updateData.isActive = isActive;
@@ -147,6 +152,18 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
 
   return NextResponse.json(user);
   } catch (error) {
+    // A clashing dialer seat is an admin mistake to correct, not a server
+    // fault — name the field so they know what to change.
+    if (
+      typeof error === 'object' && error !== null &&
+      (error as { code?: string }).code === 'P2002' &&
+      String((error as { meta?: { target?: unknown } }).meta?.target ?? '').includes('dialshreeId')
+    ) {
+      return NextResponse.json(
+        { success: false, error: 'That DialShree ID is already mapped to another user.', code: 'DUPLICATE_DIALSHREE_ID' },
+        { status: 409 }
+      );
+    }
     console.error('[users/[id] PATCH]', error);
     return NextResponse.json({ success: false, error: 'Internal server error' }, { status: 500 });
   }

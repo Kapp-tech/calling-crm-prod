@@ -78,6 +78,8 @@ export async function POST(req: NextRequest) {
       type:   'LEAD_ASSIGNED',
       title:  'New Leads Assigned',
       body:   `${leadIds.length} lead${leadIds.length !== 1 ? 's have' : ' has'} been assigned to you.`,
+      // See auto-assign: the notification records which leads it refers to.
+      leadIds: leadIds.slice(0, 500),
     },
   }).catch((err) => console.error('[bulk-assign] notification create failed:', err));
 

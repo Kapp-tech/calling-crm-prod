@@ -12,6 +12,10 @@ const autoAssignSchema = z.object({
   resetFeedbacks: z.boolean().optional(),
 });
 
+// The viewer lists at most 100; keeping a few hundred is ample and stops a
+// 10,000-lead round-robin writing a huge array onto a single notification row.
+const NOTIFICATION_LEAD_ID_CAP = 500;
+
 export async function POST(req: NextRequest) {
   try {
   const session = await getServerSession(authOptions);
@@ -140,6 +144,9 @@ export async function POST(req: NextRequest) {
     type:   'LEAD_ASSIGNED' as const,
     title:  'New Leads Assigned',
     body:   `${agentLeadIds.length} lead${agentLeadIds.length !== 1 ? 's have' : ' has'} been assigned to you.`,
+    // Record exactly which leads this notification is about, so opening it
+    // shows those leads rather than whatever was touched around the same time.
+    leadIds: agentLeadIds.slice(0, NOTIFICATION_LEAD_ID_CAP),
   }));
   if (notifData.length > 0) {
     prisma.notification.createMany({ data: notifData })

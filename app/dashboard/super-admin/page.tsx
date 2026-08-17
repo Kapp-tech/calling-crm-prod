@@ -55,6 +55,12 @@ const userSchema = z.object({
   managedById: z.string().optional(),
   managerId: z.string().optional(),
   joiningDate: z.string().min(1, 'Joining date is required'),
+  // Digits only: this is the agent's seat id in the DialShree dialer, and
+  // click-to-call fails silently upstream if it is malformed.
+  dialshreeId: z
+    .string()
+    .optional()
+    .refine((v) => !v || /^\d{1,15}$/.test(v), 'DialShree ID must be digits only'),
 });
 
 type UserForm = z.infer<typeof userSchema>;
@@ -75,6 +81,7 @@ interface UserRecord {
   name: string;
   email: string;
   phone?: string | null;
+  dialshreeId?: string | null;
   role: string;
   workType: 'WFH' | 'WFO';
   isActive: boolean;
@@ -134,6 +141,7 @@ export default function SuperAdminPage() {
       email: user.email,
       password: '',
       phone: user.phone ?? '',
+      dialshreeId: user.dialshreeId ?? '',
       role: user.role as typeof ROLES[number],
       workType: user.workType,
       managedById: user.managedById ?? undefined,
@@ -410,6 +418,25 @@ export default function SuperAdminPage() {
               {errors.phone && <p className="text-xs text-destructive">{errors.phone.message}</p>}
             </div>
             <div className="space-y-2">
+              <Label>
+                DialShree ID <span className="text-muted-foreground font-normal">(optional)</span>
+              </Label>
+              <Input
+                {...register('dialshreeId')}
+                inputMode="numeric"
+                maxLength={15}
+                placeholder="e.g. 100096"
+                onChange={(e) => {
+                  e.target.value = e.target.value.replace(/\D/g, '').slice(0, 15);
+                  register('dialshreeId').onChange(e);
+                }}
+              />
+              <p className="text-[11px] text-muted-foreground">
+                Links this agent to their dialer extension. Without it, the Call button is disabled for them.
+              </p>
+              {errors.dialshreeId && <p className="text-xs text-destructive">{errors.dialshreeId.message}</p>}
+            </div>
+            <div className="space-y-2">
               <Label>Role</Label>
               <Select onValueChange={(v) => setValue('role', v as typeof ROLES[number])}>
                 <SelectTrigger>
@@ -522,6 +549,25 @@ export default function SuperAdminPage() {
                 }}
               />
               {editForm.formState.errors.phone && <p className="text-xs text-destructive">{editForm.formState.errors.phone.message}</p>}
+            </div>
+            <div className="space-y-2">
+              <Label>
+                DialShree ID <span className="text-muted-foreground font-normal">(optional)</span>
+              </Label>
+              <Input
+                {...editForm.register('dialshreeId')}
+                inputMode="numeric"
+                maxLength={15}
+                placeholder="e.g. 100096"
+                onChange={(e) => {
+                  e.target.value = e.target.value.replace(/\D/g, '').slice(0, 15);
+                  editForm.register('dialshreeId').onChange(e);
+                }}
+              />
+              <p className="text-[11px] text-muted-foreground">
+                Links this agent to their dialer extension. Without it, the Call button is disabled for them.
+              </p>
+              {editForm.formState.errors.dialshreeId && <p className="text-xs text-destructive">{editForm.formState.errors.dialshreeId.message}</p>}
             </div>
             <div className="space-y-2">
               <Label>New Password</Label>

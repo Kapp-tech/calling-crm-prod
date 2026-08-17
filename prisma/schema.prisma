@@ -135,6 +135,10 @@ enum ActivityAction {
   LEAD_INTEGRATION_UPDATED
   LEAD_INTEGRATION_DELETED
   LEADS_EXPORTED
+  // Click-to-call via the DialShree dialer. CALL_INITIATED records who dialled
+  // which lead; the dialer itself holds the CDR and recording.
+  CALL_INITIATED
+  CALL_HANGUP
 }
 
 // Which CRM event fires a configured push — only referral-lead creation for
@@ -160,6 +164,14 @@ model User {
   joiningDate  DateTime   @default(now())
   createdAt    DateTime   @default(now())
   updatedAt    DateTime   @updatedAt
+
+  // This agent's user id in the DialShree dialer (the `agent_user` parameter of
+  // its manual-dial / external-hangup APIs). Click-to-call needs it to bridge
+  // the call to the right agent's softphone, so an agent without it cannot
+  // dial. Mapped by hand when the account is created — the two systems have no
+  // shared key. Unique so two CRM users can never point at the same dialer
+  // seat, which would ring the wrong person.
+  dialshreeId  String?    @unique
 
   // Second-factor 6-digit PIN gating especially destructive Super Admin
   // tools (e.g. Bulk Delete Leads) — separate from the account password.
@@ -650,6 +662,18 @@ model Notification {
   title      String
   body       String
   leadId     String?
+  // The exact leads a bulk "N leads assigned" notification refers to.
+  //
+  // Without it the drill-down had to guess, by looking for leads touched within
+  // ±5 minutes of the notification. That guess broke outright once Lead.updatedAt
+  // stopped tracking assignments (it now moves only on feedback), and it was
+  // never reliable anyway — two assignments minutes apart contaminated each
+  // other. Recording the ids at write time removes the guesswork; `leadId` above
+  // still covers single-lead notifications.
+  //
+  // Capped when stored (see the assign routes): the viewer pages through at most
+  // a hundred, so there is no reason to keep thousands of ids on one row.
+  leadIds    String[]
   scheduleId String?
   read       Boolean          @default(false)
   createdAt  DateTime         @default(now())

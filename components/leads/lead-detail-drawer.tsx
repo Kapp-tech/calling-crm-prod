@@ -8,7 +8,7 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import {
-  X, Phone, Mail, PhoneCall, CalendarClock, PhoneIncoming,
+  X, Phone, PhoneOff, Mail, PhoneCall, CalendarClock, PhoneIncoming,
   LayoutList, CheckCircle2, Loader2, PlusCircle, UserCheck,
   UserCircle2, ChevronDown, Search, Check, ExternalLink,
   GitBranch, UserPlus, FileCheck, Receipt, Clock3,
@@ -863,6 +863,63 @@ export function LeadDetailDrawer({ leadId, onClose, canSubmitFeedback = false }:
   // Counselling Agents shouldn't see lead-source info they have no use for.
   const showLeadType = session?.user?.role !== 'COUNSELLING_AGENT';
 
+  const { toast: drawerToast } = useToast();
+
+  // ── Click-to-call (DialShree) ──────────────────────────────────────────────
+  // The dialer rings the agent's own softphone first and bridges the lead in,
+  // so "on call" here means "we asked the dialer to connect", not that the
+  // lead picked up — the CRM gets no call-progress events back. The button
+  // flips to Disconnect so the agent can drop the line from the CRM.
+  const [onCall, setOnCall] = useState(false);
+  // Whatever handle the dial response carried, echoed back on hangup.
+  const [callRef, setCallRef] = useState<string | undefined>();
+
+  const callMutation = useMutation({
+    mutationFn: async () => {
+      const r = await fetch('/api/dialer/call', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ leadId }),
+      });
+      const json = await r.json();
+      if (!r.ok || !json.success) throw new Error(json.error || 'Could not place the call');
+      return json;
+    },
+    onSuccess: (json) => {
+      setOnCall(true);
+      const ref = json?.result?.call_id ?? json?.result?.data?.call_id ?? json?.result?.value;
+      setCallRef(ref != null ? String(ref) : undefined);
+      drawerToast({ title: 'Calling…', description: 'Answer your dialer to connect to the lead.' });
+    },
+    onError: (err: Error) => drawerToast({ title: 'Call failed', description: err.message, variant: 'destructive' }),
+  });
+
+  const hangupMutation = useMutation({
+    mutationFn: async () => {
+      const r = await fetch('/api/dialer/hangup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ leadId, value: callRef }),
+      });
+      const json = await r.json();
+      if (!r.ok || !json.success) throw new Error(json.error || 'Could not end the call');
+      return json;
+    },
+    // Either way the agent is done with this call — never strand them on a
+    // Disconnect button that cannot be cleared.
+    onSettled: () => {
+      setOnCall(false);
+      setCallRef(undefined);
+    },
+    onError: (err: Error) => drawerToast({ title: 'Hangup failed', description: err.message, variant: 'destructive' }),
+  });
+
+  // Switching to another lead must not leave the previous one showing "on call".
+  useEffect(() => {
+    setOnCall(false);
+    setCallRef(undefined);
+  }, [leadId]);
+
   const { data: lead, isLoading } = useQuery<LeadDetail>({
     queryKey: ['lead-detail', leadId],
     queryFn: () => fetch(`/api/leads/${leadId}`).then((r) => r.json()),
@@ -1020,11 +1077,32 @@ export function LeadDetailDrawer({ leadId, onClose, canSubmitFeedback = false }:
                           <Mail className="h-3.5 w-3.5" /> Email
                         </a>
                       </Button>
-                      <Button size="sm" className="gap-1.5 bg-[#0e4164] hover:bg-[#0c3755] text-white text-xs" asChild>
-                        <a href={`tel:${lead.phone}`}>
-                          <Phone className="h-3.5 w-3.5" /> Call
-                        </a>
-                      </Button>
+                      {onCall ? (
+                        <Button
+                          size="sm"
+                          variant="destructive"
+                          className="gap-1.5 text-xs"
+                          onClick={() => hangupMutation.mutate()}
+                          disabled={hangupMutation.isPending}
+                        >
+                          {hangupMutation.isPending
+                            ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            : <PhoneOff className="h-3.5 w-3.5" />}
+                          Disconnect Call
+                        </Button>
+                      ) : (
+                        <Button
+                          size="sm"
+                          className="gap-1.5 bg-[#0e4164] hover:bg-[#0c3755] text-white text-xs"
+                          onClick={() => callMutation.mutate()}
+                          disabled={callMutation.isPending}
+                        >
+                          {callMutation.isPending
+                            ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            : <Phone className="h-3.5 w-3.5" />}
+                          {callMutation.isPending ? 'Connecting…' : 'Call'}
+                        </Button>
+                      )}
                       <WhatsAppButton
                         phone={lead.phone}
                         leadName={lead.name}
