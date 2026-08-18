@@ -211,6 +211,10 @@ function resolveAndValidate(d: LeadPayload, maps: CrossRefMaps): { errors: Recor
   checkDropdown(DropdownType.LEAD_TYPE, d.leadType, 'leadType', 'Lead Type');
   checkDropdown(DropdownType.LEAD_ORIGIN, d.leadOrigin, 'leadOrigin', 'Lead Origin');
   checkDropdown(DropdownType.LEAD_CONFIRMATION, d.leadConfirmation, 'leadConfirmation', 'Lead Confirmation');
+  // Validated against Manage Dropdowns -> Lead Stage like every other dropdown
+  // field: an unconfigured value is rejected rather than created on the fly, so
+  // an admin stays in control of the list and a typo upstream cannot quietly
+  // add a new stage.
   checkDropdown(DropdownType.LEAD_STAGE, d.leadStage, 'leadStage', 'Lead Stage');
   checkDropdown(DropdownType.LEAD_VERIFICATION, d.leadVerification, 'leadVerification', 'Lead Verification');
   checkDropdown(DropdownType.DATA_CALLING_TYPE, d.dataCallingType, 'dataCallingType', 'Data Calling Type');
@@ -267,11 +271,35 @@ export async function POST(req: NextRequest) {
       const email = d.email.toLowerCase();
       const college = resolved.college ?? null;
 
+      // Validation above guarantees this matches a configured Lead Stage.
+      const leadStage = d.leadStage.trim();
+
       const existing = await prisma.lead.findFirst({
         where: { email, college: college ? { equals: college, mode: 'insensitive' } : null },
-        select: { id: true },
+        select: { id: true, leadStage: true },
       });
       if (existing) {
+        // A repeat of the same lead at a NEW stage is progress, not a duplicate:
+        // record the stage and move the lead forward instead of rejecting it.
+        // Only an unchanged stage is a true duplicate.
+        if (leadStage && existing.leadStage !== leadStage) {
+          await prisma.$transaction([
+            prisma.lead.update({ where: { id: existing.id }, data: { leadStage } }),
+            prisma.leadStageEntry.create({ data: { leadId: existing.id, stage: leadStage, source: 'API' } }),
+          ]);
+          await logActivity({
+            userId: apiKey.createdById,
+            action: 'LEAD_CREATED_VIA_API',
+            targetId: existing.id,
+            targetType: 'Lead',
+            description: `Lead stage updated to "${leadStage}" via API key "${apiKey.name}"`,
+            metadata: { leadId: existing.id, from: existing.leadStage, to: leadStage },
+          });
+          return NextResponse.json(
+            { success: true, message: `Lead stage updated to "${leadStage}"`, Lead_ID: existing.id },
+            { status: 200 },
+          );
+        }
         return NextResponse.json(
           { success: false, message: 'Duplicate lead — a lead with this email and college already exists', Lead_ID: existing.id },
           { status: 409 },
@@ -287,12 +315,15 @@ export async function POST(req: NextRequest) {
           city: resolved.city, state: resolved.state, course: resolved.course, college,
           kappCollegeId: d.kappCollegeId, campaign: d.leadCode,
           leadType: d.leadType, leadOrigin: d.leadOrigin, leadConfirmation: d.leadConfirmation,
-          leadStage: d.leadStage, leadVerification: d.leadVerification,
+          leadStage, leadVerification: d.leadVerification,
           dataCallingType: d.dataCallingType, dealType: d.dealType,
           primaryApplicationConfirm: 'No', primaryAdmissionConfirm: 'No',
           uploadedAt: new Date(`${d.createdAt}T00:00:00.000Z`),
           status: 'APPROVED', approvedById: apiKey.createdById, approvedAt: now,
           uploadedById: apiKey.createdById, apiKeyId: apiKey.id,
+          // Seed the history with the stage it arrived on, so the timeline is
+          // complete from the first record rather than starting at the second.
+          ...(leadStage ? { stageHistory: { create: { stage: leadStage, source: 'API' } } } : {}),
         },
         select: { id: true },
       });
@@ -341,29 +372,92 @@ export async function POST(req: NextRequest) {
     if (pending.length > 0) {
       const existing = await prisma.lead.findMany({
         where: { OR: pending.map((p) => ({ email: p.d.email.toLowerCase(), college: p.college ? { equals: p.college, mode: 'insensitive' as const } : null })) },
-        select: { id: true, email: true, college: true },
+        select: { id: true, email: true, college: true, leadStage: true },
       });
-      const existingByKey = new Map<string, string>();
-      for (const e of existing) existingByKey.set(dedupeKey(e.email, e.college), e.id);
+      const existingByKey = new Map<string, { id: string; leadStage: string | null }>();
+      for (const e of existing) existingByKey.set(dedupeKey(e.email, e.college), { id: e.id, leadStage: e.leadStage });
 
-      const seenInBatch = new Map<string, number>(); // key -> index that will create it
+      // Every stage here already passed validation against the configured list.
+      const canonicalStage = (raw: string | null | undefined) => (raw ? raw.trim() : null);
+
+      // key -> the item that will create the lead, plus the stage the batch has
+      // left it on so far. The stage is tracked because a later item for the
+      // same lead at a DIFFERENT stage is a stage advance, not a duplicate —
+      // exactly as for a lead that already existed in the CRM.
+      const seenInBatch = new Map<string, { index: number; stage: string | null }>();
       const toCreate: Pending[] = [];
       const duplicateOfIndex = new Map<number, number>(); // index -> index of the batch item creating it
 
+      // Same-lead-new-stage advances the existing lead; see the single path.
+      const stageUpdates: { index: number; leadId: string; from: string | null; stage: string }[] = [];
+      // Same, but for a lead created earlier in THIS request, whose id only
+      // exists after Phase 3.
+      const intraBatchStageUpdates: { index: number; sourceIndex: number; stage: string }[] = [];
+
       for (const p of pending) {
         const key = dedupeKey(p.d.email, p.college);
-        const existingId = existingByKey.get(key);
-        if (existingId) {
-          results[p.index] = { index: p.index, success: false, message: 'Duplicate lead — a lead with this email and college already exists', Lead_ID: existingId };
+        const hit = existingByKey.get(key);
+        if (hit) {
+          const stage = canonicalStage(p.d.leadStage);
+          if (stage && hit.leadStage !== stage) {
+            stageUpdates.push({ index: p.index, leadId: hit.id, from: hit.leadStage, stage });
+            // Keep the map current so a second item for the same lead later in
+            // this request compares against the stage we are about to write,
+            // instead of re-applying the same update.
+            existingByKey.set(key, { id: hit.id, leadStage: stage });
+          } else {
+            results[p.index] = { index: p.index, success: false, message: 'Duplicate lead — a lead with this email and college already exists', Lead_ID: hit.id };
+          }
           continue;
         }
-        const batchIndex = seenInBatch.get(key);
-        if (batchIndex !== undefined) {
-          duplicateOfIndex.set(p.index, batchIndex);
+        const seen = seenInBatch.get(key);
+        if (seen !== undefined) {
+          const stage = canonicalStage(p.d.leadStage);
+          if (stage && seen.stage !== stage) {
+            // The lead does not exist yet — it is created by item `seen.index`
+            // in Phase 3 below, so its id isn't known until then. Queue the
+            // advance and resolve the id afterwards.
+            intraBatchStageUpdates.push({ index: p.index, sourceIndex: seen.index, stage });
+            seenInBatch.set(key, { index: seen.index, stage });
+          } else {
+            duplicateOfIndex.set(p.index, seen.index);
+          }
           continue;
         }
-        seenInBatch.set(key, p.index);
+        seenInBatch.set(key, { index: p.index, stage: canonicalStage(p.d.leadStage) });
         toCreate.push(p);
+      }
+
+      // Apply stage advances for leads that already existed.
+      //
+      // Grouped by lead and applied IN REQUEST ORDER within each group. One
+      // request can legitimately carry the same lead twice at different stages
+      // (L5 then L6); running those concurrently let them commit out of order,
+      // so the history read backwards and Lead.leadStage ended up on whichever
+      // transaction happened to finish last. Different leads still go in
+      // parallel — only same-lead updates have to be sequenced.
+      if (stageUpdates.length > 0) {
+        const byLead = new Map<string, typeof stageUpdates>();
+        for (const u of stageUpdates) {
+          const list = byLead.get(u.leadId);
+          if (list) list.push(u);
+          else byLead.set(u.leadId, [u]);
+        }
+
+        await Promise.all(Array.from(byLead.values()).map(async (updates) => {
+          for (const u of updates) {
+            try {
+              await prisma.$transaction([
+                prisma.lead.update({ where: { id: u.leadId }, data: { leadStage: u.stage } }),
+                prisma.leadStageEntry.create({ data: { leadId: u.leadId, stage: u.stage, source: 'API' } }),
+              ]);
+              results[u.index] = { index: u.index, success: true, message: `Lead stage updated to "${u.stage}"`, Lead_ID: u.leadId };
+            } catch (err) {
+              console.error('[v1/leads POST bulk] failed to update stage for item', u.index, err);
+              results[u.index] = { index: u.index, success: false, message: 'Internal server error updating this lead stage', Lead_ID: u.leadId };
+            }
+          }
+        }));
       }
 
       // Phase 3 — create everything that's left, in parallel
@@ -381,12 +475,15 @@ export async function POST(req: NextRequest) {
               city: resolved.city, state: resolved.state, course: resolved.course, college,
               kappCollegeId: d.kappCollegeId, campaign: d.leadCode,
               leadType: d.leadType, leadOrigin: d.leadOrigin, leadConfirmation: d.leadConfirmation,
-              leadStage: d.leadStage, leadVerification: d.leadVerification,
+              leadStage: canonicalStage(d.leadStage), leadVerification: d.leadVerification,
               dataCallingType: d.dataCallingType, dealType: d.dealType,
               primaryApplicationConfirm: 'No', primaryAdmissionConfirm: 'No',
               uploadedAt: new Date(`${d.createdAt}T00:00:00.000Z`),
               status: 'APPROVED', approvedById: apiKey.createdById, approvedAt: now,
               uploadedById: apiKey.createdById, apiKeyId: apiKey.id,
+              ...(canonicalStage(d.leadStage)
+                ? { stageHistory: { create: { stage: canonicalStage(d.leadStage)!, source: 'API' } } }
+                : {}),
             },
             select: { id: true },
           });
@@ -398,6 +495,37 @@ export async function POST(req: NextRequest) {
         }
       }));
 
+      // Stage advances for leads created moments ago in this same request.
+      // Sequential per lead so the recorded order matches the request order.
+      if (intraBatchStageUpdates.length > 0) {
+        const byLead = new Map<string, typeof intraBatchStageUpdates>();
+        for (const u of intraBatchStageUpdates) {
+          const leadId = createdIdByIndex.get(u.sourceIndex);
+          if (!leadId) {
+            // The creating item failed, so there is nothing to advance.
+            results[u.index] = { index: u.index, success: false, message: 'Duplicate lead — same email and college as another lead earlier in this request, which failed to create' };
+            continue;
+          }
+          const list = byLead.get(leadId);
+          if (list) list.push(u);
+          else byLead.set(leadId, [u]);
+        }
+        await Promise.all(Array.from(byLead.entries()).map(async ([leadId, updates]) => {
+          for (const u of updates) {
+            try {
+              await prisma.$transaction([
+                prisma.lead.update({ where: { id: leadId }, data: { leadStage: u.stage } }),
+                prisma.leadStageEntry.create({ data: { leadId, stage: u.stage, source: 'API' } }),
+              ]);
+              results[u.index] = { index: u.index, success: true, message: `Lead stage updated to "${u.stage}"`, Lead_ID: leadId };
+            } catch (err) {
+              console.error('[v1/leads POST bulk] failed to update in-batch stage for item', u.index, err);
+              results[u.index] = { index: u.index, success: false, message: 'Internal server error updating this lead stage', Lead_ID: leadId };
+            }
+          }
+        }));
+      }
+
       // Backfill intra-batch duplicates with the Lead_ID that was actually created for them
       duplicateOfIndex.forEach((sourceIndex, dupIndex) => {
         const sourceId = createdIdByIndex.get(sourceIndex);
@@ -407,9 +535,14 @@ export async function POST(req: NextRequest) {
       });
     }
 
+    // A stage advance succeeds but creates nothing, so it is counted separately
+    // rather than inflating `created` — the caller needs to tell "6 new leads"
+    // apart from "6 existing leads moved on a stage".
+    const isStageUpdate = (m: string) => m.startsWith('Lead stage updated');
     const summary = {
       total: results.length,
-      created: results.filter((r) => r.success).length,
+      created: results.filter((r) => r.success && !isStageUpdate(r.message)).length,
+      stageUpdated: results.filter((r) => r.success && isStageUpdate(r.message)).length,
       duplicate: results.filter((r) => !r.success && r.message.startsWith('Duplicate')).length,
       failed: results.filter((r) => !r.success && !r.message.startsWith('Duplicate')).length,
     };
@@ -428,7 +561,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(
       {
         success: summary.created > 0,
-        message: `Processed ${summary.total} lead${summary.total === 1 ? '' : 's'} — ${summary.created} created, ${summary.duplicate} duplicate, ${summary.failed} failed`,
+        message: `Processed ${summary.total} lead${summary.total === 1 ? '' : 's'} — ${summary.created} created, ${summary.stageUpdated} stage updated, ${summary.duplicate} duplicate, ${summary.failed} failed`,
         summary,
         results,
       },

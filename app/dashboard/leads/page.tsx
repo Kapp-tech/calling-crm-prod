@@ -30,7 +30,7 @@ interface Lead {
   status: string; createdAt: string; updatedAt: string;
   assignedTo?: { id: string; name: string } | null;
   feedbacks: { followUpNumber: number; feedbackOption?: { label: string } | null }[];
-  _count: { feedbacks: number };
+  _count: { feedbacks: number; stageHistory?: number };
   classYear?: string | null;
   category?: string | null;
   parentName?: string | null;
@@ -1039,7 +1039,20 @@ export default function AllLeadsPage() {
                       <td className="px-3 py-2.5 whitespace-nowrap text-center text-xs text-muted-foreground">{lead.primaryApplicationConfirm || '—'}</td>
                       <td className="px-3 py-2.5 whitespace-nowrap text-center text-xs text-muted-foreground">{lead.primaryAdmissionConfirm || '—'}</td>
                       <td className="px-3 py-2.5 whitespace-nowrap text-center text-xs text-muted-foreground">{lead.leadConfirmation || '—'}</td>
-                      <td className="px-3 py-2.5 whitespace-nowrap text-center text-xs text-muted-foreground">{lead.leadStage || '—'}</td>
+                      {/* Latest stage, plus a count of the earlier ones this
+                          lead has moved through. The full dated list is in the
+                          lead drawer. */}
+                      <td className="px-3 py-2.5 whitespace-nowrap text-center text-xs text-muted-foreground">
+                        {lead.leadStage || '—'}
+                        {(lead._count.stageHistory ?? 0) > 1 && (
+                          <span
+                            className="ml-1.5 rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground"
+                            title={`${lead._count.stageHistory} stages recorded — open the lead to see the history`}
+                          >
+                            +{lead._count.stageHistory! - 1}
+                          </span>
+                        )}
+                      </td>
                       <td className="px-3 py-2.5 whitespace-nowrap text-center text-xs text-muted-foreground">{lead.leadVerification || '—'}</td>
                       <td className="px-3 py-2.5 whitespace-nowrap text-center text-xs text-muted-foreground">{lead.dataCallingType || '—'}</td>
                       <td className="px-3 py-2.5 whitespace-nowrap text-center text-xs text-muted-foreground">{lead.dealType || '—'}</td>

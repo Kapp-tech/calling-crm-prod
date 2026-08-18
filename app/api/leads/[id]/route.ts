@@ -25,6 +25,11 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
           },
           orderBy: { followUpNumber: 'asc' },
         },
+        // Newest first — the drawer reads it top-down as a timeline.
+        // id as a tiebreaker: createdAt is millisecond-precision, so two
+        // stages applied back-to-back can share one timestamp. cuid ids are
+        // time-prefixed, so they order by insertion.
+        stageHistory: { orderBy: [{ createdAt: 'desc' }, { id: 'desc' }] },
         profile: true,
       },
     });

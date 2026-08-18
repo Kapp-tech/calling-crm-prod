@@ -145,7 +145,7 @@ export async function GET(req: NextRequest) {
           prevAssignee2: { select: { id: true, name: true } },
           batch:         { select: { id: true, fileName: true, createdAt: true } },
           feedbacks:     { take: 1, orderBy: { followUpNumber: 'desc' }, select: { followUpNumber: true, feedbackOption: { select: { label: true } } } },
-          _count:        { select: { feedbacks: true } },
+          _count:        { select: { feedbacks: true, stageHistory: true } },
           profile:       true,
         },
       }),

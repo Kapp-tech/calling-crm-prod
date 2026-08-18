@@ -19,7 +19,7 @@ import { cn } from '@/lib/utils';
 import { triggerCelebration, isCelebrationFeedback } from '@/lib/celebrate';
 import { WhatsAppButton } from '@/components/shared/whatsapp-button';
 import { computeProfilingScore, profilingScoreTone } from '@/lib/lead-profiling';
-import { istWallClockToInstant, instantToIstWallClock, IST_TIMEZONE } from '@/lib/ist-time';
+import { istWallClockToInstant, instantToIstWallClock, formatIstDateTime, IST_TIMEZONE } from '@/lib/ist-time';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -89,6 +89,7 @@ interface LeadDetail {
   primaryAdmissionConfirm?: string | null;
   leadConfirmation?: string | null;
   leadStage?: string | null;
+  stageHistory?: { id: string; stage: string; source?: string | null; createdAt: string }[];
   leadVerification?: string | null;
   dataCallingType?: string | null;
   dealType?: string | null;
@@ -1159,6 +1160,45 @@ export function LeadDetailDrawer({ leadId, onClose, canSubmitFeedback = false }:
                         <InfoRow label="Data Calling Type"     value={lead.dataCallingType} />
                         <InfoRow label="Deal Type"              value={lead.dealType} />
                       </dl>
+                    </div>
+                  )}
+
+                  {/* Stage history — the ingestion API re-sends a lead as its
+                      stage advances, and each new stage is recorded here with
+                      when it arrived. Only shown once there is more than one;
+                      a single stage is already on the Lead Stage row above. */}
+                  {(lead.stageHistory?.length ?? 0) > 1 && (
+                    <div>
+                      <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-2">
+                        Lead Stage History
+                      </p>
+                      <ol className="relative space-y-3 pl-4">
+                        {/* the connecting rail */}
+                        <span aria-hidden className="absolute left-[3px] top-1.5 bottom-1.5 w-px bg-border" />
+                        {lead.stageHistory!.map((h, i) => (
+                          <li key={h.id} className="relative">
+                            <span
+                              aria-hidden
+                              className={cn(
+                                'absolute -left-4 top-1.5 h-[7px] w-[7px] rounded-full ring-2 ring-background',
+                                i === 0 ? 'bg-primary' : 'bg-muted-foreground/40',
+                              )}
+                            />
+                            <div className="flex items-baseline justify-between gap-2">
+                              <span className={cn('text-xs', i === 0 ? 'font-semibold text-foreground' : 'text-foreground/70')}>
+                                {h.stage}
+                                {i === 0 && <span className="ml-1.5 text-[10px] font-normal text-muted-foreground">current</span>}
+                              </span>
+                              <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground">
+                                {formatIstDateTime(h.createdAt)}
+                              </span>
+                            </div>
+                            {h.source && (
+                              <span className="text-[10px] text-muted-foreground/70">via {h.source}</span>
+                            )}
+                          </li>
+                        ))}
+                      </ol>
                     </div>
                   )}
 

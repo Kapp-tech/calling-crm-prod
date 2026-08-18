@@ -78,7 +78,7 @@ enum AnnouncementPriority {
 enum UserStatus {
   ACTIVE
   INACTIVE
-  PENDING_APPROVAL  // TL-requested agents awaiting SA approval
+  PENDING_APPROVAL // TL-requested agents awaiting SA approval
 }
 
 enum ReceiptType {
@@ -171,21 +171,16 @@ model User {
   // dial. Mapped by hand when the account is created — the two systems have no
   // shared key. Unique so two CRM users can never point at the same dialer
   // seat, which would ring the wrong person.
-  dialshreeId  String?    @unique
+  dialshreeId String? @unique
 
   // Second-factor 6-digit PIN gating especially destructive Super Admin
   // tools (e.g. Bulk Delete Leads) — separate from the account password.
   // Null until the admin sets one up from their profile page.
   securityPinHash           String?
   securityPinSetAt          DateTime?
-  securityPinFailedAttempts Int       @default(0)
+  securityPinFailedAttempts Int                 @default(0)
   securityPinLockedUntil    DateTime?
   adminActionUnlocks        AdminActionUnlock[]
-
-  @@index([role])
-  @@index([teamId])
-  @@index([isActive])
-  @@index([role, isActive])
 
   // Generic manager link (SA → TL, TL → Agent, SA → Operations)
   managerId String?
@@ -198,8 +193,8 @@ model User {
   agents      User[]  @relation("TLAgents")
 
   // Team membership (TL is teamLead, Agents are members)
-  teamId   String?
-  team     Team?   @relation("TeamMembers", fields: [teamId], references: [id])
+  teamId String?
+  team   Team?   @relation("TeamMembers", fields: [teamId], references: [id])
 
   // Teams this user leads
   ledTeams Team[] @relation("TeamLead")
@@ -214,24 +209,24 @@ model User {
   managedGroups           OperationsGroup[] @relation("GroupManager")
 
   // Lead relations
-  uploadedLeads    Lead[]         @relation("UploadedBy")
-  approvedLeads    Lead[]         @relation("ApprovedBy")
-  disapprovedLeads Lead[]         @relation("DisapprovedBy")
-  assignedLeads      Lead[]         @relation("AssignedTo")
-  assignedByLeads    Lead[]         @relation("AssignedBy")
-  assignedFromLeads  Lead[]         @relation("AssignedFrom")
-  prevAssignee2Leads Lead[]         @relation("PrevAssignee2")
-  feedbacks        LeadFeedback[]
-  archivedFeedbacks       LeadFeedbackArchive[] @relation("ArchivedFeedbackAgent")
+  uploadedLeads            Lead[]                @relation("UploadedBy")
+  approvedLeads            Lead[]                @relation("ApprovedBy")
+  disapprovedLeads         Lead[]                @relation("DisapprovedBy")
+  assignedLeads            Lead[]                @relation("AssignedTo")
+  assignedByLeads          Lead[]                @relation("AssignedBy")
+  assignedFromLeads        Lead[]                @relation("AssignedFrom")
+  prevAssignee2Leads       Lead[]                @relation("PrevAssignee2")
+  feedbacks                LeadFeedback[]
+  archivedFeedbacks        LeadFeedbackArchive[] @relation("ArchivedFeedbackAgent")
   archivedFeedbacksResetBy LeadFeedbackArchive[] @relation("ArchivedFeedbackBy")
-  uploadBatches    UploadBatch[]
+  uploadBatches            UploadBatch[]
 
-  scheduledCalls ScheduledCall[] @relation("AgentSchedules")
-  notifications  Notification[]
-  uploadedReceipts LeadReceipt[] @relation("ReceiptUploadedBy")
-  reviewedReceipts LeadReceipt[] @relation("ReceiptReviewedBy")
-  attendances    Attendance[]
-  apiKeysCreated ApiKey[] @relation("ApiKeyCreatedBy")
+  scheduledCalls          ScheduledCall[]   @relation("AgentSchedules")
+  notifications           Notification[]
+  uploadedReceipts        LeadReceipt[]     @relation("ReceiptUploadedBy")
+  reviewedReceipts        LeadReceipt[]     @relation("ReceiptReviewedBy")
+  attendances             Attendance[]
+  apiKeysCreated          ApiKey[]          @relation("ApiKeyCreatedBy")
   leadIntegrationsCreated LeadIntegration[] @relation("LeadIntegrationCreatedBy")
 
   // Feedback options created by this user (SA)
@@ -254,6 +249,11 @@ model User {
 
   // Daily upload limit (null = unlimited). Only meaningful for OPERATIONS role.
   uploadLimit Int?
+
+  @@index([role])
+  @@index([teamId])
+  @@index([isActive])
+  @@index([role, isActive])
 }
 
 model Team {
@@ -301,20 +301,20 @@ model Permission {
 }
 
 model Lead {
-  id         String     @id @default(dbgenerated("('LID' || nextval('lead_id_seq'::regclass))"))
-  name       String
-  email      String
-  phone      String
-  city       String?
-  state      String?
-  course     String?
+  id            String     @id @default(dbgenerated("('LID' || nextval('lead_id_seq'::regclass))"))
+  name          String
+  email         String
+  phone         String
+  city          String?
+  state         String?
+  course        String?
   college       String?
   kappCollegeId String?
   campaign      String?
-  leadType   String?
-  leadOrigin String?
-  leadZone   String?
-  status     LeadStatus @default(PENDING)
+  leadType      String?
+  leadOrigin    String?
+  leadZone      String?
+  status        LeadStatus @default(PENDING)
 
   uploadedById String
   uploadedBy   User   @relation("UploadedBy", fields: [uploadedById], references: [id])
@@ -354,6 +354,7 @@ model Lead {
   team   Team?   @relation("TeamLeads", fields: [teamId], references: [id])
 
   feedbacks      LeadFeedback[]
+  stageHistory   LeadStageEntry[]
   profile        LeadProfile?
   scheduledCalls ScheduledCall[]
   receipts       LeadReceipt[]
@@ -377,6 +378,9 @@ model Lead {
   primaryApplicationConfirm String?
   primaryAdmissionConfirm   String?
   leadConfirmation          String?
+  // The lead's CURRENT stage. Kept as a plain column so the leads table,
+  // filters, CSV export and dropdown filtering all keep working unchanged —
+  // `stageHistory` below is additive, not a replacement.
   leadStage                 String?
   leadVerification          String?
   dataCallingType           String?
@@ -396,10 +400,10 @@ model Lead {
   currentFeedbackOptionId String?
 
   // Verified / corrected student contact details (filled by counsellor)
-  altEmail1   String?
-  altEmail2   String?
-  altPhone1   String?
-  altPhone2   String?
+  altEmail1    String?
+  altEmail2    String?
+  altPhone1    String?
+  altPhone2    String?
   correctCity  String?
   correctState String?
 
@@ -439,35 +443,35 @@ model Lead {
 }
 
 model LeadProfile {
-  id                  String   @id @default(cuid())
-  leadId              String   @unique
-  lead                Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
-  budget              String?
-  preferredCourseIds  Json?    // number[] — references CourseList.csv course_id
-  preferredCollegeIds Json?    // number[] — references CollegeList.csv college_id
-  preferredCityNames  Json?    // string[]
-  preferredStateNames Json?    // string[]
-  courseType          String?  // "Regular" | "Online"
-  collegeType         String?  // "Government" | "Private" | "Government+Private"
-  specialisation      String?
-  entranceExam        Json?    // string[]
-  scholarshipAwareness   String?
-  loanRequirement         String?
-  loanAmount              String?
-  paymentModePreference  String?
-  stayPreference            String?
+  id                         String   @id @default(cuid())
+  leadId                     String   @unique
+  lead                       Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  budget                     String?
+  preferredCourseIds         Json? // number[] — references CourseList.csv course_id
+  preferredCollegeIds        Json? // number[] — references CollegeList.csv college_id
+  preferredCityNames         Json? // string[]
+  preferredStateNames        Json? // string[]
+  courseType                 String? // "Regular" | "Online"
+  collegeType                String? // "Government" | "Private" | "Government+Private"
+  specialisation             String?
+  entranceExam               Json? // string[]
+  scholarshipAwareness       String?
+  loanRequirement            String?
+  loanAmount                 String?
+  paymentModePreference      String?
+  stayPreference             String?
   monthlyAccommodationBudget String?
   roomSharing                String?
   mealsPreference            String?
-  keyAmenities               Json?    // string[]
+  keyAmenities               Json? // string[]
   distanceWillingness        String?
   genderHostelRequirement    String?
-  class10Percentage   String?
-  class12Percentage   String?
-  board               String?
-  gapYearReason       String?
-  mediumOfInstruction String?
-  updatedAt           DateTime @updatedAt
+  class10Percentage          String?
+  class12Percentage          String?
+  board                      String?
+  gapYearReason              String?
+  mediumOfInstruction        String?
+  updatedAt                  DateTime @updatedAt
 }
 
 model FeedbackCategory {
@@ -496,9 +500,9 @@ model FeedbackOption {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  creator   User              @relation("FeedbackOptionCreator", fields: [createdBy], references: [id])
-  category  FeedbackCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
-  feedbacks LeadFeedback[]
+  creator           User                  @relation("FeedbackOptionCreator", fields: [createdBy], references: [id])
+  category          FeedbackCategory?     @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  feedbacks         LeadFeedback[]
   archivedFeedbacks LeadFeedbackArchive[]
 
   @@index([isActive])
@@ -507,22 +511,44 @@ model FeedbackOption {
 }
 
 model DropdownOption {
-  id             String       @id @default(cuid())
-  type           DropdownType
-  value          String
-  kappCollegeId  String?      // only used when type = COLLEGE
-  isActive       Boolean      @default(true)
-  sortOrder      Int          @default(0)
-  createdBy      String
-  createdAt      DateTime     @default(now())
-  updatedAt      DateTime     @updatedAt
+  id            String       @id @default(cuid())
+  type          DropdownType
+  value         String
+  kappCollegeId String? // only used when type = COLLEGE
+  isActive      Boolean      @default(true)
+  sortOrder     Int          @default(0)
+  createdBy     String
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
 
-  creator   User         @relation("DropdownOptionCreator", fields: [createdBy], references: [id])
+  creator User @relation("DropdownOptionCreator", fields: [createdBy], references: [id])
 
   @@unique([type, value])
   @@index([type, isActive])
   @@index([type, isActive, sortOrder])
   @@index([kappCollegeId])
+}
+
+// Every lead stage a lead has been through, with when it arrived.
+//
+// The ingestion API re-sends the same lead as its stage advances. Previously
+// that was rejected outright as a duplicate, so the progression was lost; now
+// each new stage is appended here and Lead.leadStage is moved to the latest.
+// A stage may legitimately recur (L1 -> L2 -> L1), so there is deliberately no
+// unique constraint on (leadId, stage) — the API only skips a repeat of the
+// stage the lead is *currently* on.
+model LeadStageEntry {
+  id        String   @id @default(cuid())
+  leadId    String
+  lead      Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  stage     String
+  // Where the stage came from — 'API', 'CSV' or 'MANUAL'. Useful when a stage
+  // looks wrong and someone needs to know which pipeline produced it.
+  source    String?
+  createdAt DateTime @default(now())
+
+  @@index([leadId, createdAt])
+  @@index([stage])
 }
 
 model LeadFeedback {
@@ -557,9 +583,9 @@ model LeadFeedbackArchive {
   feedbackOption   FeedbackOption @relation(fields: [feedbackOptionId], references: [id])
   remarks          String?
   followUpNumber   Int
-  createdAt        DateTime       // original feedback creation time, preserved as-is
+  createdAt        DateTime // original feedback creation time, preserved as-is
 
-  cycle        Int      // which assignment cycle (Lead.currentCycle at the time) this belonged to
+  cycle        Int // which assignment cycle (Lead.currentCycle at the time) this belonged to
   archivedAt   DateTime @default(now())
   archivedById String?
   archivedBy   User?    @relation("ArchivedFeedbackBy", fields: [archivedById], references: [id])
@@ -688,7 +714,7 @@ model ActivityLog {
   user        User           @relation(fields: [userId], references: [id])
   action      ActivityAction
   targetId    String?
-  targetType  String?        // "User" | "Lead" | "Team" | "Permission"
+  targetType  String? // "User" | "Lead" | "Team" | "Permission"
   description String
   metadata    Json?
   createdAt   DateTime       @default(now())
@@ -785,7 +811,7 @@ model ApiKey {
   keyHash   String @unique // sha256(raw key) — never store the raw key
   keyPrefix String // first 12 chars of the raw key, shown in the UI so an admin can tell keys apart without re-revealing them
 
-  isActive  Boolean   @default(true)
+  isActive   Boolean   @default(true)
   lastUsedAt DateTime?
 
   createdById String
