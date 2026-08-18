@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useMemo } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useSession } from 'next-auth/react';
 import {
   CalendarClock, Phone, Clock, CheckCircle2, XCircle,
@@ -12,6 +12,7 @@ import { PaginationBar } from '@/components/shared/pagination-bar';
 import { cn } from '@/lib/utils';
 import { formatIstDateTime, formatIstTime, istDayKey, dayKeyAsUtcDate } from '@/lib/ist-time';
 import { usePermissions } from '@/lib/usePermissions';
+import { useToast } from '@/components/ui/use-toast';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -41,9 +42,14 @@ interface ApiResponse {
   page: number;
   limit: number;
   totalPages: number;
+  // Totals across the whole set, not just this page — see the API.
+  counts?: { overdue: number; today: number; upcoming: number };
 }
 
-type StatusFilter = 'PENDING' | 'DONE' | 'CANCELLED' | 'all';
+// 'OVERDUE' is not a ScheduledCallStatus — it is PENDING whose slot has passed.
+// Kept as a tab value here and translated to status=PENDING&timing=overdue when
+// querying, so the tab strip can present it alongside the real statuses.
+type StatusFilter = 'PENDING' | 'OVERDUE' | 'DONE' | 'CANCELLED' | 'all';
 type ViewMode = 'list' | 'calendar';
 
 const WEEK_DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -306,6 +312,8 @@ export default function ScheduledCallsPage() {
   const { can } = usePermissions();
   const canSubmitFeedback = can('SUBMIT_FEEDBACK');
   const [viewMode, setViewMode] = useState<ViewMode>('list');
+  const qc = useQueryClient();
+  const { toast } = useToast();
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('PENDING');
   const [page, setPage] = useState(1);
   const [limit, setLimit] = useState(25);
@@ -317,6 +325,7 @@ export default function ScheduledCallsPage() {
 
   const TABS: { label: string; value: StatusFilter }[] = [
     { label: 'Pending',   value: 'PENDING' },
+    { label: 'Overdue',   value: 'OVERDUE' },
     { label: 'Done',      value: 'DONE' },
     { label: 'Cancelled', value: 'CANCELLED' },
     { label: 'All',       value: 'all' },
@@ -340,7 +349,17 @@ export default function ScheduledCallsPage() {
     queryKey: ['scheduled-calls', statusFilter, page, limit],
     queryFn: () => {
       const p = new URLSearchParams({ page: String(page), limit: String(limit) });
-      p.set('status', statusFilter !== 'all' ? statusFilter : 'all');
+      // Pending means "still to come"; Overdue is the same status with a slot
+      // in the past. Both are PENDING rows to the database.
+      if (statusFilter === 'PENDING') {
+        p.set('status', 'PENDING');
+        p.set('timing', 'upcoming');
+      } else if (statusFilter === 'OVERDUE') {
+        p.set('status', 'PENDING');
+        p.set('timing', 'overdue');
+      } else {
+        p.set('status', statusFilter === 'all' ? 'all' : statusFilter);
+      }
       return fetch(`/api/leads/scheduled-calls?${p}`).then((r) => r.json());
     },
     enabled: !!session?.user?.id && viewMode === 'list',
@@ -353,9 +372,33 @@ export default function ScheduledCallsPage() {
   const total = data?.total ?? 0;
   const totalPages = data?.totalPages ?? 1;
 
-  const overdue  = calls.filter((c) => getScheduleState(c.scheduledAt, c.status) === 'OVERDUE').length;
-  const today    = calls.filter((c) => getScheduleState(c.scheduledAt, c.status) === 'TODAY').length;
-  const upcoming = calls.filter((c) => getScheduleState(c.scheduledAt, c.status) === 'UPCOMING').length;
+  // Server-side totals across every pending call, not just the rows rendered.
+  const overdue  = data?.counts?.overdue  ?? 0;
+  const today    = data?.counts?.today    ?? 0;
+  const upcoming = data?.counts?.upcoming ?? 0;
+
+  // Marking an overdue call done closes the slot without needing to open the
+  // lead and submit feedback — the point of the Overdue tab is to clear the
+  // backlog. Both list and calendar queries are refreshed so the counts and the
+  // month view stop showing it as outstanding.
+  const markDoneMutation = useMutation({
+    mutationFn: async (id: string) => {
+      const r = await fetch('/api/leads/scheduled-calls', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, status: 'DONE' }),
+      });
+      const json = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(json.error ?? 'Could not mark this call as done');
+      return json;
+    },
+    onSuccess: () => {
+      toast({ title: 'Call marked as done' });
+      qc.invalidateQueries({ queryKey: ['scheduled-calls'] });
+      qc.invalidateQueries({ queryKey: ['scheduled-calls-calendar'] });
+    },
+    onError: (err: Error) => toast({ variant: 'destructive', title: 'Could not update', description: err.message }),
+  });
 
   function handleTabChange(val: StatusFilter) {
     setStatusFilter(val);
@@ -367,7 +410,7 @@ export default function ScheduledCallsPage() {
       {/* Top bar: summary strip + view toggle */}
       <div className="flex items-start justify-between gap-4 flex-wrap shrink-0">
         {/* Summary strip — only in list/pending mode */}
-        {viewMode === 'list' && statusFilter === 'PENDING' && !isLoading && (
+        {viewMode === 'list' && (statusFilter === 'PENDING' || statusFilter === 'OVERDUE') && !isLoading && (
           <div className="flex flex-wrap gap-3">
             <div className="flex items-center gap-2 rounded-lg border border-red-500/20 bg-red-500/5 px-3 py-2">
               <AlertCircle className="h-4 w-4 text-red-500 shrink-0" />
@@ -472,6 +515,15 @@ export default function ScheduledCallsPage() {
                   {session?.user?.role !== 'COUNSELLING_AGENT' && (
                     <th className="px-3 py-2.5 text-left font-semibold text-muted-foreground whitespace-nowrap">Agent</th>
                   )}
+                  {/* Only the overdue backlog offers an action, so the column is
+                      absent elsewhere rather than sitting empty. Pinned to the
+                      right edge: it is the twelfth column, and without this the
+                      button sits off-screen behind a horizontal scroll on a
+                      normal laptop — awkward for something meant to be clicked
+                      repeatedly to clear the backlog. */}
+                  {statusFilter === 'OVERDUE' && (
+                    <th className="sticky right-0 z-20 bg-muted px-3 py-2.5 text-right font-semibold text-muted-foreground whitespace-nowrap shadow-[-8px_0_8px_-8px_rgba(0,0,0,0.15)]">Action</th>
+                  )}
                 </tr>
               </thead>
               <tbody>
@@ -566,6 +618,22 @@ export default function ScheduledCallsPage() {
                         {session?.user?.role !== 'COUNSELLING_AGENT' && (
                           <td className="px-3 py-2.5 whitespace-nowrap text-muted-foreground">
                             {call.agent.name}
+                          </td>
+                        )}
+                        {statusFilter === 'OVERDUE' && (
+                          // bg-background so rows scrolling underneath don't
+                          // show through the pinned cell.
+                          <td className="sticky right-0 z-10 bg-background px-3 py-2.5 whitespace-nowrap text-right shadow-[-8px_0_8px_-8px_rgba(0,0,0,0.15)]">
+                            <button
+                              // stopPropagation: the row itself opens the lead
+                              // drawer, and closing a call should not also do that.
+                              onClick={(e) => { e.stopPropagation(); markDoneMutation.mutate(call.id); }}
+                              disabled={markDoneMutation.isPending}
+                              className="inline-flex items-center gap-1 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-2 py-1 text-[11px] font-medium text-emerald-700 transition-colors hover:bg-emerald-500/20 disabled:cursor-not-allowed disabled:opacity-50 dark:text-emerald-400"
+                            >
+                              <CheckCircle2 className="h-3 w-3" />
+                              Mark as Done
+                            </button>
                           </td>
                         )}
                       </tr>
