@@ -41,7 +41,6 @@ const singleLeadSchema = z.object({
   campaign:   z.string().optional(),
   leadType:   z.string().optional(),
   leadOrigin: z.string().optional(),
-  leadZone:   z.string().optional(),
 });
 type SingleLeadForm = z.infer<typeof singleLeadSchema>;
 
@@ -149,11 +148,6 @@ export default function OperationsPage() {
     queryFn: () => fetch('/api/dropdown-options?type=LEAD_ORIGIN').then((r) => r.json()).then((d) => Array.isArray(d) ? d : []),
     staleTime: Infinity,
   });
-  const { data: leadZonesRaw } = useQuery<{ id: string; value: string }[]>({
-    queryKey: ['dropdown-zones'],
-    queryFn: () => fetch('/api/dropdown-options?type=ZONE').then((r) => r.json()).then((d) => Array.isArray(d) ? d : []),
-    staleTime: Infinity,
-  });
 
   // Single Add Lead dropdown options — the Lead model stores these as plain
   // strings (no foreign keys), so each option's value IS the display name,
@@ -181,10 +175,6 @@ export default function OperationsPage() {
   const leadOriginOptions = useMemo<SearchableSelectOption[]>(
     () => (leadOriginsRaw ?? []).map((o) => ({ value: o.value, label: o.value })),
     [leadOriginsRaw],
-  );
-  const leadZoneOptions = useMemo<SearchableSelectOption[]>(
-    () => (leadZonesRaw ?? []).map((o) => ({ value: o.value, label: o.value })),
-    [leadZonesRaw],
   );
 
   // Build lookup maps — only block on kappCollegesRaw (local DB); city/state/course are optional
@@ -333,8 +323,11 @@ export default function OperationsPage() {
   // ── CSV downloads ─────────────────────────────────────────────────────────────
 
   const downloadSampleCSV = () => {
-    const headers = ['name', 'email', 'phone', 'city', 'state', 'course', 'college', 'lead_code', 'lead_type', 'lead_origin', 'lead_zone', 'lead_confirmation', 'lead_stage', 'lead_verification', 'data_calling_type', 'deal_type', 'created_at'];
-    const sample  = ['Rahul Sharma', 'rahul@example.com', '9876543210', 'Mumbai', 'Maharashtra', 'B.Tech', 'IIT Bombay', 'Google Ads', 'Organic', 'Website', 'West', '', '', '', '', '', '2026-06-09'];
+    // lead_zone and deal_type are deliberately absent: both are taken from the
+    // college's own configuration in Manage Colleges, so a column for them here
+    // would invite a value that upload silently discards.
+    const headers = ['name', 'email', 'phone', 'city', 'state', 'course', 'college', 'lead_code', 'lead_type', 'lead_origin', 'lead_confirmation', 'lead_stage', 'lead_verification', 'data_calling_type', 'created_at'];
+    const sample  = ['Rahul Sharma', 'rahul@example.com', '9876543210', 'Mumbai', 'Maharashtra', 'B.Tech', 'IIT Bombay', 'Google Ads', 'Organic', 'Website', '', '', '', '', '2026-06-09'];
     triggerDownload([headers.join(','), sample.join(',')].join('\n'), 'leads_sample.csv');
   };
 
@@ -676,15 +669,6 @@ export default function OperationsPage() {
                   value={watchSingle('leadOrigin') ?? ''}
                   onChange={(v) => setSingleValue('leadOrigin', v, { shouldValidate: true })}
                   placeholder="— Select Lead Origin —"
-                />
-              </div>
-              <div className="space-y-1.5 sm:col-span-2">
-                <Label>Lead Zone</Label>
-                <SearchableSelect
-                  options={leadZoneOptions}
-                  value={watchSingle('leadZone') ?? ''}
-                  onChange={(v) => setSingleValue('leadZone', v, { shouldValidate: true })}
-                  placeholder="— Select Lead Zone —"
                 />
               </div>
             </div>

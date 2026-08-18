@@ -3,6 +3,7 @@ import { getServerSession } from 'next-auth';
 import { z } from 'zod';
 import { authOptions } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
+import { COLLEGE_ZONES, COLLEGE_DEAL_TYPES } from '@/lib/college-attributes';
 import { DropdownType } from '@prisma/client';
 
 const VALID_TYPES = Object.values(DropdownType);
@@ -11,6 +12,12 @@ const createSchema = z.object({
   type:           z.nativeEnum(DropdownType),
   value:          z.string().min(1).max(200),
   kappCollegeId:  z.string().min(1).max(100).optional(),
+  // COLLEGE only — copied onto every lead ingested for this college. Restricted
+  // to the fixed lists in lib/college-attributes.ts, the same source the Manage
+  // Colleges dropdowns render from. '' is accepted and stored as NULL, which is
+  // how an admin clears the value.
+  collegeZone:     z.enum(['', ...COLLEGE_ZONES]).optional().nullable(),
+  collegeDealType: z.enum(['', ...COLLEGE_DEAL_TYPES]).optional().nullable(),
 });
 
 export async function GET(req: NextRequest) {
@@ -32,7 +39,7 @@ export async function GET(req: NextRequest) {
         ...(showAll ? {} : { isActive: true }),
       },
       orderBy: [{ value: 'asc' }],
-      select: { id: true, type: true, value: true, kappCollegeId: true, isActive: true, createdAt: true },
+      select: { id: true, type: true, value: true, kappCollegeId: true, collegeZone: true, collegeDealType: true, isActive: true, createdAt: true },
     });
     return NextResponse.json(options);
   } catch (err) {
@@ -74,6 +81,10 @@ export async function POST(req: NextRequest) {
         type:          parsed.data.type,
         value:         parsed.data.value.trim(),
         kappCollegeId: parsed.data.kappCollegeId?.trim() ?? null,
+        // Stored only for COLLEGE rows; blank means "not configured", which
+        // leaves the corresponding lead field null rather than empty-string.
+        collegeZone:     parsed.data.type === 'COLLEGE' ? (parsed.data.collegeZone || null) : null,
+        collegeDealType: parsed.data.type === 'COLLEGE' ? (parsed.data.collegeDealType || null) : null,
         createdBy:     session.user.id,
       },
     });

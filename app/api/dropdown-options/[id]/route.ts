@@ -2,11 +2,17 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { z } from 'zod';
 import { authOptions } from '@/lib/auth';
+import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
+import { COLLEGE_ZONES, COLLEGE_DEAL_TYPES } from '@/lib/college-attributes';
 
 const updateSchema = z.object({
   value:         z.string().min(1).max(200).optional(),
   kappCollegeId: z.string().min(1).max(100).optional(),
+  // COLLEGE only — see the note in ../route.ts. '' clears the value back to
+  // "not configured"; anything outside the fixed lists is rejected.
+  collegeZone:     z.enum(['', ...COLLEGE_ZONES]).optional().nullable(),
+  collegeDealType: z.enum(['', ...COLLEGE_DEAL_TYPES]).optional().nullable(),
   isActive:      z.boolean().optional(),
 });
 
@@ -22,10 +28,19 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
   }
 
+  // Blank must land as NULL, not an empty string: an empty collegeZone means
+  // "not configured" and should leave the lead's zone unset, whereas '' would be
+  // copied onto every lead as a real (blank) value. No trimming needed — zod has
+  // already restricted these to '' or an exact list member.
+  const { collegeZone, collegeDealType, ...rest } = parsed.data;
+  const data: Prisma.DropdownOptionUpdateInput = { ...rest };
+  if (collegeZone !== undefined) data.collegeZone = collegeZone || null;
+  if (collegeDealType !== undefined) data.collegeDealType = collegeDealType || null;
+
   try {
     const option = await prisma.dropdownOption.update({
       where: { id: params.id },
-      data: parsed.data,
+      data,
     });
     return NextResponse.json(option);
   } catch (err: unknown) {

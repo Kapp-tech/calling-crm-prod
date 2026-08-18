@@ -70,9 +70,9 @@ export async function POST(req: NextRequest) {
     const incomingEmails = leads.map((l) => l.email.trim().toLowerCase());
 
     // ── Fetch all active dropdown options for validation ─────────────────────
-    const { sets: dropdownSets, collegeIdMap } = await buildDropdownValidationSets();
+    const { sets: dropdownSets, collegeIdMap, collegeAttributeMap } = await buildDropdownValidationSets();
     const allowed = (t: DropdownType, v: string | null | undefined) =>
-      isAllowedDropdownValue({ sets: dropdownSets, collegeIdMap }, t, v);
+      isAllowedDropdownValue({ sets: dropdownSets, collegeIdMap, collegeAttributeMap }, t, v);
 
     // ── Validate each lead against dropdown options ───────────────────────────
     type LeadInput = typeof leads[number];
@@ -104,12 +104,14 @@ export async function POST(req: NextRequest) {
 
       if (!allowed(DropdownType.LEAD_TYPE,          lead.lead_type))         errs.push(`lead_type "${lead.lead_type}" is not in the allowed list`);
       if (!allowed(DropdownType.LEAD_ORIGIN,        lead.lead_origin))       errs.push(`lead_origin "${lead.lead_origin}" is not in the allowed list`);
-      if (!allowed(DropdownType.ZONE,               lead.lead_zone))         errs.push(`lead_zone "${lead.lead_zone}" is not in the allowed list`);
+      // lead_zone and deal_type are no longer taken from the CSV — they come
+      // from the college's own configuration (see the lead build below), so
+      // there is nothing to validate here.
       if (!allowed(DropdownType.LEAD_CONFIRMATION,  lead.lead_confirmation)) errs.push(`lead_confirmation "${lead.lead_confirmation}" is not in the allowed list`);
       if (!allowed(DropdownType.LEAD_STAGE,         lead.lead_stage))        errs.push(`lead_stage "${lead.lead_stage}" is not in the allowed list`);
       if (!allowed(DropdownType.LEAD_VERIFICATION,  lead.lead_verification)) errs.push(`lead_verification "${lead.lead_verification}" is not in the allowed list`);
       if (!allowed(DropdownType.DATA_CALLING_TYPE,  lead.data_calling_type)) errs.push(`data_calling_type "${lead.data_calling_type}" is not in the allowed list`);
-      if (!allowed(DropdownType.DEAL_TYPE,           lead.deal_type))         errs.push(`deal_type "${lead.deal_type}" is not in the allowed list`);
+
 
       if (errs.length > 0) {
         invalidLeads.push({ row: i + 2, email: lead.email, errors: errs }); // row +2: header=1, 0-indexed
@@ -174,14 +176,17 @@ export async function POST(req: NextRequest) {
             campaign:      lead.campaign?.trim()  || null,
             leadType:   lead.lead_type?.trim()  || null,
             leadOrigin: lead.lead_origin?.trim()|| null,
-            leadZone:   lead.lead_zone?.trim()  || null,
+            // Zone and Deal Type are properties of the college, configured in
+            // Manage Colleges, so they are copied from there rather than read
+            // from the CSV. A college with neither configured leaves them null.
+            leadZone:   collegeAttributeMap.get((lead._kappCollegeId ?? '').toLowerCase())?.zone     ?? null,
             primaryApplicationConfirm: 'No',
             primaryAdmissionConfirm:   'No',
             leadConfirmation:          lead.lead_confirmation?.trim()           || null,
             leadStage:                 lead.lead_stage?.trim()                  || null,
             leadVerification:          lead.lead_verification?.trim()           || null,
             dataCallingType:           lead.data_calling_type?.trim()           || null,
-            dealType:                  lead.deal_type?.trim()                   || null,
+            dealType:   collegeAttributeMap.get((lead._kappCollegeId ?? '').toLowerCase())?.dealType ?? null,
             uploadedAt:                parseDate(lead.created_at),
             status:      'PENDING',
             uploadedById: session.user.id,

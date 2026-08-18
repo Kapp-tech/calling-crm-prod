@@ -19,7 +19,6 @@ const singleLeadSchema = z.object({
   campaign:    z.string().optional().nullable(),
   leadType:    z.string().optional().nullable(),
   leadOrigin:  z.string().optional().nullable(),
-  leadZone:    z.string().optional().nullable(),
 });
 
 export async function POST(req: NextRequest) {
@@ -55,6 +54,17 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // Zone and Deal Type come from the college's configuration in Manage
+    // Colleges, exactly as they do for the ingestion API and CSV upload. The
+    // Add Lead form no longer asks for them, so without this a manually added
+    // lead would be the only one missing both.
+    const collegeConfig = college
+      ? await prisma.dropdownOption.findFirst({
+          where: { type: 'COLLEGE', value: { equals: college, mode: 'insensitive' } },
+          select: { collegeZone: true, collegeDealType: true },
+        })
+      : null;
+
     const lead = await prisma.lead.create({
       data: {
         // Not @updatedAt any more (see schema.prisma) — a new lead reads as
@@ -70,7 +80,8 @@ export async function POST(req: NextRequest) {
         campaign:    d.campaign?.trim()   || null,
         leadType:    d.leadType?.trim()   || null,
         leadOrigin:  d.leadOrigin?.trim() || null,
-        leadZone:    d.leadZone?.trim()   || null,
+        leadZone:    collegeConfig?.collegeZone ?? null,
+        dealType:    collegeConfig?.collegeDealType ?? null,
         status:      'PENDING',
         uploadedById: session.user.id,
       },

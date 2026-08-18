@@ -15,6 +15,7 @@ import { Switch } from '@/components/ui/switch';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { useToast } from '@/components/ui/use-toast';
 import { cn } from '@/lib/utils';
+import { COLLEGE_ZONES, COLLEGE_DEAL_TYPES } from '@/lib/college-attributes';
 import { useUndoable } from '@/components/shared/use-undoable';
 
 const TYPE_META: Record<string, { icon: React.ComponentType<{ className?: string }>; color: string; bg: string; ring: string }> = {
@@ -28,6 +29,11 @@ const TYPE_META: Record<string, { icon: React.ComponentType<{ className?: string
   LEAD_STAGE:         { icon: Layers,        color: 'text-slate-600 dark:text-slate-400',    bg: 'bg-slate-500/10',   ring: 'from-slate-500 to-slate-600' },
   DEAL_TYPE:          { icon: Handshake,     color: 'text-pink-600 dark:text-pink-400',      bg: 'bg-pink-500/10',    ring: 'from-pink-500 to-pink-600' },
 };
+// Matches components/ui/input.tsx so a select sits flush with the text fields
+// above it in the same dialog.
+const SELECT_CLASS =
+  'flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background transition-all duration-200 hover:border-muted-foreground/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:border-primary/50 disabled:cursor-not-allowed disabled:opacity-50';
+
 const DEFAULT_META = { icon: ListChecks, color: 'text-slate-600 dark:text-slate-400', bg: 'bg-slate-500/10', ring: 'from-slate-500 to-slate-600' };
 
 interface DropdownOption {
@@ -35,6 +41,8 @@ interface DropdownOption {
   type: string;
   value: string;
   kappCollegeId?: string | null;
+  collegeZone?: string | null;
+  collegeDealType?: string | null;
   isActive: boolean;
   createdAt: string;
 }
@@ -50,9 +58,12 @@ interface Props {
   description: string;
   placeholder?: string;
   idField?: IdField; // extra required ID field (used for colleges)
+  // Colleges also carry the Zone and Deal Type that every lead ingested for
+  // them inherits, so those are configured here rather than per lead.
+  collegeAttributes?: boolean;
 }
 
-export function DropdownOptionsManager({ type, title, description, placeholder, idField }: Props) {
+export function DropdownOptionsManager({ type, title, description, placeholder, idField, collegeAttributes }: Props) {
   const { toast } = useToast();
   const qc = useQueryClient();
   const { data: session } = useSession();
@@ -65,6 +76,8 @@ export function DropdownOptionsManager({ type, title, description, placeholder, 
   const [editOption, setEditOption]     = useState<DropdownOption | null>(null);
   const [value, setValue]               = useState('');
   const [kappCollegeId, setKappId]      = useState('');
+  const [collegeZone, setCollegeZone]         = useState('');
+  const [collegeDealType, setCollegeDealType] = useState('');
 
   const queryKey = ['dropdown-options', type];
 
@@ -84,6 +97,8 @@ export function DropdownOptionsManager({ type, title, description, placeholder, 
     setEditOption(null);
     setValue('');
     setKappId('');
+    setCollegeZone('');
+    setCollegeDealType('');
     setShowDialog(true);
   };
 
@@ -91,6 +106,8 @@ export function DropdownOptionsManager({ type, title, description, placeholder, 
     setEditOption(opt);
     setValue(opt.value);
     setKappId(opt.kappCollegeId ?? '');
+    setCollegeZone(opt.collegeZone ?? '');
+    setCollegeDealType(opt.collegeDealType ?? '');
     setShowDialog(true);
   };
 
@@ -101,6 +118,10 @@ export function DropdownOptionsManager({ type, title, description, placeholder, 
       if (editOption) {
         const body: Record<string, unknown> = { value: value.trim() };
         if (idField) body.kappCollegeId = kappCollegeId.trim();
+        if (collegeAttributes) {
+          body.collegeZone = collegeZone.trim();
+          body.collegeDealType = collegeDealType.trim();
+        }
         const r = await fetch(`/api/dropdown-options/${editOption.id}`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
@@ -113,6 +134,10 @@ export function DropdownOptionsManager({ type, title, description, placeholder, 
       } else {
         const body: Record<string, unknown> = { type, value: value.trim() };
         if (idField) body.kappCollegeId = kappCollegeId.trim();
+        if (collegeAttributes) {
+          body.collegeZone = collegeZone.trim();
+          body.collegeDealType = collegeDealType.trim();
+        }
         const r = await fetch('/api/dropdown-options', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -341,6 +366,45 @@ export function DropdownOptionsManager({ type, title, description, placeholder, 
                 autoFocus={!idField}
               />
             </div>
+            {collegeAttributes && (
+              <>
+                {/* Fixed lists from lib/college-attributes.ts — the same source
+                    the API validates against, so the two cannot drift. The blank
+                    option is how an admin clears a value back to "not set". */}
+                <div className="space-y-1.5">
+                  <Label htmlFor="opt-college-zone">College Zone</Label>
+                  <select
+                    id="opt-college-zone"
+                    value={collegeZone}
+                    onChange={(e) => setCollegeZone(e.target.value)}
+                    className={SELECT_CLASS}
+                  >
+                    <option value="">— Not set —</option>
+                    {COLLEGE_ZONES.map((z) => (
+                      <option key={z} value={z}>{z}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="opt-college-deal-type">Deal Type</Label>
+                  <select
+                    id="opt-college-deal-type"
+                    value={collegeDealType}
+                    onChange={(e) => setCollegeDealType(e.target.value)}
+                    className={SELECT_CLASS}
+                  >
+                    <option value="">— Not set —</option>
+                    {COLLEGE_DEAL_TYPES.map((t) => (
+                      <option key={t} value={t}>{t}</option>
+                    ))}
+                  </select>
+                </div>
+                <p className="text-[11px] text-muted-foreground">
+                  Every lead brought in for this college — by API or CSV — inherits
+                  this Zone and Deal Type. Choose “Not set” to leave them empty.
+                </p>
+              </>
+            )}
           </div>
 
           <DialogFooter>

@@ -515,15 +515,21 @@ model FeedbackOption {
 }
 
 model DropdownOption {
-  id            String       @id @default(cuid())
-  type          DropdownType
-  value         String
-  kappCollegeId String? // only used when type = COLLEGE
-  isActive      Boolean      @default(true)
-  sortOrder     Int          @default(0)
-  createdBy     String
-  createdAt     DateTime     @default(now())
-  updatedAt     DateTime     @updatedAt
+  id              String       @id @default(cuid())
+  type            DropdownType
+  value           String
+  kappCollegeId   String? // only used when type = COLLEGE
+  // Also COLLEGE-only, same pattern as kappCollegeId above. A lead's Zone and
+  // Deal Type are properties of the college it belongs to, so they are
+  // configured here once and copied onto every lead ingested for that college
+  // (API and CSV) instead of being sent per lead.
+  collegeZone     String?
+  collegeDealType String?
+  isActive        Boolean      @default(true)
+  sortOrder       Int          @default(0)
+  createdBy       String
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
 
   creator User @relation("DropdownOptionCreator", fields: [createdBy], references: [id])
 
