@@ -32,7 +32,9 @@ export async function GET(
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const notification = await prisma.notification.findFirst({
-    where: { id: params.id, userId: session.user.id, type: 'LEAD_ASSIGNED' },
+    // Stage-change notifications use the same viewer: a grouped one carries the
+    // ids of the leads that moved, exactly like a bulk assignment.
+    where: { id: params.id, userId: session.user.id, type: { in: ['LEAD_ASSIGNED', 'LEAD_STAGE_CHANGED'] } },
   });
 
   if (!notification) {

@@ -3,12 +3,15 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useInfiniteQuery, useQueryClient } from '@tanstack/react-query';
 import { useRouter } from 'next/navigation';
-import { Bell, UserPlus, CalendarClock, PhoneCall, CheckCheck, Loader2 } from 'lucide-react';
+import { Bell, UserPlus, TrendingUp, CalendarClock, PhoneCall, CheckCheck, Loader2, Receipt, CheckCircle2, XCircle } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 interface NotificationItem {
   id: string;
-  type: 'LEAD_ASSIGNED' | 'CALL_REMINDER' | 'CALL_NOW';
+  // Mirrors NotificationType. Receipt kinds are included so they fall back to a
+  // sensible icon rather than being typed away — they already reach this page.
+  type: 'LEAD_ASSIGNED' | 'LEAD_STAGE_CHANGED' | 'CALL_REMINDER' | 'CALL_NOW'
+      | 'RECEIPT_SUBMITTED' | 'RECEIPT_APPROVED' | 'RECEIPT_DISAPPROVED';
   title: string;
   body: string;
   leadId?: string | null;
@@ -23,8 +26,15 @@ interface NotificationsPage {
 
 const TYPE_META = {
   LEAD_ASSIGNED: { Icon: UserPlus,      color: 'bg-blue-100 text-blue-600 dark:bg-blue-950 dark:text-blue-400',   label: 'Lead Assigned' },
+  LEAD_STAGE_CHANGED: { Icon: TrendingUp, color: 'bg-violet-100 text-violet-600 dark:bg-violet-950 dark:text-violet-400', label: 'Lead Stage Updated' },
   CALL_REMINDER: { Icon: CalendarClock, color: 'bg-amber-100 text-amber-600 dark:bg-amber-950 dark:text-amber-400', label: 'Call Reminder' },
   CALL_NOW:      { Icon: PhoneCall,     color: 'bg-green-100 text-green-600 dark:bg-green-950 dark:text-green-400', label: 'Call Now' },
+  // Receipt kinds were missing here and fell through to the Lead Assigned icon,
+  // so a receipt notification showed a person-plus badge on this page while the
+  // bell drew it correctly.
+  RECEIPT_SUBMITTED:   { Icon: Receipt,      color: 'bg-indigo-100 text-indigo-600 dark:bg-indigo-950 dark:text-indigo-400',    label: 'Receipt Submitted' },
+  RECEIPT_APPROVED:    { Icon: CheckCircle2, color: 'bg-emerald-100 text-emerald-600 dark:bg-emerald-950 dark:text-emerald-400', label: 'Receipt Approved' },
+  RECEIPT_DISAPPROVED: { Icon: XCircle,      color: 'bg-red-100 text-red-600 dark:bg-red-950 dark:text-red-400',                 label: 'Receipt Needs Changes' },
 } as const;
 
 function formatDate(iso: string): string {
@@ -189,17 +199,22 @@ export default function NotificationsPage() {
                 {items.map((n) => {
                   const { Icon, color } = TYPE_META[n.type] ?? TYPE_META.LEAD_ASSIGNED;
                   const isLeadAssigned = n.type === 'LEAD_ASSIGNED';
+                  // A single-lead stage change opens that lead; a grouped one has
+                  // no leadId and opens the list, same as an assignment.
+                  const isStageChange = n.type === 'LEAD_STAGE_CHANGED';
+                  const clickable = isLeadAssigned || isStageChange;
                   return (
                     <button
                       key={n.id}
                       onClick={() => {
                         markRead(n.id);
-                        if (isLeadAssigned) router.push(`/dashboard/notifications/${n.id}/leads`);
+                        if (isStageChange && n.leadId) router.push(`/leads/${n.leadId}/profile`);
+                        else if (clickable) router.push(`/dashboard/notifications/${n.id}/leads`);
                       }}
                       className={cn(
                         'flex w-full items-start gap-3.5 px-5 py-4 text-left transition-colors hover:bg-muted/40',
                         !n.read && 'bg-primary/[0.03]',
-                        isLeadAssigned && 'cursor-pointer',
+                        clickable && 'cursor-pointer',
                       )}
                     >
                       {/* Icon */}

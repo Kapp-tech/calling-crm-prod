@@ -54,7 +54,6 @@ import { buildDropdownValidationSets, isAllowedDropdownValue, type DropdownValid
 //     leadStage: string;            // must match Manage Dropdowns → Lead Stage
 //     leadVerification: string;     // must match Manage Dropdowns → Lead Verification
 //     dataCallingType: string;      // must match Manage Dropdowns → Data Calling Type
-//     dealType: string;             // must match Manage Dropdowns → Deal Type
 //     createdAt: string;            // format: "yyyy-mm-dd" — the lead's original creation
 //                                    // date on your side (stored separately from this CRM's
 //                                    // own audit timestamp, which always reflects when the
@@ -62,7 +61,7 @@ import { buildDropdownValidationSets, isAllowedDropdownValue, type DropdownValid
 //   }
 //
 //   Dropdown fields (leadType / leadOrigin / leadConfirmation / leadStage /
-//   leadVerification / dataCallingType / dealType) match case-sensitively
+//   leadVerification / dataCallingType) match case-sensitively
 //   against the exact values configured in Manage Dropdowns. Exception: if a dropdown
 //   type has no values configured there AT ALL yet, that field is accepted
 //   as free text (there's nothing to validate against) — configure it in
@@ -140,7 +139,6 @@ const payloadSchema = z.object({
   leadStage: req1('leadStage'),
   leadVerification: req1('leadVerification'),
   dataCallingType: req1('dataCallingType'),
-  dealType: req1('dealType'),
   createdAt: z
     .string()
     .trim()
@@ -218,9 +216,64 @@ function resolveAndValidate(d: LeadPayload, maps: CrossRefMaps): { errors: Recor
   checkDropdown(DropdownType.LEAD_STAGE, d.leadStage, 'leadStage', 'Lead Stage');
   checkDropdown(DropdownType.LEAD_VERIFICATION, d.leadVerification, 'leadVerification', 'Lead Verification');
   checkDropdown(DropdownType.DATA_CALLING_TYPE, d.dataCallingType, 'dataCallingType', 'Data Calling Type');
-  checkDropdown(DropdownType.DEAL_TYPE, d.dealType, 'dealType', 'Deal Type');
 
   return { errors, resolved };
+}
+
+// A grouped stage notification stores the ids it covers so the viewer can list
+// them; it pages through at most 100, so a few hundred is ample.
+const STAGE_NOTIFICATION_LEAD_ID_CAP = 500;
+
+/**
+ * Tells each assigned agent that their lead(s) moved to a new stage.
+ *
+ * Grouped per agent rather than one notification per lead: a bulk request can
+ * advance dozens of leads belonging to the same person, and that many separate
+ * notifications would bury everything else in their bell. A single lead still
+ * gets its own notification so it can link straight to that lead; several are
+ * summarised and open the same lead list the assignment notifications use.
+ *
+ * Unassigned leads are skipped — there is nobody to tell.
+ *
+ * Never throws: the stage changes are already committed, so a notification
+ * failure must not turn a successful ingest into an error.
+ */
+async function notifyStageChanges(
+  applied: { leadId: string; stage: string; from: string | null; name: string; assignedToId: string | null }[],
+): Promise<void> {
+  const byAgent = new Map<string, typeof applied>();
+  for (const u of applied) {
+    if (!u.assignedToId) continue;
+    const list = byAgent.get(u.assignedToId);
+    if (list) list.push(u);
+    else byAgent.set(u.assignedToId, [u]);
+  }
+  if (byAgent.size === 0) return;
+
+  const data = Array.from(byAgent.entries()).map(([agentId, updates]) => {
+    if (updates.length === 1) {
+      const u = updates[0];
+      return {
+        userId: agentId,
+        type: 'LEAD_STAGE_CHANGED' as const,
+        title: 'Lead Stage Updated',
+        body: `${u.name}'s stage changed from ${u.from ?? 'none'} to ${u.stage}.`,
+        leadId: u.leadId,
+      };
+    }
+    const stages = Array.from(new Set(updates.map((u) => u.stage)));
+    return {
+      userId: agentId,
+      type: 'LEAD_STAGE_CHANGED' as const,
+      title: 'Lead Stages Updated',
+      body: `${updates.length} of your leads moved to a new stage (${stages.slice(0, 3).join(', ')}${stages.length > 3 ? '…' : ''}).`,
+      leadIds: updates.slice(0, STAGE_NOTIFICATION_LEAD_ID_CAP).map((u) => u.leadId),
+    };
+  });
+
+  await prisma.notification.createMany({ data }).catch((err) =>
+    console.error('[v1/leads] stage-change notifications failed:', err),
+  );
 }
 
 function dedupeKey(email: string, college: string | null): string {
@@ -273,10 +326,15 @@ export async function POST(req: NextRequest) {
 
       // Validation above guarantees this matches a configured Lead Stage.
       const leadStage = d.leadStage.trim();
+      // Zone and Deal Type are properties of the college, configured once in
+      // Manage Colleges, so they are copied from there rather than sent per
+      // lead. `dealType` was removed from the payload for that reason — a
+      // client still sending it is ignored rather than rejected.
+      const collegeAttrs = maps.dropdownData.collegeAttributeMap.get(d.kappCollegeId.toLowerCase());
 
       const existing = await prisma.lead.findFirst({
         where: { email, college: college ? { equals: college, mode: 'insensitive' } : null },
-        select: { id: true, leadStage: true },
+        select: { id: true, leadStage: true, name: true, assignedToId: true },
       });
       if (existing) {
         // A repeat of the same lead at a NEW stage is progress, not a duplicate:
@@ -295,6 +353,21 @@ export async function POST(req: NextRequest) {
             description: `Lead stage updated to "${leadStage}" via API key "${apiKey.name}"`,
             metadata: { leadId: existing.id, from: existing.leadStage, to: leadStage },
           });
+          // Tell the agent who owns this lead that it moved, so they can act on
+          // it. Fire-and-forget: the stage change is already committed and a
+          // notification failure must not turn a successful update into an error.
+          if (existing.assignedToId) {
+            prisma.notification.create({
+              data: {
+                userId: existing.assignedToId,
+                type: 'LEAD_STAGE_CHANGED',
+                title: 'Lead Stage Updated',
+                body: `${existing.name}'s stage changed from ${existing.leadStage ?? 'none'} to ${leadStage}.`,
+                leadId: existing.id,
+              },
+            }).catch((err) => console.error('[v1/leads] stage-change notification failed:', err));
+          }
+
           return NextResponse.json(
             { success: true, message: `Lead stage updated to "${leadStage}"`, Lead_ID: existing.id },
             { status: 200 },
@@ -316,7 +389,9 @@ export async function POST(req: NextRequest) {
           kappCollegeId: d.kappCollegeId, campaign: d.leadCode,
           leadType: d.leadType, leadOrigin: d.leadOrigin, leadConfirmation: d.leadConfirmation,
           leadStage, leadVerification: d.leadVerification,
-          dataCallingType: d.dataCallingType, dealType: d.dealType,
+          dataCallingType: d.dataCallingType,
+          leadZone: collegeAttrs?.zone ?? null,
+          dealType: collegeAttrs?.dealType ?? null,
           primaryApplicationConfirm: 'No', primaryAdmissionConfirm: 'No',
           uploadedAt: new Date(`${d.createdAt}T00:00:00.000Z`),
           status: 'APPROVED', approvedById: apiKey.createdById, approvedAt: now,
@@ -372,10 +447,10 @@ export async function POST(req: NextRequest) {
     if (pending.length > 0) {
       const existing = await prisma.lead.findMany({
         where: { OR: pending.map((p) => ({ email: p.d.email.toLowerCase(), college: p.college ? { equals: p.college, mode: 'insensitive' as const } : null })) },
-        select: { id: true, email: true, college: true, leadStage: true },
+        select: { id: true, email: true, college: true, leadStage: true, name: true, assignedToId: true },
       });
-      const existingByKey = new Map<string, { id: string; leadStage: string | null }>();
-      for (const e of existing) existingByKey.set(dedupeKey(e.email, e.college), { id: e.id, leadStage: e.leadStage });
+      const existingByKey = new Map<string, { id: string; leadStage: string | null; name: string; assignedToId: string | null }>();
+      for (const e of existing) existingByKey.set(dedupeKey(e.email, e.college), { id: e.id, leadStage: e.leadStage, name: e.name, assignedToId: e.assignedToId });
 
       // Every stage here already passed validation against the configured list.
       const canonicalStage = (raw: string | null | undefined) => (raw ? raw.trim() : null);
@@ -389,7 +464,7 @@ export async function POST(req: NextRequest) {
       const duplicateOfIndex = new Map<number, number>(); // index -> index of the batch item creating it
 
       // Same-lead-new-stage advances the existing lead; see the single path.
-      const stageUpdates: { index: number; leadId: string; from: string | null; stage: string }[] = [];
+      const stageUpdates: { index: number; leadId: string; from: string | null; stage: string; name: string; assignedToId: string | null }[] = [];
       // Same, but for a lead created earlier in THIS request, whose id only
       // exists after Phase 3.
       const intraBatchStageUpdates: { index: number; sourceIndex: number; stage: string }[] = [];
@@ -400,11 +475,11 @@ export async function POST(req: NextRequest) {
         if (hit) {
           const stage = canonicalStage(p.d.leadStage);
           if (stage && hit.leadStage !== stage) {
-            stageUpdates.push({ index: p.index, leadId: hit.id, from: hit.leadStage, stage });
+            stageUpdates.push({ index: p.index, leadId: hit.id, from: hit.leadStage, stage, name: hit.name, assignedToId: hit.assignedToId });
             // Keep the map current so a second item for the same lead later in
             // this request compares against the stage we are about to write,
             // instead of re-applying the same update.
-            existingByKey.set(key, { id: hit.id, leadStage: stage });
+            existingByKey.set(key, { id: hit.id, leadStage: stage, name: hit.name, assignedToId: hit.assignedToId });
           } else {
             results[p.index] = { index: p.index, success: false, message: 'Duplicate lead — a lead with this email and college already exists', Lead_ID: hit.id };
           }
@@ -444,6 +519,9 @@ export async function POST(req: NextRequest) {
           else byLead.set(u.leadId, [u]);
         }
 
+        // Only leads whose update actually committed get a notification.
+        const applied: typeof stageUpdates = [];
+
         await Promise.all(Array.from(byLead.values()).map(async (updates) => {
           for (const u of updates) {
             try {
@@ -452,12 +530,15 @@ export async function POST(req: NextRequest) {
                 prisma.leadStageEntry.create({ data: { leadId: u.leadId, stage: u.stage, source: 'API' } }),
               ]);
               results[u.index] = { index: u.index, success: true, message: `Lead stage updated to "${u.stage}"`, Lead_ID: u.leadId };
+              applied.push(u);
             } catch (err) {
               console.error('[v1/leads POST bulk] failed to update stage for item', u.index, err);
               results[u.index] = { index: u.index, success: false, message: 'Internal server error updating this lead stage', Lead_ID: u.leadId };
             }
           }
         }));
+
+        await notifyStageChanges(applied);
       }
 
       // Phase 3 — create everything that's left, in parallel
@@ -476,7 +557,10 @@ export async function POST(req: NextRequest) {
               kappCollegeId: d.kappCollegeId, campaign: d.leadCode,
               leadType: d.leadType, leadOrigin: d.leadOrigin, leadConfirmation: d.leadConfirmation,
               leadStage: canonicalStage(d.leadStage), leadVerification: d.leadVerification,
-              dataCallingType: d.dataCallingType, dealType: d.dealType,
+              dataCallingType: d.dataCallingType,
+              // Same as the single-lead path: both come from the college.
+              leadZone: maps.dropdownData.collegeAttributeMap.get(d.kappCollegeId.toLowerCase())?.zone ?? null,
+              dealType: maps.dropdownData.collegeAttributeMap.get(d.kappCollegeId.toLowerCase())?.dealType ?? null,
               primaryApplicationConfirm: 'No', primaryAdmissionConfirm: 'No',
               uploadedAt: new Date(`${d.createdAt}T00:00:00.000Z`),
               status: 'APPROVED', approvedById: apiKey.createdById, approvedAt: now,

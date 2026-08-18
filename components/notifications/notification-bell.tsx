@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Bell, UserPlus, CalendarClock, PhoneCall, CheckCheck, X, ArrowRight, Receipt, CheckCircle2, XCircle } from 'lucide-react';
+import { Bell, UserPlus, TrendingUp, CalendarClock, PhoneCall, CheckCheck, X, ArrowRight, Receipt, CheckCircle2, XCircle } from 'lucide-react';
 import { useSession } from 'next-auth/react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
@@ -11,7 +11,7 @@ import { toast } from '@/components/ui/use-toast';
 import { ToastAction } from '@/components/ui/toast';
 
 type NotificationKind =
-  | 'LEAD_ASSIGNED' | 'CALL_REMINDER' | 'CALL_NOW'
+  | 'LEAD_ASSIGNED' | 'LEAD_STAGE_CHANGED' | 'CALL_REMINDER' | 'CALL_NOW'
   | 'RECEIPT_SUBMITTED' | 'RECEIPT_APPROVED' | 'RECEIPT_DISAPPROVED';
 
 interface NotificationItem {
@@ -31,6 +31,12 @@ function notificationTarget(n: NotificationItem): { href: string; label: string 
   switch (n.type) {
     case 'LEAD_ASSIGNED':
       return { href: `/dashboard/notifications/${n.id}/leads`, label: 'View leads' };
+    // A single-lead stage change links straight to that lead; a grouped one
+    // opens the same list view as a bulk assignment.
+    case 'LEAD_STAGE_CHANGED':
+      return n.leadId
+        ? { href: `/leads/${n.leadId}/profile`, label: 'View lead' }
+        : { href: `/dashboard/notifications/${n.id}/leads`, label: 'View leads' };
     case 'RECEIPT_SUBMITTED':
       return { href: '/dashboard/super-admin/receipt-approvals', label: 'Review' };
     case 'RECEIPT_APPROVED':
@@ -65,6 +71,7 @@ function playChime() {
 
 const TYPE_META = {
   LEAD_ASSIGNED:       { Icon: UserPlus,      color: 'bg-blue-100 text-blue-600 dark:bg-blue-950 dark:text-blue-400' },
+  LEAD_STAGE_CHANGED:  { Icon: TrendingUp,    color: 'bg-violet-100 text-violet-600 dark:bg-violet-950 dark:text-violet-400' },
   CALL_REMINDER:       { Icon: CalendarClock, color: 'bg-amber-100 text-amber-600 dark:bg-amber-950 dark:text-amber-400' },
   CALL_NOW:            { Icon: PhoneCall,     color: 'bg-green-100 text-green-600 dark:bg-green-950 dark:text-green-400' },
   RECEIPT_SUBMITTED:   { Icon: Receipt,       color: 'bg-indigo-100 text-indigo-600 dark:bg-indigo-950 dark:text-indigo-400' },

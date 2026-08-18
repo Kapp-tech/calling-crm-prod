@@ -61,6 +61,10 @@ enum ScheduledCallStatus {
 
 enum NotificationType {
   LEAD_ASSIGNED
+  // The ingestion API moved one of the agent's leads to a new stage. Sent only
+  // when the lead is actually assigned to someone — an unassigned lead has
+  // nobody to tell.
+  LEAD_STAGE_CHANGED
   CALL_REMINDER
   CALL_NOW
   RECEIPT_SUBMITTED
