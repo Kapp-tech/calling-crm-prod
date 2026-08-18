@@ -1165,9 +1165,14 @@ export function LeadDetailDrawer({ leadId, onClose, canSubmitFeedback = false }:
 
                   {/* Stage history — the ingestion API re-sends a lead as its
                       stage advances, and each new stage is recorded here with
-                      when it arrived. Only shown once there is more than one;
-                      a single stage is already on the Lead Stage row above. */}
-                  {(lead.stageHistory?.length ?? 0) > 1 && (
+                      when it arrived.
+                      Shown from the first entry onwards, not just when there
+                      are two. A lead that predates this table has no recorded
+                      past, so its first API stage change produces exactly one
+                      entry — hiding that made a change that HAD been recorded
+                      look like it was missing. One entry still adds the date
+                      and source, which the Lead Stage row above does not. */}
+                  {(lead.stageHistory?.length ?? 0) > 0 && (
                     <div>
                       <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-2">
                         Lead Stage History
