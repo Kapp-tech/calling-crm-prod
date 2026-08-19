@@ -67,7 +67,11 @@ export interface AgentReportRow {
   notConnectedCalls: number;
   applications: number;
   admissions: number;
-  /** null — no dialer CDR, so there is nothing to average. */
+  /**
+   * Average minutes per answered call, from the dialer's post-call webhook.
+   * Still null when the dialer has reported nothing for this agent in the
+   * window — a gap, not a zero.
+   */
   avgTalktimeMin: number | null;
 }
 
@@ -113,7 +117,7 @@ export async function buildAgentReport(
     ...(period ? { createdAt: period } : {}),
   };
 
-  const [dialed, connected, notConnected, receipts, attendance] = await Promise.all([
+  const [dialed, connected, notConnected, receipts, attendance, talktime] = await Promise.all([
     db.leadFeedback.groupBy({ by: ['agentId'], where: feedbackBase, _count: { _all: true } }),
     connectedId
       ? db.leadFeedback.groupBy({
@@ -152,7 +156,30 @@ export async function buildAgentReport(
       },
       select: { userId: true, date: true },
     }),
+    // Talk time comes from the dialer's post-call webhook. Only answered calls
+    // are averaged: the dialer reports rung-but-unanswered calls with 00:00 talk
+    // time, and counting those would drag every agent's average toward zero and
+    // make a busy day look like a quiet one.
+    db.callLog.groupBy({
+      by: ['agentId'],
+      where: {
+        agentId: { in: ids },
+        talkTimeSeconds: { gt: 0 },
+        ...(period ? { startedAt: period } : {}),
+      },
+      _avg: { talkTimeSeconds: true },
+    }),
   ]);
+
+  // One decimal is enough to compare agents without implying second-level
+  // precision the dialer's MM:SS strings do not carry.
+  const talktimeBy = new Map<string, number>();
+  for (const row of talktime as { agentId: string | null; _avg: { talkTimeSeconds: number | null } }[]) {
+    const seconds = row._avg.talkTimeSeconds;
+    if (row.agentId && seconds != null) {
+      talktimeBy.set(row.agentId, Math.round((seconds / 60) * 10) / 10);
+    }
+  }
 
   const num = (rows: { agentId: string; _count: { _all: number } }[]) =>
     new Map(rows.map((r) => [r.agentId, r._count._all]));
@@ -193,7 +220,7 @@ export async function buildAgentReport(
       notConnectedCalls: notConnectedBy.get(a.id) ?? 0,
       applications: appsBy.get(a.id) ?? 0,
       admissions: admsBy.get(a.id) ?? 0,
-      avgTalktimeMin: null, // no dialer CDR
+      avgTalktimeMin: talktimeBy.get(a.id) ?? null,
     };
   });
 

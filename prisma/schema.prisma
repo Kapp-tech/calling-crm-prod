@@ -170,8 +170,15 @@ enum KpiSource {
   RECEIPT_COUNT
   /// Leads assigned to the agent during the period.
   LEADS_ASSIGNED
-  /// No source — a target can be set but achievement is left blank. For things
-  /// the CRM cannot see yet, such as talktime before the dialer's CDR exists.
+  /// Total talk time in whole minutes, from the dialer's post-call webhook.
+  CALL_TALKTIME_MINUTES
+  /// Calls the dialer reported for the agent in the period.
+  CALL_COUNT
+  /// Calls where the two parties actually spoke (talk time above zero) — the
+  /// dialer reports rung-but-unanswered calls too.
+  CALL_CONNECTED_COUNT
+  /// No source — a target can be set but achievement is left blank, for things
+  /// the CRM genuinely cannot see.
   NOT_MEASURED
 }
 
@@ -227,6 +234,7 @@ model User {
   // than per user, so there is no inverse "targets for me" relation.
   kpiDefinitions KpiDefinition[] @relation("KpiDefinitionCreatedBy")
   kpiTargetsSet  KpiTarget[]     @relation("KpiTargetSetBy")
+  callLogs       CallLog[]
 
   // Generic manager link (SA → TL, TL → Agent, SA → Operations)
   managerId String?
@@ -500,6 +508,7 @@ model Lead {
 
   // Push history when this lead triggered an external integration (e.g. LMS push)
   integrationLogs LeadIntegrationLog[]
+  callLogs        CallLog[]
 
   // Tracks the most recent feedback option — updated on every feedback submit
   currentFeedbackOptionId String?
@@ -1027,4 +1036,71 @@ model LeadIntegrationLog {
   @@index([integrationId])
   @@index([leadId])
   @@index([success])
+}
+
+
+/// One completed call, as reported by the DialShree dialer's post-call webhook.
+///
+/// The dialer is the only source of talk time and recordings — the CRM's
+/// click-to-call fires and forgets, and gets no call-progress events back. Rows
+/// arrive after the call ends, so this table is append-mostly and never written
+/// by the UI.
+///
+/// `leadId` and `agentId` are nullable on purpose: a call can legitimately
+/// involve a number no lead holds, or a dialer seat no CRM user is mapped to.
+/// Dropping those rows would lose real call activity, so they are stored
+/// unmatched and can be reconciled later.
+model CallLog {
+  id String @id @default(cuid())
+
+  /// The dialer's own id for the call (`dynamic_data.uniqueid`). Unique so a
+  /// retried or duplicated webhook updates the row instead of adding another.
+  /// Nullable because the field is not guaranteed to be present.
+  uniqueId String? @unique
+
+  leadId String?
+  lead   Lead?   @relation(fields: [leadId], references: [id], onDelete: SetNull)
+
+  agentId String?
+  agent   User?   @relation(fields: [agentId], references: [id], onDelete: SetNull)
+
+  /// Identity exactly as the dialer reported it, kept even when matched, so an
+  /// unmatched row can still be traced and a mis-match can be spotted.
+  phoneCode     String?
+  phoneNumber   String
+  agentSeat     String?
+  agentFullName String?
+  agentEmail    String?
+
+  callType String?
+  campaign String?
+  urlType  String?
+
+  startedAt DateTime?
+  endedAt   DateTime?
+
+  /// Seconds, parsed from the dialer's "MM:SS" / "HH:MM:SS" strings. The raw
+  /// strings are kept alongside because the provider's own sample is internally
+  /// inconsistent (a 12s call with 17s of ring time), and a future format
+  /// change should be visible rather than silently mis-parsed.
+  durationSeconds Int?
+  talkTimeSeconds Int?
+  ringTimeSeconds Int?
+  talkTimeRaw     String?
+  ringTimeRaw     String?
+
+  calledCount     Int?
+  lastLocalCallAt DateTime?
+
+  recordingUrl String?
+
+  /// The untouched webhook body. Anything not modelled above is still here.
+  payload Json
+
+  receivedAt DateTime @default(now())
+
+  @@index([leadId, startedAt])
+  @@index([agentId, startedAt])
+  @@index([phoneNumber])
+  @@index([startedAt])
 }

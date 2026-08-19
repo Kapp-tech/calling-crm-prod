@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/components/ui/use-toast';
+import { useClickToCall } from '@/lib/hooks/use-click-to-call';
 import { cn } from '@/lib/utils';
 import { triggerCelebration, isCelebrationFeedback } from '@/lib/celebrate';
 import { WhatsAppButton } from '@/components/shared/whatsapp-button';
@@ -752,6 +753,114 @@ interface ScheduledCallItem {
   status: 'PENDING' | 'DONE' | 'CANCELLED';
 }
 
+interface DialerCall {
+  id: string;
+  startedAt: string | null;
+  endedAt: string | null;
+  durationSeconds: number | null;
+  talkTimeSeconds: number | null;
+  ringTimeSeconds: number | null;
+  talkTimeRaw: string | null;
+  callType: string | null;
+  campaign: string | null;
+  recordingUrl: string | null;
+  agentFullName: string | null;
+  agentSeat: string | null;
+  receivedAt: string;
+  agent: { id: string; name: string } | null;
+}
+
+/** "00:12" from 12 seconds; "1:05:03" once it passes an hour. */
+function formatSeconds(total: number | null | undefined): string {
+  if (total === null || total === undefined) return '—';
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const sec = total % 60;
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return h > 0 ? `${h}:${pad(m)}:${pad(sec)}` : `${pad(m)}:${pad(sec)}`;
+}
+
+/**
+ * What actually happened on the phone, from the dialer's post-call webhook —
+ * as opposed to the feedback the counsellor typed afterwards.
+ *
+ * Nothing appears until the dialer has posted a call for this lead, so an empty
+ * state here is normal rather than an error.
+ */
+function DialerCallHistory({ leadId }: { leadId: string }) {
+  const { data: calls = [], isLoading } = useQuery<DialerCall[]>({
+    queryKey: ['lead-calls', leadId],
+    queryFn: () =>
+      fetch(`/api/leads/${leadId}/calls`)
+        .then((r) => r.json())
+        .then((d) => (Array.isArray(d) ? d : [])),
+  });
+
+  if (isLoading) return <div className="h-16 animate-pulse rounded-lg bg-muted" />;
+
+  return (
+    <div>
+      <p className="mb-2 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+        Dialer Calls {calls.length > 0 && <span className="font-semibold text-foreground">({calls.length})</span>}
+      </p>
+
+      {calls.length === 0 ? (
+        <div className="flex items-center gap-2 rounded-lg border border-dashed border-border/60 p-3 text-xs text-muted-foreground">
+          <PhoneIncoming className="h-4 w-4 opacity-50 shrink-0" />
+          No calls recorded by the dialer for this lead yet.
+        </div>
+      ) : (
+        <div className="space-y-1.5">
+          {calls.map((c) => {
+            // The dialer reports rung-but-unanswered calls with zero talk time;
+            // saying "not answered" is clearer than showing 00:00.
+            const answered = (c.talkTimeSeconds ?? 0) > 0;
+            const when = c.startedAt ?? c.receivedAt;
+            return (
+              <div key={c.id} className="rounded-md border border-border/40 px-3 py-2 text-xs">
+                <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                  {answered ? (
+                    <PhoneCall className="h-3.5 w-3.5 shrink-0 text-emerald-600" />
+                  ) : (
+                    <PhoneOff className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                  )}
+                  <span className="font-semibold">{formatIstDateTime(when)}</span>
+                  {c.callType && (
+                    <span className="rounded border border-border px-1 py-0 text-[9px] uppercase text-muted-foreground">
+                      {c.callType}
+                    </span>
+                  )}
+                  <span className={cn('font-medium', answered ? 'text-emerald-700 dark:text-emerald-400' : 'text-muted-foreground')}>
+                    {answered ? `Talked ${formatSeconds(c.talkTimeSeconds)}` : 'Not answered'}
+                  </span>
+                  {c.ringTimeSeconds != null && (
+                    <span className="text-muted-foreground">Rang {formatSeconds(c.ringTimeSeconds)}</span>
+                  )}
+                </div>
+                <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-muted-foreground">
+                  <span>{c.agent?.name ?? c.agentFullName ?? `Seat ${c.agentSeat ?? '—'}`}</span>
+                  {c.campaign && <span>&middot; {c.campaign}</span>}
+                  {c.recordingUrl && (
+                    <a
+                      href={c.recordingUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="ml-auto inline-flex items-center gap-1 font-medium text-primary hover:underline"
+                    >
+                      <PhoneIncoming className="h-3 w-3" /> Recording
+                      <ExternalLink className="h-3 w-3" />
+                    </a>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function CallsTab({ leadId }: { leadId: string }) {
   const qc = useQueryClient();
   const { toast } = useToast();
@@ -829,10 +938,9 @@ function CallsTab({ leadId }: { leadId: string }) {
         </div>
       )}
 
-      {/* Call recordings — TODO: fetch and show recordings from the calling
-          system here. Feedback/follow-up history intentionally hidden from
-          this tab for now; it's still visible on the Follow-Ups and Timeline
-          tabs. */}
+      {/* Dialer call history. Feedback/follow-up history is intentionally kept
+          out of this tab; it's still on the Follow-Ups and Timeline tabs. */}
+      <DialerCallHistory leadId={leadId} />
 
       <div>
         {/* Past schedules */}
@@ -866,60 +974,9 @@ export function LeadDetailDrawer({ leadId, onClose, canSubmitFeedback = false }:
 
   const { toast: drawerToast } = useToast();
 
-  // ── Click-to-call (DialShree) ──────────────────────────────────────────────
-  // The dialer rings the agent's own softphone first and bridges the lead in,
-  // so "on call" here means "we asked the dialer to connect", not that the
-  // lead picked up — the CRM gets no call-progress events back. The button
-  // flips to Disconnect so the agent can drop the line from the CRM.
-  const [onCall, setOnCall] = useState(false);
-  // Whatever handle the dial response carried, echoed back on hangup.
-  const [callRef, setCallRef] = useState<string | undefined>();
-
-  const callMutation = useMutation({
-    mutationFn: async () => {
-      const r = await fetch('/api/dialer/call', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ leadId }),
-      });
-      const json = await r.json();
-      if (!r.ok || !json.success) throw new Error(json.error || 'Could not place the call');
-      return json;
-    },
-    onSuccess: (json) => {
-      setOnCall(true);
-      const ref = json?.result?.call_id ?? json?.result?.data?.call_id ?? json?.result?.value;
-      setCallRef(ref != null ? String(ref) : undefined);
-      drawerToast({ title: 'Calling…', description: 'Answer your dialer to connect to the lead.' });
-    },
-    onError: (err: Error) => drawerToast({ title: 'Call failed', description: err.message, variant: 'destructive' }),
-  });
-
-  const hangupMutation = useMutation({
-    mutationFn: async () => {
-      const r = await fetch('/api/dialer/hangup', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ leadId, value: callRef }),
-      });
-      const json = await r.json();
-      if (!r.ok || !json.success) throw new Error(json.error || 'Could not end the call');
-      return json;
-    },
-    // Either way the agent is done with this call — never strand them on a
-    // Disconnect button that cannot be cleared.
-    onSettled: () => {
-      setOnCall(false);
-      setCallRef(undefined);
-    },
-    onError: (err: Error) => drawerToast({ title: 'Hangup failed', description: err.message, variant: 'destructive' }),
-  });
-
-  // Switching to another lead must not leave the previous one showing "on call".
-  useEffect(() => {
-    setOnCall(false);
-    setCallRef(undefined);
-  }, [leadId]);
+  // Click-to-call, shared with the lead profile page — see useClickToCall. The
+  // button flips to Disconnect so the agent can drop the line from the CRM.
+  const { onCall, isDialing, isHangingUp, call, hangup } = useClickToCall(leadId);
 
   const { data: lead, isLoading } = useQuery<LeadDetail>({
     queryKey: ['lead-detail', leadId],
@@ -1083,10 +1140,10 @@ export function LeadDetailDrawer({ leadId, onClose, canSubmitFeedback = false }:
                           size="sm"
                           variant="destructive"
                           className="gap-1.5 text-xs"
-                          onClick={() => hangupMutation.mutate()}
-                          disabled={hangupMutation.isPending}
+                          onClick={hangup}
+                          disabled={isHangingUp}
                         >
-                          {hangupMutation.isPending
+                          {isHangingUp
                             ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
                             : <PhoneOff className="h-3.5 w-3.5" />}
                           Disconnect Call
@@ -1095,13 +1152,13 @@ export function LeadDetailDrawer({ leadId, onClose, canSubmitFeedback = false }:
                         <Button
                           size="sm"
                           className="gap-1.5 bg-[#0e4164] hover:bg-[#0c3755] text-white text-xs"
-                          onClick={() => callMutation.mutate()}
-                          disabled={callMutation.isPending}
+                          onClick={call}
+                          disabled={isDialing}
                         >
-                          {callMutation.isPending
+                          {isDialing
                             ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
                             : <Phone className="h-3.5 w-3.5" />}
-                          {callMutation.isPending ? 'Connecting…' : 'Call'}
+                          {isDialing ? 'Connecting…' : 'Call'}
                         </Button>
                       )}
                       <WhatsAppButton

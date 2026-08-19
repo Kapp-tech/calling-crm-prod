@@ -58,9 +58,30 @@ export const KPI_SOURCES: {
     measurable: true,
   },
   {
+    key: 'CALL_TALKTIME_MINUTES',
+    label: 'Talk time (minutes)',
+    help: 'Total minutes the agent actually spent talking in the period, from the dialer’s post-call webhook. Rounded down to whole minutes.',
+    needs: [],
+    measurable: true,
+  },
+  {
+    key: 'CALL_COUNT',
+    label: 'Calls made (dialer)',
+    help: 'Every call the dialer reported for the agent in the period, answered or not. Unlike “Feedback logged”, this counts the call itself rather than the counsellor writing it up.',
+    needs: [],
+    measurable: true,
+  },
+  {
+    key: 'CALL_CONNECTED_COUNT',
+    label: 'Calls answered (dialer)',
+    help: 'Calls where the two parties actually spoke — the dialer reports rung-but-unanswered calls too, and those are excluded here.',
+    needs: [],
+    measurable: true,
+  },
+  {
     key: 'NOT_MEASURED',
     label: 'Not measured (target only)',
-    help: 'Set a target but show no achievement. For anything the CRM cannot see yet, such as talktime before the dialer’s call records are integrated.',
+    help: 'Set a target but show no achievement. For anything the CRM genuinely cannot see.',
     needs: [],
     measurable: false,
   },
@@ -198,6 +219,26 @@ export async function computeKpiActual(
     case 'LEADS_ASSIGNED':
       return db.lead.count({ where: { assignedToId: userId, assignedAt: inPeriod } });
 
+    // The three dialer sources below are only as complete as the post-call
+    // webhook. A call whose seat is not mapped to a CRM user is stored but
+    // attributed to nobody, so it counts for no one rather than for everyone.
+    case 'CALL_TALKTIME_MINUTES': {
+      const agg = await db.callLog.aggregate({
+        where: { agentId: userId, startedAt: inPeriod },
+        _sum: { talkTimeSeconds: true },
+      });
+      // Floor, not round: a target of "60 min" should not be met by 59m31s.
+      return Math.floor((agg._sum.talkTimeSeconds ?? 0) / 60);
+    }
+
+    case 'CALL_COUNT':
+      return db.callLog.count({ where: { agentId: userId, startedAt: inPeriod } });
+
+    case 'CALL_CONNECTED_COUNT':
+      return db.callLog.count({
+        where: { agentId: userId, startedAt: inPeriod, talkTimeSeconds: { gt: 0 } },
+      });
+
     case 'NOT_MEASURED':
     default:
       return null;
@@ -223,7 +264,7 @@ export const DEFAULT_KPIS: {
   { name: 'Hot Leads', unit: 'leads', source: 'LEAD_STAGE_LIVE', leadStages: ['Hot'], sortOrder: 3 },
   { name: 'Warm Leads', unit: 'leads', source: 'LEAD_STAGE_LIVE', leadStages: ['Warm'], sortOrder: 4 },
   { name: 'Paid Apps', unit: 'apps', source: 'RECEIPT_COUNT', receiptType: 'APPLICATION', sortOrder: 5 },
-  { name: 'Talktime', unit: 'min', source: 'NOT_MEASURED', sortOrder: 6 },
+  { name: 'Talktime', unit: 'min', source: 'CALL_TALKTIME_MINUTES', sortOrder: 6 },
 ];
 
 /**
