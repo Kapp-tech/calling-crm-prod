@@ -1,0 +1,264 @@
+import { KpiPeriod, KpiSource, Prisma, PrismaClient, ReceiptType } from '@prisma/client';
+import { istStartOfDay, istEndOfDay, istDayKey, istShiftDays } from './ist-time';
+
+/**
+ * KPI evaluation.
+ *
+ * A KPI is a row in KpiDefinition, not a branch in code: pick a source, narrow
+ * it with the definition's fields, and this file turns that into a number. That
+ * means a new KPI is something an admin creates from the page, and the six the
+ * system ships with are ordinary definitions they can edit or delete.
+ */
+
+export const KPI_SOURCES: {
+  key: KpiSource;
+  label: string;
+  /** What the source counts, shown in the builder so the choice is obvious. */
+  help: string;
+  /** Which config fields the builder should ask for. */
+  needs: ('feedback' | 'leadStages' | 'receiptType')[];
+  /** A point-in-time count: the period window does not apply. */
+  snapshot?: boolean;
+  measurable: boolean;
+}[] = [
+  {
+    key: 'FEEDBACK_COUNT',
+    label: 'Feedback logged',
+    help: 'Counts every follow-up logged in the period. Narrow it to particular feedback options or whole categories, or leave both empty to count all of them.',
+    needs: ['feedback'],
+    measurable: true,
+  },
+  {
+    key: 'FEEDBACK_LEADS',
+    label: 'Leads with that feedback',
+    help: 'Like the above, but counts each lead once however many times it was followed up in the period.',
+    needs: ['feedback'],
+    measurable: true,
+  },
+  {
+    key: 'LEAD_STAGE_LIVE',
+    label: 'Leads at a stage (live)',
+    help: 'How many of the agent’s assigned leads sit at the chosen Lead Stage right now. Ignores the period — the same lead counts while it stays there.',
+    needs: ['leadStages'],
+    snapshot: true,
+    measurable: true,
+  },
+  {
+    key: 'RECEIPT_COUNT',
+    label: 'Approved receipts',
+    help: 'Approved receipts of the chosen type for the agent’s leads, counted by the date the student paid rather than when it was approved.',
+    needs: ['receiptType'],
+    measurable: true,
+  },
+  {
+    key: 'LEADS_ASSIGNED',
+    label: 'Leads assigned',
+    help: 'Leads handed to the agent during the period.',
+    needs: [],
+    measurable: true,
+  },
+  {
+    key: 'NOT_MEASURED',
+    label: 'Not measured (target only)',
+    help: 'Set a target but show no achievement. For anything the CRM cannot see yet, such as talktime before the dialer’s call records are integrated.',
+    needs: [],
+    measurable: false,
+  },
+];
+
+export const KPI_PERIODS: { key: KpiPeriod; label: string }[] = [
+  { key: 'DAILY', label: 'Daily' },
+  { key: 'WEEKLY', label: 'Weekly' },
+  { key: 'MONTHLY', label: 'Monthly' },
+  { key: 'QUARTERLY', label: 'Quarterly' },
+];
+
+/**
+ * The window a period covers, anchored to IST calendar boundaries.
+ *
+ * Every date the CRM shows is an IST calendar day, so a "day" here must be too —
+ * the server's local midnight would shift every figure by 5h30m and file
+ * late-evening work under the wrong day.
+ *
+ * Weeks run Monday–Sunday. Quarters are calendar quarters, not the Indian
+ * financial year.
+ */
+export function kpiPeriodRange(period: KpiPeriod, now = new Date()): { from: Date; to: Date; label: string } {
+  const todayKey = istDayKey(now);
+
+  if (period === 'DAILY') {
+    return { from: istStartOfDay(todayKey), to: istEndOfDay(todayKey), label: 'Today' };
+  }
+
+  if (period === 'WEEKLY') {
+    // The key is already the IST date, so its weekday is read in UTC to avoid
+    // applying a second timezone shift.
+    const dow = new Date(`${todayKey}T00:00:00.000Z`).getUTCDay(); // 0=Sun
+    const monday = istShiftDays(todayKey, -(dow === 0 ? 6 : dow - 1));
+    return { from: istStartOfDay(monday), to: istEndOfDay(istShiftDays(monday, 6)), label: 'This week' };
+  }
+
+  const [y, m] = todayKey.split('-').map(Number);
+
+  if (period === 'MONTHLY') {
+    const first = `${y}-${String(m).padStart(2, '0')}-01`;
+    const lastDay = new Date(Date.UTC(y, m, 0)).getUTCDate();
+    return {
+      from: istStartOfDay(first),
+      to: istEndOfDay(`${y}-${String(m).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`),
+      label: 'This month',
+    };
+  }
+
+  const qStart = Math.floor((m - 1) / 3) * 3 + 1;
+  const qEnd = qStart + 2;
+  const lastDay = new Date(Date.UTC(y, qEnd, 0)).getUTCDate();
+  return {
+    from: istStartOfDay(`${y}-${String(qStart).padStart(2, '0')}-01`),
+    to: istEndOfDay(`${y}-${String(qEnd).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`),
+    label: `Q${Math.floor((m - 1) / 3) + 1}`,
+  };
+}
+
+/** The subset of a definition this evaluator needs. */
+export interface KpiDefinitionLike {
+  id: string;
+  source: KpiSource;
+  feedbackOptionIds: string[];
+  feedbackCategoryIds: string[];
+  leadStages: string[];
+  receiptType: ReceiptType | null;
+}
+
+/**
+ * Builds the feedback filter for a definition.
+ *
+ * Options and categories are OR'd: "count Hot, Warm, or anything Connected".
+ * Both empty means no narrowing at all — every feedback counts.
+ */
+function feedbackWhere(def: KpiDefinitionLike): Prisma.LeadFeedbackWhereInput {
+  const or: Prisma.LeadFeedbackWhereInput[] = [];
+  if (def.feedbackOptionIds.length > 0) or.push({ feedbackOptionId: { in: def.feedbackOptionIds } });
+  if (def.feedbackCategoryIds.length > 0) {
+    or.push({ feedbackOption: { categoryId: { in: def.feedbackCategoryIds } } });
+  }
+  return or.length === 0 ? {} : { OR: or };
+}
+
+/**
+ * One agent's achievement for one KPI in one period.
+ *
+ * Returns null when the definition has no source, so the caller can render a
+ * gap. A zero would read as "this agent did nothing", which is a different and
+ * unfair claim.
+ */
+export async function computeKpiActual(
+  db: PrismaClient | Prisma.TransactionClient,
+  def: KpiDefinitionLike,
+  userId: string,
+  period: KpiPeriod,
+  now = new Date(),
+): Promise<number | null> {
+  const { from, to } = kpiPeriodRange(period, now);
+  const inPeriod = { gte: from, lte: to };
+
+  switch (def.source) {
+    case 'FEEDBACK_COUNT':
+      return db.leadFeedback.count({
+        where: { agentId: userId, createdAt: inPeriod, ...feedbackWhere(def) },
+      });
+
+    case 'FEEDBACK_LEADS': {
+      // Distinct leads rather than rows: groupBy is the cheapest way to get a
+      // distinct count out of Prisma without a raw query.
+      const rows = await db.leadFeedback.groupBy({
+        by: ['leadId'],
+        where: { agentId: userId, createdAt: inPeriod, ...feedbackWhere(def) },
+      });
+      return rows.length;
+    }
+
+    case 'LEAD_STAGE_LIVE':
+      // Snapshot — the period window is deliberately not applied.
+      if (def.leadStages.length === 0) return 0;
+      return db.lead.count({
+        where: { assignedToId: userId, leadStage: { in: def.leadStages, mode: 'insensitive' } },
+      });
+
+    case 'RECEIPT_COUNT':
+      return db.leadReceipt.count({
+        where: {
+          status: 'APPROVED',
+          ...(def.receiptType ? { type: def.receiptType } : {}),
+          paidDate: inPeriod,
+          lead: { assignedToId: userId },
+        },
+      });
+
+    case 'LEADS_ASSIGNED':
+      return db.lead.count({ where: { assignedToId: userId, assignedAt: inPeriod } });
+
+    case 'NOT_MEASURED':
+    default:
+      return null;
+  }
+}
+
+/**
+ * The KPIs the system starts with — ordinary definitions, editable and
+ * deletable like any other, seeded once so the page is never empty.
+ */
+export const DEFAULT_KPIS: {
+  name: string;
+  unit: string;
+  source: KpiSource;
+  leadStages?: string[];
+  receiptType?: ReceiptType;
+  /** Resolved at seed time: attach every option in this category, by name. */
+  categoryName?: string;
+  sortOrder: number;
+}[] = [
+  { name: 'Dialed Calls', unit: 'calls', source: 'FEEDBACK_COUNT', sortOrder: 1 },
+  { name: 'Connected Calls', unit: 'calls', source: 'FEEDBACK_COUNT', categoryName: 'Connected', sortOrder: 2 },
+  { name: 'Hot Leads', unit: 'leads', source: 'LEAD_STAGE_LIVE', leadStages: ['Hot'], sortOrder: 3 },
+  { name: 'Warm Leads', unit: 'leads', source: 'LEAD_STAGE_LIVE', leadStages: ['Warm'], sortOrder: 4 },
+  { name: 'Paid Apps', unit: 'apps', source: 'RECEIPT_COUNT', receiptType: 'APPLICATION', sortOrder: 5 },
+  { name: 'Talktime', unit: 'min', source: 'NOT_MEASURED', sortOrder: 6 },
+];
+
+/**
+ * Creates the default KPIs the first time the page is opened.
+ *
+ * Runs only when there are none at all, so it cannot resurrect a KPI an admin
+ * deliberately deleted, and never overwrites one they have edited.
+ */
+export async function seedDefaultKpisIfEmpty(
+  db: PrismaClient,
+  createdById: string,
+): Promise<number> {
+  const existing = await db.kpiDefinition.count();
+  if (existing > 0) return 0;
+
+  const categories = await db.feedbackCategory.findMany({ select: { id: true, name: true } });
+  const catId = (name?: string) =>
+    name ? categories.find((c) => c.name.toLowerCase() === name.toLowerCase())?.id : undefined;
+
+  let created = 0;
+  for (const d of DEFAULT_KPIS) {
+    const cid = catId(d.categoryName);
+    await db.kpiDefinition.create({
+      data: {
+        name: d.name,
+        unit: d.unit,
+        source: d.source,
+        feedbackCategoryIds: cid ? [cid] : [],
+        leadStages: d.leadStages ?? [],
+        receiptType: d.receiptType ?? null,
+        sortOrder: d.sortOrder,
+        createdById,
+      },
+    });
+    created++;
+  }
+  return created;
+}

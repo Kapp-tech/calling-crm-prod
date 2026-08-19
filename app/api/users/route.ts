@@ -37,6 +37,9 @@ const createUserSchema = z.object({
   // DialShree dialer seat. Trimmed to null when blank so the unique index
   // does not treat several empty strings as a collision.
   dialshreeId: z.string().trim().max(64).optional().nullable(),
+  // Reporting attributes — see the notes on the fields in schema.prisma.
+  zone:     z.string().trim().max(40).optional().nullable(),
+  language: z.string().trim().max(80).optional().nullable(),
 });
 
 export async function GET(req: NextRequest) {
@@ -89,7 +92,7 @@ export async function GET(req: NextRequest) {
     },
     select: {
       id: true, name: true, email: true, role: true, workType: true, isActive: true, status: true,
-      employeeCode: true, phone: true, joiningDate: true, createdAt: true, dialshreeId: true,
+      employeeCode: true, phone: true, joiningDate: true, createdAt: true, dialshreeId: true, zone: true, language: true,
       managedById: true, managerId: true, teamId: true, operationsGroupId: true,
       managedBy: { select: { id: true, name: true } },
       team: { select: { id: true, name: true } },
@@ -136,6 +139,8 @@ export async function POST(req: NextRequest) {
         // Blank input must land as NULL: `dialshreeId` is unique, and several
         // users saved with '' would collide on the second one.
         dialshreeId: data.dialshreeId?.trim() || null,
+        zone:     data.zone?.trim() || null,
+        language: data.language?.trim() || null,
         managerId,
         password: hashed,
         employeeCode,

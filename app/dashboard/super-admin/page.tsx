@@ -5,6 +5,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
+import { AGENT_ZONES } from '@/lib/college-attributes';
 import { Plus, Pencil, UserX, UserCheck, Loader2, Search } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -61,6 +62,10 @@ const userSchema = z.object({
     .string()
     .optional()
     .refine((v) => !v || /^\d{1,15}$/.test(v), 'DialShree ID must be digits only'),
+  // Reporting attributes. Zone shares the college zone list so the two line up
+  // on reports; language is free text because the real list is long and regional.
+  zone: z.string().optional(),
+  language: z.string().max(80).optional(),
 });
 
 type UserForm = z.infer<typeof userSchema>;
@@ -82,6 +87,8 @@ interface UserRecord {
   email: string;
   phone?: string | null;
   dialshreeId?: string | null;
+  zone?: string | null;
+  language?: string | null;
   role: string;
   workType: 'WFH' | 'WFO';
   isActive: boolean;
@@ -142,6 +149,8 @@ export default function SuperAdminPage() {
       password: '',
       phone: user.phone ?? '',
       dialshreeId: user.dialshreeId ?? '',
+      zone: user.zone ?? '',
+      language: user.language ?? '',
       role: user.role as typeof ROLES[number],
       workType: user.workType,
       managedById: user.managedById ?? undefined,
@@ -436,6 +445,24 @@ export default function SuperAdminPage() {
               </p>
               {errors.dialshreeId && <p className="text-xs text-destructive">{errors.dialshreeId.message}</p>}
             </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label>Agent Zone</Label>
+                <select
+                  {...register('zone')}
+                  className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background transition-all duration-200 hover:border-muted-foreground/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  <option value="">— Not set —</option>
+                  {AGENT_ZONES.map((z) => (
+                    <option key={z} value={z}>{z}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="space-y-1.5">
+                <Label>Agent Language</Label>
+                <Input {...register('language')} placeholder="e.g. Hindi, English" maxLength={80} />
+              </div>
+            </div>
             <div className="space-y-2">
               <Label>Role</Label>
               <Select onValueChange={(v) => setValue('role', v as typeof ROLES[number])}>
@@ -568,6 +595,24 @@ export default function SuperAdminPage() {
                 Links this agent to their dialer extension. Without it, the Call button is disabled for them.
               </p>
               {editForm.formState.errors.dialshreeId && <p className="text-xs text-destructive">{editForm.formState.errors.dialshreeId.message}</p>}
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label>Agent Zone</Label>
+                <select
+                  {...editForm.register('zone')}
+                  className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background transition-all duration-200 hover:border-muted-foreground/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  <option value="">— Not set —</option>
+                  {AGENT_ZONES.map((z) => (
+                    <option key={z} value={z}>{z}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="space-y-1.5">
+                <Label>Agent Language</Label>
+                <Input {...editForm.register('language')} placeholder="e.g. Hindi, English" maxLength={80} />
+              </div>
             </div>
             <div className="space-y-2">
               <Label>New Password</Label>

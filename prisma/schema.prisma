@@ -152,6 +152,36 @@ enum LeadIntegrationTrigger {
   REFERRAL_CREATED
 }
 
+/// Where a KPI's number comes from. A KPI is defined by picking one of these
+/// and then narrowing it with the fields on KpiDefinition, so a new KPI is
+/// configuration rather than code.
+enum KpiSource {
+  /// Feedback the agent logged in the period, optionally narrowed to particular
+  /// feedback options or whole categories. Leave both empty to count them all.
+  FEEDBACK_COUNT
+  /// Distinct leads the agent gave that feedback to in the period — use this
+  /// when repeat follow-ups on one lead should count once.
+  FEEDBACK_LEADS
+  /// A live count of the agent's assigned leads currently at the chosen Lead
+  /// Stage(s). A snapshot: it ignores the period and the same lead keeps
+  /// counting while it sits there.
+  LEAD_STAGE_LIVE
+  /// Approved receipts for the agent's leads in the period, by date paid.
+  RECEIPT_COUNT
+  /// Leads assigned to the agent during the period.
+  LEADS_ASSIGNED
+  /// No source — a target can be set but achievement is left blank. For things
+  /// the CRM cannot see yet, such as talktime before the dialer's CDR exists.
+  NOT_MEASURED
+}
+
+enum KpiPeriod {
+  DAILY
+  WEEKLY
+  MONTHLY
+  QUARTERLY
+}
+
 // ─── Core Models ──────────────────────────────────────────────────────────────
 
 model User {
@@ -165,6 +195,13 @@ model User {
   employeeCode String     @unique
   phone        String?
   workType     WorkType   @default(WFO)
+  /// Which zone this agent covers — the same five values colleges use, so the
+  /// two line up on reports. Null until an admin sets it.
+  zone         String?
+  /// Languages the agent can counsel in, free text (e.g. "Hindi, English").
+  /// Deliberately not a dropdown: the list is long, regional and changes often,
+  /// and a wrong-but-close value here is harmless.
+  language     String?
   joiningDate  DateTime   @default(now())
   createdAt    DateTime   @default(now())
   updatedAt    DateTime   @updatedAt
@@ -185,6 +222,11 @@ model User {
   securityPinFailedAttempts Int                 @default(0)
   securityPinLockedUntil    DateTime?
   adminActionUnlocks        AdminActionUnlock[]
+
+  // KPIs and targets this user has authored. Both are organisation-wide rather
+  // than per user, so there is no inverse "targets for me" relation.
+  kpiDefinitions KpiDefinition[] @relation("KpiDefinitionCreatedBy")
+  kpiTargetsSet  KpiTarget[]     @relation("KpiTargetSetBy")
 
   // Generic manager link (SA → TL, TL → Agent, SA → Operations)
   managerId String?
@@ -258,6 +300,65 @@ model User {
   @@index([teamId])
   @@index([isActive])
   @@index([role, isActive])
+}
+
+/// A KPI the organisation measures — created and edited from the KPI page
+/// rather than defined in code, so a new one is a form, not a release.
+///
+/// `source` chooses the shape of the query and the fields below narrow it. Only
+/// the fields relevant to the chosen source are read; the rest stay empty.
+model KpiDefinition {
+  id     String    @id @default(cuid())
+  name   String    @unique
+  /// Shown after the number, e.g. "calls", "leads", "min".
+  unit   String    @default("")
+  source KpiSource
+
+  /// FEEDBACK_COUNT / FEEDBACK_LEADS — narrow to these options, and/or every
+  /// option in these categories. Both empty means "any feedback".
+  feedbackOptionIds   String[]
+  feedbackCategoryIds String[]
+  /// LEAD_STAGE_LIVE — the Lead Stage values that count.
+  leadStages          String[]
+  /// RECEIPT_COUNT — which receipt type counts.
+  receiptType         ReceiptType?
+
+  isActive  Boolean @default(true)
+  sortOrder Int     @default(0)
+
+  createdById String
+  createdBy   User   @relation("KpiDefinitionCreatedBy", fields: [createdById], references: [id])
+
+  targets   KpiTarget[]
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+
+  @@index([isActive, sortOrder])
+}
+
+/// One organisation-wide target per KPI per period length.
+///
+/// Deliberately not per agent: the same expectation applies to everyone, so
+/// changing it is a single edit and a new joiner is measured from day one.
+/// Cascades with its definition — deleting a KPI takes its targets with it.
+///
+/// Targets are absolute counts for the period: a DAILY target of 50 means 50
+/// per day, not 50 spread across the week.
+model KpiTarget {
+  id           String        @id @default(cuid())
+  definitionId String
+  definition   KpiDefinition @relation(fields: [definitionId], references: [id], onDelete: Cascade)
+
+  period KpiPeriod
+  target Int
+
+  setById String
+  setBy   User   @relation("KpiTargetSetBy", fields: [setById], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([definitionId, period])
 }
 
 model Team {

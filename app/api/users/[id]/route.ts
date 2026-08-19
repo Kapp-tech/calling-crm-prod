@@ -38,6 +38,9 @@ const updateUserSchema = z.object({
   rejectionReason: z.string().optional(),
   // DialShree dialer seat — see the note on the field in schema.prisma.
   dialshreeId: z.string().trim().max(64).optional().nullable(),
+  // Reporting attributes — see the notes on the fields in schema.prisma.
+  zone:     z.string().trim().max(40).optional().nullable(),
+  language: z.string().trim().max(80).optional().nullable(),
 });
 
 export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
@@ -114,6 +117,8 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
 
   // Same NULL-not-empty-string rule as on create — see app/api/users/route.ts.
   if ('dialshreeId' in parsed.data) updateData.dialshreeId = parsed.data.dialshreeId?.trim() || null;
+  if ('zone' in parsed.data)     updateData.zone     = parsed.data.zone?.trim() || null;
+  if ('language' in parsed.data) updateData.language = parsed.data.language?.trim() || null;
 
   if (password) updateData.password = await bcrypt.hash(password, 12);
   if (isActive !== undefined) {

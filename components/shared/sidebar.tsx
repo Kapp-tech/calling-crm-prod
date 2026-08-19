@@ -12,7 +12,7 @@ import {
   UserCircle, UserCheck, ClipboardList, LogOut, ChevronRight, ChevronDown,
   GitBranch, CalendarClock, X, ChevronsLeft, ChevronsRight,
   GraduationCap, Tag, Globe2, CheckSquare, ShieldCheck, Phone,
-  Megaphone, Gauge, Receipt, Layers, KeyRound, Settings, Trash2, Webhook, Search,
+  Megaphone, Gauge, Receipt, Layers, KeyRound, Settings, Trash2, Webhook, Search, Target, FileBarChart,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -248,17 +248,51 @@ const NAV: NavEntry[] = [
   },
   {
     type: 'leaf',
-    href: '/dashboard/super-admin/performance',
+    href: '/dashboard/super-admin/kpi',
+    label: 'KPI Targets',
+    icon: Target,
+    // An agent sees only their own targets and a TL only their team's — both
+    // read-only, enforced server-side in /api/kpi/targets. They are the people
+    // the targets are about, so hiding the page from them would be perverse.
+    roles: ['SUPER_ADMIN', 'REPORTS', 'COUNSELLING_TL', 'COUNSELLING_AGENT'],
+    exact: true,
+  },
+  {
+    type: 'group',
+    key: 'reports-performance',
     label: 'Reports & Performance',
     icon: BarChart3,
-    // REPORTS and COUNSELLING_TL included deliberately: the page only reads
-    // /api/analytics/*, which gate on VIEW_REPORTS (a default for both roles).
-    // REPORTS sees everything; a TL is pinned server-side to their own team, so
-    // the same page doubles as their team's scorecard. Needs the matching,
-    // more-specific rule in middleware.ts — the blanket '/dashboard/super-admin'
-    // rule would otherwise bounce them back to /dashboard.
-    roles: ['SUPER_ADMIN', 'REPORTS', 'COUNSELLING_TL'],
-    features: ['VIEW_REPORTS'],
+    // Agents are included for the group only so they can reach "Reports", which
+    // shows them their own numbers. Performance Analysis below stays closed to
+    // them — it is an org-wide analytics view.
+    roles: ['SUPER_ADMIN', 'REPORTS', 'COUNSELLING_TL', 'COUNSELLING_AGENT'],
+    children: [
+      {
+        href: '/dashboard/super-admin/performance',
+        label: 'Performance Analysis',
+        icon: Gauge,
+        // Unchanged page, just relabelled. REPORTS and COUNSELLING_TL included
+        // deliberately: it only reads /api/analytics/*, which gate on
+        // VIEW_REPORTS (a default for both). A TL is pinned server-side to
+        // their own team, so it doubles as their team's scorecard. Needs the
+        // matching, more-specific rule in middleware.ts — the blanket
+        // '/dashboard/super-admin' rule would otherwise bounce them.
+        roles: ['SUPER_ADMIN', 'REPORTS', 'COUNSELLING_TL'],
+        exact: true,
+        features: ['VIEW_REPORTS'],
+      },
+      {
+        href: '/dashboard/super-admin/reports',
+        label: 'Reports',
+        icon: FileBarChart,
+        // One page, three scopes: an agent sees themselves, a TL their team, a
+        // manager everyone. The scope is derived from the session server-side
+        // in /api/reports/agent-performance, never from a request parameter,
+        // so this entry being visible cannot widen anyone's view.
+        roles: ['SUPER_ADMIN', 'REPORTS', 'COUNSELLING_TL', 'COUNSELLING_AGENT'],
+        exact: true,
+      },
+    ],
   },
   {
     type: 'leaf',

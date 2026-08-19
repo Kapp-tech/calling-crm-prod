@@ -33,6 +33,16 @@ const ROLE_ROUTES: Record<string, Role[]> = {
   // /api/analytics/breakdown pin a TL to their own team (ignoring any teamId
   // in the request), so this page shows them their team's stats only.
   '/dashboard/super-admin/performance': ['SUPER_ADMIN', 'REPORTS', 'COUNSELLING_TL'],
+  // Same exception as above: the page sits under /dashboard/super-admin/* but is
+  // meant for everyone the targets concern. /api/kpi/targets decides what each
+  // role may see and allows only a Super Admin to change anything, so the page
+  // itself is safe to open to agents and TLs.
+  '/dashboard/super-admin/kpi': ['SUPER_ADMIN', 'REPORTS', 'COUNSELLING_TL', 'COUNSELLING_AGENT'],
+  // Same exception again: the Reports dashboards live under
+  // /dashboard/super-admin/* but every role has a version of them. The API
+  // decides the scope from the session, so opening the page cannot reveal
+  // anyone else's numbers.
+  '/dashboard/super-admin/reports': ['SUPER_ADMIN', 'REPORTS', 'COUNSELLING_TL', 'COUNSELLING_AGENT'],
 };
 
 export default withAuth(

@@ -11,6 +11,13 @@
  */
 export const COLLEGE_ZONES = ['North', 'South', 'East', 'West', 'Central'] as const;
 
+/**
+ * Agents are tagged with the same five zones as colleges, so "which zone does
+ * this agent cover" and "which zone is this college in" line up on reports
+ * rather than being two unrelated vocabularies.
+ */
+export const AGENT_ZONES = COLLEGE_ZONES;
+
 export const COLLEGE_DEAL_TYPES = ['Branding', 'CPL', 'CPA', 'CPS'] as const;
 
 export type CollegeZone = (typeof COLLEGE_ZONES)[number];

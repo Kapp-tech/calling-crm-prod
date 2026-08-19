@@ -1,0 +1,183 @@
+import { NextRequest, NextResponse } from 'next/server';
+import { getServerSession } from 'next-auth';
+import { z } from 'zod';
+import { KpiPeriod, Prisma } from '@prisma/client';
+import { authOptions } from '@/lib/auth';
+import { prisma } from '@/lib/prisma';
+import { logActivity } from '@/lib/permissions';
+import {
+  KPI_SOURCES, KPI_PERIODS, computeKpiActual, kpiPeriodRange, seedDefaultKpisIfEmpty,
+} from '@/lib/kpi';
+
+/**
+ * The KPI page's data: every KPI definition, its organisation-wide targets, and
+ * each agent's achievement for the selected period.
+ *
+ * Targets apply to everyone — there is no per-agent target, so changing an
+ * expectation is one edit and a new joiner is measured from their first day.
+ *
+ * Everyone may read: these are the expectations people are judged against.
+ * Only a Super Admin may change definitions or targets.
+ */
+async function agentScope(viewer: { id: string; role: string }): Promise<Prisma.UserWhereInput | null> {
+  if (viewer.role === 'COUNSELLING_AGENT') return { id: viewer.id };
+  if (viewer.role === 'COUNSELLING_TL') {
+    return {
+      role: 'COUNSELLING_AGENT',
+      isActive: true,
+      OR: [{ managedById: viewer.id }, { team: { teamLeadId: viewer.id } }],
+    };
+  }
+  if (viewer.role === 'SUPER_ADMIN' || viewer.role === 'REPORTS') {
+    return { role: 'COUNSELLING_AGENT', isActive: true };
+  }
+  return null;
+}
+
+const periodParam = z.nativeEnum(KpiPeriod).catch('DAILY' as KpiPeriod);
+
+export async function GET(req: NextRequest) {
+  const session = await getServerSession(authOptions);
+  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
+  const period = periodParam.parse(new URL(req.url).searchParams.get('period') ?? 'DAILY');
+
+  try {
+    // First visit by an admin populates the defaults so the page is never empty.
+    // Guarded on "no definitions at all", so a deliberately emptied list stays
+    // empty rather than regrowing.
+    if (session.user.role === 'SUPER_ADMIN') {
+      await seedDefaultKpisIfEmpty(prisma, session.user.id);
+    }
+
+    const [definitions, categories, options, stages] = await Promise.all([
+      prisma.kpiDefinition.findMany({
+        orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
+        include: { targets: { select: { period: true, target: true, updatedAt: true, setBy: { select: { name: true } } } } },
+      }),
+      prisma.feedbackCategory.findMany({ select: { id: true, name: true }, orderBy: { name: 'asc' } }),
+      prisma.feedbackOption.findMany({
+        where: { isActive: true },
+        select: { id: true, label: true, categoryId: true },
+        orderBy: { label: 'asc' },
+      }),
+      // Lead Stage choices come from Manage Dropdowns, so the builder offers
+      // exactly what the data can actually contain.
+      prisma.dropdownOption.findMany({
+        where: { type: 'LEAD_STAGE', isActive: true },
+        select: { value: true },
+        orderBy: { sortOrder: 'asc' },
+      }),
+    ]);
+
+    const now = new Date();
+    const ranges: Record<string, { label: string }> = {};
+    for (const p of KPI_PERIODS) ranges[p.key] = { label: kpiPeriodRange(p.key, now).label };
+
+    const scope = await agentScope(session.user);
+    const agents = scope
+      ? await prisma.user.findMany({
+          where: scope,
+          select: { id: true, name: true, employeeCode: true },
+          orderBy: { name: 'asc' },
+        })
+      : [];
+
+    // Achievement for the selected period only — computing all four for every
+    // agent would be four times the queries for numbers that are not on screen.
+    const achievement = await Promise.all(
+      agents.map(async (a) => ({
+        user: a,
+        actuals: Object.fromEntries(
+          await Promise.all(
+            definitions.map(async (d) => [d.id, await computeKpiActual(prisma, d, a.id, period, now)] as const),
+          ),
+        ),
+      })),
+    );
+
+    const allTargets = definitions.flatMap((d) => d.targets);
+    const lastSet = allTargets.reduce<{ at: Date; by: string } | null>((acc, t) => {
+      if (!acc || t.updatedAt > acc.at) return { at: t.updatedAt, by: t.setBy?.name ?? 'Unknown' };
+      return acc;
+    }, null);
+
+    return NextResponse.json({
+      definitions: definitions.map((d) => ({
+        id: d.id,
+        name: d.name,
+        unit: d.unit,
+        source: d.source,
+        feedbackOptionIds: d.feedbackOptionIds,
+        feedbackCategoryIds: d.feedbackCategoryIds,
+        leadStages: d.leadStages,
+        receiptType: d.receiptType,
+        isActive: d.isActive,
+        sortOrder: d.sortOrder,
+        targets: Object.fromEntries(d.targets.map((t) => [t.period, t.target])),
+      })),
+      sources: KPI_SOURCES,
+      periods: KPI_PERIODS,
+      ranges,
+      period,
+      achievement,
+      choices: { categories, options, leadStages: stages.map((s) => s.value) },
+      canEdit: session.user.role === 'SUPER_ADMIN',
+      lastSet: lastSet ? { at: lastSet.at.toISOString(), by: lastSet.by } : null,
+    });
+  } catch (err) {
+    console.error('[kpi/targets GET]', err);
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+  }
+}
+
+const putSchema = z.object({
+  targets: z.array(
+    z.object({
+      definitionId: z.string().min(1),
+      period: z.nativeEnum(KpiPeriod),
+      // null clears it. 0 is a real target ("none expected"), so it is kept.
+      target: z.number().int().min(0).max(1_000_000).nullable(),
+    }),
+  ).max(200),
+});
+
+export async function PUT(req: NextRequest) {
+  const session = await getServerSession(authOptions);
+  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  if (session.user.role !== 'SUPER_ADMIN') {
+    return NextResponse.json({ error: 'Only a Super Admin can set KPI targets' }, { status: 403 });
+  }
+
+  const parsed = putSchema.safeParse(await req.json().catch(() => null));
+  if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
+  const { targets } = parsed.data;
+
+  try {
+    await prisma.$transaction(
+      targets.map((t) =>
+        t.target === null
+          ? prisma.kpiTarget.deleteMany({ where: { definitionId: t.definitionId, period: t.period } })
+          : prisma.kpiTarget.upsert({
+              where: { definitionId_period: { definitionId: t.definitionId, period: t.period } },
+              create: { definitionId: t.definitionId, period: t.period, target: t.target, setById: session.user.id },
+              update: { target: t.target, setById: session.user.id },
+            }),
+      ),
+    );
+
+    const set = targets.filter((t) => t.target !== null).length;
+    await logActivity({
+      userId: session.user.id,
+      action: 'PERMISSION_CHANGED',
+      targetId: 'kpi-targets',
+      targetType: 'KpiTarget',
+      description: `Updated KPI targets (${set} of ${targets.length} filled)`,
+    });
+
+    return NextResponse.json({ success: true, saved: targets.length });
+  } catch (err) {
+    console.error('[kpi/targets PUT]', err);
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+  }
+}
