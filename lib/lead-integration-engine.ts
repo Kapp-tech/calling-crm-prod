@@ -73,7 +73,7 @@ export async function pushLeadToIntegrations(leadId: string, trigger: LeadIntegr
       include: {
         profile: true,
         referredBy: { select: { name: true } },
-        assignedTo: { select: { name: true } },
+        assignedTo: { select: { id: true, name: true, email: true, employeeCode: true, dialshreeId: true } },
       },
     });
     if (!lead) return;

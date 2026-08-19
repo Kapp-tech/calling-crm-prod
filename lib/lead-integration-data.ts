@@ -11,7 +11,13 @@ import { resolveCourseGroupId } from '@/lib/lms-course-lookup';
 export type LeadForTemplate = Lead & {
   profile?: LeadProfile | null;
   referredBy?: { name: string } | null;
-  assignedTo?: { name: string } | null;
+  assignedTo?: {
+    id: string;
+    name: string;
+    email: string;
+    employeeCode: string | null;
+    dialshreeId: string | null;
+  } | null;
 };
 
 /** Flattens a fetched lead (+ relations) into the flat key/value shape FIELD_CATALOG describes. */
@@ -53,7 +59,14 @@ export async function buildLeadTemplateData(lead: LeadForTemplate): Promise<Reco
     correctState: lead.correctState,
     createdAt: lead.createdAt?.toISOString(),
     referredBy_name: lead.referredBy?.name ?? null,
+
+    // Every agent identifier the receiving system might key on. Null on an
+    // unassigned lead — the template renderer turns that into an empty string.
     assignedTo_name: lead.assignedTo?.name ?? null,
+    assignedTo_employeeCode: lead.assignedTo?.employeeCode ?? null,
+    assignedTo_id: lead.assignedTo?.id ?? null,
+    assignedTo_email: lead.assignedTo?.email ?? null,
+    assignedTo_dialshreeId: lead.assignedTo?.dialshreeId ?? null,
 
     profile_budget: profile?.budget ?? null,
     profile_courseType: profile?.courseType ?? null,

@@ -43,7 +43,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     if ('leadId' in parsed.data) {
       const lead = await prisma.lead.findUnique({
         where: { id: parsed.data.leadId },
-        include: { profile: true, referredBy: { select: { name: true } }, assignedTo: { select: { name: true } } },
+        include: { profile: true, referredBy: { select: { name: true } }, assignedTo: { select: { id: true, name: true, email: true, employeeCode: true, dialshreeId: true } } },
       });
       if (!lead) return NextResponse.json({ error: 'Lead not found' }, { status: 404 });
       data = await buildLeadTemplateData(lead);

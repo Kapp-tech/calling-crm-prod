@@ -83,8 +83,8 @@ const TABS = [
 ] as const;
 type TabKey = (typeof TABS)[number]['key'];
 
-const FIELD_GROUPS: FieldGroup[] = ['Lead', 'LeadProfile', 'System'];
-const GROUP_LABEL: Record<FieldGroup, string> = { Lead: 'Lead', LeadProfile: 'Lead Profile', System: 'System' };
+const FIELD_GROUPS: FieldGroup[] = ['Lead', 'Agent', 'LeadProfile', 'System'];
+const GROUP_LABEL: Record<FieldGroup, string> = { Lead: 'Lead', Agent: 'Assigned Agent', LeadProfile: 'Lead Profile', System: 'System' };
 
 export function LeadIntegrationBuilder({ integrationId }: { integrationId?: string }) {
   const isEdit = !!integrationId;

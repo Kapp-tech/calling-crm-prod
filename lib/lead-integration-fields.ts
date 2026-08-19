@@ -5,7 +5,7 @@
 // buildLeadTemplateData()'s output keys below — the picker only makes sense
 // if what you click actually resolves to a value at send time.
 
-export type FieldGroup = 'Lead' | 'LeadProfile' | 'System';
+export type FieldGroup = 'Lead' | 'Agent' | 'LeadProfile' | 'System';
 
 export interface FieldDef {
   key: string;
@@ -45,7 +45,17 @@ export const FIELD_CATALOG: FieldDef[] = [
   { key: 'correctState', label: 'Verified State', group: 'Lead' },
   { key: 'createdAt', label: 'Created At', group: 'Lead' },
   { key: 'referredBy_name', label: 'Referred By (Name)', group: 'Lead' },
-  { key: 'assignedTo_name', label: 'Assigned To (Name)', group: 'Lead' },
+
+  // Agent — whoever the lead is currently assigned to. All null on an
+  // unassigned lead, which renders as an empty string in the template.
+  // There is no single "agent id", so each identifier is offered separately:
+  // pick Employee Code to match on a human-readable code, User ID for this
+  // CRM's own primary key, or Dialer ID for the DialShree seat.
+  { key: 'assignedTo_name', label: 'Agent Name', group: 'Agent' },
+  { key: 'assignedTo_employeeCode', label: 'Agent Employee Code', group: 'Agent' },
+  { key: 'assignedTo_id', label: 'Agent User ID (CRM)', group: 'Agent' },
+  { key: 'assignedTo_email', label: 'Agent Email', group: 'Agent' },
+  { key: 'assignedTo_dialshreeId', label: 'Agent Dialer ID (DialShree)', group: 'Agent' },
 
   // LeadProfile — extended student profile (may not exist for every lead)
   { key: 'profile_budget', label: 'Budget', group: 'LeadProfile' },
@@ -103,6 +113,10 @@ export const SAMPLE_LEAD_DATA: Record<string, unknown> = {
   createdAt: new Date().toISOString(),
   referredBy_name: 'Referring Lead Name',
   assignedTo_name: 'Assigned Agent Name',
+  assignedTo_employeeCode: 'EMP-1005',
+  assignedTo_id: 'cmrbs2soa000059hhdf5kcdoq',
+  assignedTo_email: 'agent@example.com',
+  assignedTo_dialshreeId: '51152',
 
   profile_budget: '2-4 Lakhs',
   profile_courseType: 'Regular',

@@ -34,7 +34,7 @@ export async function POST(_req: NextRequest, { params }: { params: { id: string
 
     const lead = await prisma.lead.findUnique({
       where: { id: log.leadId },
-      include: { profile: true, referredBy: { select: { name: true } }, assignedTo: { select: { name: true } } },
+      include: { profile: true, referredBy: { select: { name: true } }, assignedTo: { select: { id: true, name: true, email: true, employeeCode: true, dialshreeId: true } } },
     });
     if (!lead) return NextResponse.json({ error: 'The original lead no longer exists' }, { status: 404 });
 
