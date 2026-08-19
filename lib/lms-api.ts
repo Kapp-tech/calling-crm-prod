@@ -246,3 +246,103 @@ export async function fetchLmsCourses(collegeId: number, courseGroupId: number):
   })) as { data?: LmsCourse[] };
   return json.data ?? [];
 }
+
+// ── Delivery status ──────────────────────────────────────────────────────────
+// After the CRM pushes a referral to the LMS, the LMS forwards it to the
+// client's own API. This endpoint reports what the client answered — the CRM
+// only ever saw the LMS's "HTTP 200 accepted", never the downstream outcome.
+
+const LMS_DELIVERY_STATUS = 'https://api.lms.kollegeapply.com/api/leads/landing-page/delivery-status';
+
+export interface LmsDeliveryLog {
+  id: number;
+  lead_id: number | null;
+  client_id: number | null;
+  year: number | null;
+  campaign_id: number | null;
+  counsellor_id: number | null;
+  batch_id: string | null;
+  delivery_log_id?: number | null;
+  name: string | null;
+  email: string | null;
+  phone_number: string | null;
+  city_id: number | null;
+  city_name: string | null;
+  state_id: number | null;
+  state_name: string | null;
+  course_group_id: number | null;
+  course_group_name: string | null;
+  lead_code: string | null;
+  status: string | null;
+  request_payload: Record<string, unknown> | null;
+  response_payload: Record<string, unknown> | null;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+export interface LmsDeliveryStatusResult {
+  found: boolean;
+  /** The upstream's own explanation when nothing matched. */
+  message?: string;
+  log?: LmsDeliveryLog;
+}
+
+/**
+ * Looks up one lead's delivery log.
+ *
+ * **Every parameter is an AND filter.** Verified against the live endpoint: a
+ * correct phone with one wrong `city_id` returns "No delivery log found", so
+ * sending more fields makes a false negative *more* likely, not less. Only pass
+ * values that are certain to match what was actually delivered — the caller
+ * deliberately sends phone (+ kaap_id when the lead carries one) and nothing
+ * else, since a later edit to the lead's city, course or counsellor would
+ * otherwise make a delivered lead look undelivered.
+ *
+ * "Nothing matched" arrives as HTTP 200 with `success: false`, so the body has
+ * to be inspected — the status code alone would read as a hit.
+ */
+export async function fetchLmsDeliveryStatus(params: {
+  phone?: string | null;
+  kaapId?: string | null;
+  email?: string | null;
+}): Promise<LmsDeliveryStatusResult> {
+  const query = new URLSearchParams();
+  if (params.phone) query.set('phone', params.phone);
+  if (params.kaapId) query.set('kaap_id', params.kaapId);
+  if (params.email) query.set('email', params.email);
+  // The upstream 404s on an empty query rather than returning nothing.
+  if (query.toString() === '') {
+    return { found: false, message: 'This lead has no phone or college id to look up' };
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  try {
+    const res = await fetch(`${LMS_DELIVERY_STATUS}?${query}`, {
+      headers: { 'x-api-key': LMS_API_KEY },
+      // A delivery outcome changes as the LMS retries, so this is never cached
+      // — unlike the city/state/course catalogs above.
+      cache: 'no-store',
+      signal: controller.signal,
+    });
+
+    const json = (await res.json().catch(() => null)) as
+      | { success?: boolean; message?: string; data?: LmsDeliveryLog | null }
+      | null;
+
+    if (!res.ok) {
+      return { found: false, message: json?.message ?? `LMS returned HTTP ${res.status}` };
+    }
+    if (!json?.success || !json.data) {
+      return { found: false, message: json?.message ?? 'No delivery log found for this lead' };
+    }
+    return { found: true, log: json.data };
+  } catch (err) {
+    if (err instanceof Error && err.name === 'AbortError') {
+      throw new Error(`LMS delivery-status request timed out after ${FETCH_TIMEOUT_MS / 1000}s`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeout);
+  }
+}

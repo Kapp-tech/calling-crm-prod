@@ -7,13 +7,14 @@ import {
   Loader2, GraduationCap, Landmark, Wallet, Home, BarChart3,
   FileText, Check, ChevronDown, ChevronUp, Search, X, CheckCircle2, Handshake, CreditCard,
   School, Building2, RefreshCw, Receipt, ExternalLink, UserPlus, Users, Phone,
-  Clock3, XCircle, Webhook,
+  Clock3, XCircle, Webhook, Send, AlertTriangle, PhoneOff,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useToast } from '@/components/ui/use-toast';
 import { ReceiptUploadDialog, type ReceiptKind } from '@/components/leads/receipt-upload-dialog';
 import { computeProfilingScore, profilingScoreTone } from '@/lib/lead-profiling';
 import { WhatsAppButton } from '@/components/shared/whatsapp-button';
+import { useClickToCall } from '@/lib/hooks/use-click-to-call';
 
 const STEP_BY_NAME: Record<string, number> = {
   'Basic Info': 1,
@@ -485,6 +486,9 @@ export function LeadProfilePage({ leadId, agentName }: { leadId: string; agentNa
   const { toast } = useToast();
   const router = useRouter();
 
+  // Same dialer behaviour as the All Leads drawer — see useClickToCall.
+  const { onCall, isDialing, isHangingUp, call, hangup } = useClickToCall(leadId);
+
   const profilingScore = useMemo(() => (lead ? computeProfilingScore(lead) : null), [lead]);
 
   const { data: receipts = [] } = useQuery<LeadReceiptRecord[]>({
@@ -871,12 +875,34 @@ export function LeadProfilePage({ leadId, agentName }: { leadId: string; agentNa
             </div>
 
             <div className="flex flex-wrap gap-2">
-              <a
-                href={`tel:${lead.phone}`}
-                className="inline-flex h-9 items-center gap-1.5 rounded-md bg-[#0e4164] px-3 text-xs font-medium text-white shadow-sm transition-colors hover:bg-[#0c3755]"
-              >
-                <Phone className="h-3.5 w-3.5" /> Call
-              </a>
+              {/* Click-to-call through the dialer, identical to the All Leads
+                  drawer — it rings the agent's own seat and bridges the lead in,
+                  rather than handing the number to the device's phone app. */}
+              {onCall ? (
+                <button
+                  type="button"
+                  onClick={hangup}
+                  disabled={isHangingUp}
+                  className="inline-flex h-9 items-center gap-1.5 rounded-md bg-destructive px-3 text-xs font-medium text-destructive-foreground shadow-sm transition-colors hover:bg-destructive/90 disabled:opacity-60"
+                >
+                  {isHangingUp
+                    ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    : <PhoneOff className="h-3.5 w-3.5" />}
+                  Disconnect Call
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={call}
+                  disabled={isDialing}
+                  className="inline-flex h-9 items-center gap-1.5 rounded-md bg-[#0e4164] px-3 text-xs font-medium text-white shadow-sm transition-colors hover:bg-[#0c3755] disabled:opacity-60"
+                >
+                  {isDialing
+                    ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    : <Phone className="h-3.5 w-3.5" />}
+                  {isDialing ? 'Connecting…' : 'Call'}
+                </button>
+              )}
               <WhatsAppButton phone={lead.phone} leadName={lead.name} course={lead.course} />
             </div>
 
@@ -1430,6 +1456,12 @@ function ReferralsSection({ leadId }: { leadId: string }) {
                 Assigned to {r.assignedTo?.name ?? '—'} &middot; {new Date(r.createdAt).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}
               </p>
               <ReferralPushStatus logs={r.integrationLogs} />
+              {/* Only worth asking once the LMS has actually accepted the lead —
+                  a never-pushed or test-only referral has no downstream
+                  delivery to report, and the lookup would just say "not found". */}
+              {r.integrationLogs.some((l) => l.success && !l.isTest) && (
+                <ReferralDeliveryStatus leadId={r.id} />
+              )}
             </li>
           ))}
         </ul>
@@ -1610,6 +1642,192 @@ function ReferralPushStatus({ logs }: { logs: ReferralIntegrationLog[] }) {
               </pre>
             </div>
           ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Referral: downstream delivery status ─────────────────────────────────────
+
+interface DeliveryStatus {
+  found: boolean;
+  message?: string;
+  error?: string;
+  status?: string | null;
+  leadConfirmation?: string | null;
+  leadCode?: string | null;
+  clientId?: number | null;
+  lmsLeadId?: number | null;
+  deliveryLogId?: number | null;
+  counsellorId?: number | null;
+  course?: string | null;
+  city?: string | null;
+  state?: string | null;
+  responsePayload?: Record<string, unknown> | null;
+  requestPayload?: Record<string, unknown> | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+}
+
+/** Groups the many possible upstream status strings into three readable states. */
+function deliveryTone(status: string | null | undefined) {
+  const s = (status ?? '').toLowerCase();
+  if (['delivered', 'success', 'sent', 'accepted', 'completed'].includes(s)) {
+    return { Icon: CheckCircle2, className: 'text-emerald-600 dark:text-emerald-400' };
+  }
+  if (['failed', 'error', 'rejected', 'invalid'].includes(s)) {
+    return { Icon: XCircle, className: 'text-red-600' };
+  }
+  return { Icon: Clock3, className: 'text-amber-600 dark:text-amber-400' };
+}
+
+function pretty(value: unknown) {
+  if (value === null || value === undefined) return 'No payload';
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
+}
+
+/**
+ * What the client's own API said about this referral.
+ *
+ * The push log above only proves the LMS accepted the lead. This is the next hop:
+ * the LMS forwards it to the client, and the client's reply — the
+ * `response_payload` — is the answer to "was this taken as a Primary lead?".
+ *
+ * Read live on every mount rather than stored, because the LMS keeps retrying
+ * and a saved snapshot would quietly go stale. A one-minute `staleTime` keeps
+ * step-to-step navigation inside the profile from re-hitting the LMS.
+ */
+function ReferralDeliveryStatus({ leadId }: { leadId: string }) {
+  const [expanded, setExpanded] = useState(false);
+
+  const { data, isLoading, isFetching, refetch } = useQuery<DeliveryStatus>({
+    queryKey: ['lead-delivery-status', leadId],
+    queryFn: async () => {
+      const res = await fetch(`/api/leads/${leadId}/delivery-status`);
+      const json = await res.json();
+      if (!res.ok) return { found: false, error: json.error ?? `HTTP ${res.status}` };
+      return json;
+    },
+    staleTime: 60_000,
+    retry: false,
+  });
+
+  if (isLoading) {
+    return (
+      <p className="flex items-center gap-1 text-[11px] text-muted-foreground/70">
+        <Loader2 className="h-3 w-3 animate-spin" /> Checking client delivery…
+      </p>
+    );
+  }
+  if (!data) return null;
+
+  // Couldn't reach the LMS — deliberately distinct from "not delivered", which
+  // would be a claim about the lead rather than about the lookup.
+  if (data.error) {
+    return (
+      <p className="flex flex-wrap items-center gap-1 text-[11px] text-muted-foreground/70">
+        <AlertTriangle className="h-3 w-3 text-amber-600" />
+        Couldn’t check client delivery — {data.error}
+        <button
+          type="button"
+          onClick={() => refetch()}
+          className="ml-1 inline-flex items-center gap-0.5 underline transition-colors hover:text-foreground"
+        >
+          <RefreshCw className={cn('h-2.5 w-2.5', isFetching && 'animate-spin')} /> Retry
+        </button>
+      </p>
+    );
+  }
+
+  if (!data.found) {
+    return (
+      <p className="flex flex-wrap items-center gap-1 text-[11px] text-muted-foreground/70">
+        <Send className="h-3 w-3" />
+        {data.message ?? 'No client delivery recorded yet'}
+        <button
+          type="button"
+          onClick={() => refetch()}
+          className="ml-1 inline-flex items-center gap-0.5 underline transition-colors hover:text-foreground"
+        >
+          <RefreshCw className={cn('h-2.5 w-2.5', isFetching && 'animate-spin')} /> Check again
+        </button>
+      </p>
+    );
+  }
+
+  const tone = deliveryTone(data.status);
+  const isPrimary = (data.leadConfirmation ?? '').toLowerCase() === 'primary';
+
+  return (
+    <div className="min-w-0 max-w-full text-[11px]">
+      <button
+        type="button"
+        onClick={() => setExpanded((v) => !v)}
+        className="flex max-w-full flex-wrap items-center gap-x-1 gap-y-0.5 text-left text-muted-foreground transition-colors hover:text-foreground"
+      >
+        <tone.Icon className={cn('h-3 w-3', tone.className)} />
+        Client delivery
+        &middot; <span className={cn('font-semibold', tone.className)}>{data.status ?? 'unknown'}</span>
+        {data.leadConfirmation && (
+          <span
+            className={cn(
+              'rounded border px-1 py-0 text-[9px] font-semibold',
+              isPrimary
+                ? 'border-emerald-600/40 bg-emerald-600/10 text-emerald-700 dark:text-emerald-400'
+                : 'border-border text-muted-foreground',
+            )}
+          >
+            {data.leadConfirmation}
+          </span>
+        )}
+        {data.leadCode && <span className="font-mono text-[10px]">{data.leadCode}</span>}
+        {data.updatedAt && (
+          <>
+            &middot;{' '}
+            {new Date(data.updatedAt).toLocaleString('en-IN', {
+              day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit',
+            })}
+          </>
+        )}
+        {expanded ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+      </button>
+
+      {expanded && (
+        <div className="mt-2 min-w-0 max-w-full space-y-2 rounded-lg border border-border/60 bg-muted/20 p-2.5">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-muted-foreground">
+            {data.lmsLeadId != null && <span>LMS lead <span className="font-mono">{data.lmsLeadId}</span></span>}
+            {data.clientId != null && <span>Client <span className="font-mono">{data.clientId}</span></span>}
+            {data.deliveryLogId != null && <span>Delivery log <span className="font-mono">{data.deliveryLogId}</span></span>}
+            {data.counsellorId != null && <span>Counsellor <span className="font-mono">{data.counsellorId}</span></span>}
+            <button
+              type="button"
+              onClick={() => refetch()}
+              className="ml-auto inline-flex items-center gap-0.5 underline transition-colors hover:text-foreground"
+            >
+              <RefreshCw className={cn('h-2.5 w-2.5', isFetching && 'animate-spin')} /> Refresh
+            </button>
+          </div>
+
+          <div className="min-w-0 space-y-1">
+            <p className="font-semibold text-muted-foreground">Client response</p>
+            {/* Long single-line JSON would stretch the whole page if left to
+                horizontal overflow — wrap and break instead, same as the push log. */}
+            <pre className="max-h-40 max-w-full overflow-y-auto whitespace-pre-wrap break-all rounded bg-background/60 p-1.5 font-mono text-[10px]">
+              {pretty(data.responsePayload)}
+            </pre>
+          </div>
+
+          <div className="min-w-0 space-y-1">
+            <p className="font-semibold text-muted-foreground">What the LMS sent the client</p>
+            <pre className="max-h-40 max-w-full overflow-y-auto whitespace-pre-wrap break-all rounded bg-background/60 p-1.5 font-mono text-[10px]">
+              {pretty(data.requestPayload)}
+            </pre>
+          </div>
         </div>
       )}
     </div>
