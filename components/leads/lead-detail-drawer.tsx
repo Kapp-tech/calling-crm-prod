@@ -1019,6 +1019,27 @@ export function LeadDetailDrawer({ leadId, onClose, canSubmitFeedback = false }:
   // button flips to Disconnect so the agent can drop the line from the CRM.
   const { onCall, isDialing, isHangingUp, call, hangup } = useClickToCall(leadId);
 
+  // Open on Overview for every lead. The drawer is not remounted between leads —
+  // only its `leadId` prop changes — so without this the tab the agent last used
+  // carries over, and clicking a fresh lead lands them on Timeline or Calls
+  // instead of the details they actually opened it for.
+  useEffect(() => {
+    setActiveTab('overview');
+  }, [leadId]);
+
+  /**
+   * Hanging up drops the agent straight into Follow-Ups.
+   *
+   * The moment a call ends is exactly when the feedback needs writing, and
+   * making the agent find the tab themselves is the wasted step. Switched on
+   * click rather than when the dialer answers: the call is over either way, and
+   * waiting on a round trip just to move a tab would feel broken.
+   */
+  function hangUpAndLogFeedback() {
+    setActiveTab('followups');
+    hangup();
+  }
+
   const { data: lead, isLoading } = useQuery<LeadDetail>({
     queryKey: ['lead-detail', leadId],
     queryFn: () => fetch(`/api/leads/${leadId}`).then((r) => r.json()),
@@ -1181,7 +1202,7 @@ export function LeadDetailDrawer({ leadId, onClose, canSubmitFeedback = false }:
                           size="sm"
                           variant="destructive"
                           className="gap-1.5 text-xs"
-                          onClick={hangup}
+                          onClick={hangUpAndLogFeedback}
                           disabled={isHangingUp}
                         >
                           {isHangingUp
