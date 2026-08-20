@@ -12,9 +12,17 @@
 // The UI talks to /api/dialer/* instead, which is where the CRM's own auth and
 // lead-access checks live.
 
-const LOGIN_URL = 'https://dialer8.elisiontec.com/api/login';
-const DIAL_URL = 'https://dialer8.elisiontec.com/api/manual-dial';
-const HANGUP_URL = 'https://dialer8.elisiontec.com/api/external-hangup';
+// The provider moves tenants between dialer hosts, so the base is configurable
+// via DIALSHREE_BASE_URL and the next move needs no code change. A trailing
+// slash in the env value is tolerated — otherwise every path would double up.
+const BASE_URL = (process.env.DIALSHREE_BASE_URL ?? 'https://dialer5.elisiontec.com:9011').replace(/\/+$/, '');
+
+// Login lives on the same host on purpose: the bearer token is minted by one
+// dialer instance and is not accepted by another, so pointing dial/hangup at a
+// new host while logging in against the old one would fail on every call.
+const LOGIN_URL = `${BASE_URL}/api/login`;
+const DIAL_URL = `${BASE_URL}/api/manual-dial`;
+const HANGUP_URL = `${BASE_URL}/api/external-hangup`;
 
 // The upstream is a phone system — a hung request would leave the agent staring
 // at a spinner while the call may or may not be ringing. Fail fast instead.
