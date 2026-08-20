@@ -168,6 +168,8 @@ export interface LmsCourseGroup {
   course_group_name: string;
   course_group_full_name: string;
   duration: string | null;
+  /** The unit `duration` is counted in — "Years", "Months", "Days". */
+  duration_type: string | null;
   median_salary: string | null;
   min_fees: string | null;
   max_fees: string | null;
@@ -180,6 +182,7 @@ export interface LmsCourseGroup {
 export interface LmsCourse {
   course_id: number;
   course_name: string;
+  duration: string | null;
   duration_type: string | null;
   course_mode: string | null;
   median_salary: string | null;

@@ -34,9 +34,25 @@ function formatFee(min: string | null, max: string | null): string {
   return `₹${v.toLocaleString('en-IN')}`;
 }
 
-function formatDuration(duration: string | null): string {
+/**
+ * Renders a duration using the unit the LMS reports, not an assumed one.
+ *
+ * This used to hardcode years, which was wrong for the courses measured in
+ * months or days. The unit now comes from `duration_type`.
+ *
+ * The plural is recomputed rather than trusted: the upstream data contains both
+ * "1 Year" and "2 Year", so echoing the field verbatim would print the second of
+ * those. Deriving it from the number keeps the two consistent.
+ *
+ * With no `duration_type` the number is shown bare — inventing a unit on a fee
+ * table a student is quoted from is worse than leaving it off.
+ */
+function formatDuration(duration: string | null, durationType: string | null): string {
   if (!duration) return '—';
-  return `${duration} Yr${Number(duration) === 1 ? '' : 's'}`;
+  const unit = (durationType ?? '').trim();
+  if (!unit) return duration;
+  const singular = unit.replace(/s$/i, '');
+  return `${duration} ${Number(duration) === 1 ? singular : `${singular}s`}`;
 }
 
 /** A dedicated, clearly-labeled section — never crammed inline next to a title. */
@@ -437,7 +453,7 @@ export default function CollegeSearchPage() {
                           )}
                         </td>
                         <td className="px-5 py-4 text-center align-top">
-                          <span className="text-foreground">{formatDuration(g.duration)}</span>
+                          <span className="text-foreground">{formatDuration(g.duration, g.duration_type)}</span>
                         </td>
                         <td className="px-5 py-4 text-center align-top">
                           <span className="font-semibold text-foreground">{formatFee(g.min_fees, g.max_fees)}</span>
@@ -534,7 +550,15 @@ export default function CollegeSearchPage() {
                           )}
                         </td>
                         <td className="px-5 py-4 text-center align-top">
-                          <span className="text-foreground">{formatDuration(selectedGroup.duration)}</span>
+                          {/* The course's own duration, not the group's — courses in
+                              one group can differ, and this previously showed the
+                              group's figure against every row. */}
+                          <span className="text-foreground">
+                            {formatDuration(
+                              c.duration ?? selectedGroup.duration,
+                              c.duration_type ?? selectedGroup.duration_type,
+                            )}
+                          </span>
                           {c.course_mode && <p className="mt-0.5 text-xs text-muted-foreground">{c.course_mode}</p>}
                         </td>
                         <td className="px-5 py-4 text-center align-top">
