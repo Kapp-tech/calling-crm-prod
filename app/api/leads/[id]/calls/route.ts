@@ -3,6 +3,7 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import { canAccessLead } from '@/lib/lead-access';
+import { callsForLead } from '@/lib/call-log-matching';
 
 /**
  * The dialer's call history for one lead.
@@ -20,8 +21,15 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
       return NextResponse.json({ error: 'Lead not found' }, { status: 404 });
     }
 
+    // The lead's own number is needed to pick up calls the webhook could not
+    // match at the time — see callsForLead.
+    const lead = await prisma.lead.findUnique({
+      where: { id: params.id },
+      select: { phone: true },
+    });
+
     const calls = await prisma.callLog.findMany({
-      where: { leadId: params.id },
+      where: callsForLead(params.id, lead?.phone ?? null),
       // Newest first; a row with no start time from the dialer falls back to
       // when we received it so it still sorts sensibly instead of last.
       orderBy: [{ startedAt: 'desc' }, { receivedAt: 'desc' }],
@@ -33,9 +41,10 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
         durationSeconds: true,
         talkTimeSeconds: true,
         ringTimeSeconds: true,
-        talkTimeRaw: true,
         callType: true,
-        campaign: true,
+        callStatus: true,
+        connected: true,
+        calledCount: true,
         recordingUrl: true,
         agentFullName: true,
         agentSeat: true,
@@ -44,7 +53,12 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
       },
     });
 
-    return NextResponse.json(calls);
+    // The upstream URL is never sent to the browser: it is unauthenticated and
+    // spells out the phone number and campaign in its path. The client asks the
+    // proxy route for audio and only needs to know whether one exists.
+    return NextResponse.json(
+      calls.map(({ recordingUrl, ...c }) => ({ ...c, hasRecording: Boolean(recordingUrl) })),
+    );
   } catch (err) {
     console.error('[leads/[id]/calls GET]', err);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });

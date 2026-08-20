@@ -11,7 +11,7 @@ import {
   X, Phone, PhoneOff, Mail, PhoneCall, CalendarClock, PhoneIncoming,
   LayoutList, CheckCircle2, Loader2, PlusCircle, UserCheck,
   UserCircle2, ChevronDown, Search, Check, ExternalLink,
-  GitBranch, UserPlus, FileCheck, Receipt, Clock3,
+  GitBranch, UserPlus, FileCheck, Receipt, Clock3, PlayCircle,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/components/ui/use-toast';
@@ -760,32 +760,105 @@ interface DialerCall {
   durationSeconds: number | null;
   talkTimeSeconds: number | null;
   ringTimeSeconds: number | null;
-  talkTimeRaw: string | null;
   callType: string | null;
-  campaign: string | null;
-  recordingUrl: string | null;
+  callStatus: string | null;
+  connected: boolean | null;
+  calledCount: number | null;
+  hasRecording: boolean;
   agentFullName: string | null;
   agentSeat: string | null;
   receivedAt: string;
   agent: { id: string; name: string } | null;
 }
 
-/** "00:12" from 12 seconds; "1:05:03" once it passes an hour. */
+/** "0:12" from 12 seconds; "1:05:03" once it passes an hour. */
 function formatSeconds(total: number | null | undefined): string {
   if (total === null || total === undefined) return '—';
   const h = Math.floor(total / 3600);
   const m = Math.floor((total % 3600) / 60);
   const sec = total % 60;
   const pad = (n: number) => String(n).padStart(2, '0');
-  return h > 0 ? `${h}:${pad(m)}:${pad(sec)}` : `${pad(m)}:${pad(sec)}`;
+  return h > 0 ? `${h}:${pad(m)}:${pad(sec)}` : `${m}:${pad(sec)}`;
+}
+
+/**
+ * One call's recording, loaded only when asked for.
+ *
+ * The audio is streamed through the CRM rather than linked to the dialer — the
+ * dialer serves recordings as `application/forcedownload`, which browsers refuse
+ * to play, and its URLs need no authentication. Mounting the <audio> element
+ * only after a click keeps a lead with twenty calls from opening twenty
+ * connections to the dialer on render.
+ */
+function CallRow({ leadId, call }: { leadId: string; call: DialerCall }) {
+  const [playing, setPlaying] = useState(false);
+
+  // The dialer's own verdict is authoritative: it reports NOT CONNECTED on
+  // calls that still carry a few seconds of "talk time", so the clock alone
+  // would overstate how many actually got through.
+  const connected = call.connected === true;
+
+  return (
+    <div className="rounded-md border border-border/40 px-3 py-2">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
+        {connected ? (
+          <PhoneCall className="h-3.5 w-3.5 shrink-0 text-emerald-600" />
+        ) : (
+          <PhoneOff className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+        )}
+        <span className="font-semibold">{formatIstDateTime(call.startedAt ?? call.receivedAt)}</span>
+        {connected ? (
+          <span className="font-medium text-emerald-700 dark:text-emerald-400">
+            Talked {formatSeconds(call.talkTimeSeconds)}
+          </span>
+        ) : (
+          <span className="text-muted-foreground">Not connected</span>
+        )}
+        {call.calledCount != null && (
+          <span className="text-[10px] text-muted-foreground">attempt #{call.calledCount}</span>
+        )}
+        {call.hasRecording && !playing && (
+          <button
+            type="button"
+            onClick={() => setPlaying(true)}
+            className="ml-auto inline-flex items-center gap-1 rounded border border-border px-1.5 py-0.5 text-[10px] font-medium text-primary transition-colors hover:bg-muted"
+          >
+            <PlayCircle className="h-3 w-3" /> Play
+          </button>
+        )}
+      </div>
+
+      <p className="mt-0.5 text-[11px] text-muted-foreground">
+        {call.agent?.name ?? (call.agentSeat ? `Seat ${call.agentSeat}` : 'Unknown agent')}
+      </p>
+
+      {/* Its own row: the native control needs real width, and squeezing it into
+          the header row alongside the timestamp collapses it to nothing. Mounted
+          only after a click, so a lead with twenty calls does not open twenty
+          connections to the dialer on render. */}
+      {playing && (
+        <audio
+          controls
+          autoPlay
+          preload="none"
+          className="mt-1.5 h-8 w-full"
+          src={`/api/leads/${leadId}/calls/${call.id}/recording`}
+        >
+          Your browser cannot play this recording.
+        </audio>
+      )}
+    </div>
+  );
 }
 
 /**
  * What actually happened on the phone, from the dialer's post-call webhook —
  * as opposed to the feedback the counsellor typed afterwards.
  *
- * Nothing appears until the dialer has posted a call for this lead, so an empty
- * state here is normal rather than an error.
+ * Deliberately narrow: when, whether it connected, how long they talked, which
+ * attempt it was, and the recording. Ring time, campaign, disposition and
+ * hang-up reason are all stored but left off the card — a counsellor scanning a
+ * lead's history does not need them, and they crowd out what matters.
  */
 function DialerCallHistory({ leadId }: { leadId: string }) {
   const { data: calls = [], isLoading } = useQuery<DialerCall[]>({
@@ -798,11 +871,20 @@ function DialerCallHistory({ leadId }: { leadId: string }) {
 
   if (isLoading) return <div className="h-16 animate-pulse rounded-lg bg-muted" />;
 
+  const talked = calls.filter((c) => c.connected).length;
+
   return (
     <div>
-      <p className="mb-2 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
-        Dialer Calls {calls.length > 0 && <span className="font-semibold text-foreground">({calls.length})</span>}
-      </p>
+      <div className="mb-2 flex flex-wrap items-baseline gap-x-2">
+        <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Dialer Calls</p>
+        {calls.length > 0 && (
+          <p className="text-[10px] text-muted-foreground">
+            <span className="font-semibold text-foreground">{calls.length}</span> attempt{calls.length > 1 ? 's' : ''}
+            {' · '}
+            <span className="font-semibold text-emerald-700 dark:text-emerald-400">{talked}</span> connected
+          </p>
+        )}
+      </div>
 
       {calls.length === 0 ? (
         <div className="flex items-center gap-2 rounded-lg border border-dashed border-border/60 p-3 text-xs text-muted-foreground">
@@ -811,50 +893,9 @@ function DialerCallHistory({ leadId }: { leadId: string }) {
         </div>
       ) : (
         <div className="space-y-1.5">
-          {calls.map((c) => {
-            // The dialer reports rung-but-unanswered calls with zero talk time;
-            // saying "not answered" is clearer than showing 00:00.
-            const answered = (c.talkTimeSeconds ?? 0) > 0;
-            const when = c.startedAt ?? c.receivedAt;
-            return (
-              <div key={c.id} className="rounded-md border border-border/40 px-3 py-2 text-xs">
-                <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                  {answered ? (
-                    <PhoneCall className="h-3.5 w-3.5 shrink-0 text-emerald-600" />
-                  ) : (
-                    <PhoneOff className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                  )}
-                  <span className="font-semibold">{formatIstDateTime(when)}</span>
-                  {c.callType && (
-                    <span className="rounded border border-border px-1 py-0 text-[9px] uppercase text-muted-foreground">
-                      {c.callType}
-                    </span>
-                  )}
-                  <span className={cn('font-medium', answered ? 'text-emerald-700 dark:text-emerald-400' : 'text-muted-foreground')}>
-                    {answered ? `Talked ${formatSeconds(c.talkTimeSeconds)}` : 'Not answered'}
-                  </span>
-                  {c.ringTimeSeconds != null && (
-                    <span className="text-muted-foreground">Rang {formatSeconds(c.ringTimeSeconds)}</span>
-                  )}
-                </div>
-                <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-muted-foreground">
-                  <span>{c.agent?.name ?? c.agentFullName ?? `Seat ${c.agentSeat ?? '—'}`}</span>
-                  {c.campaign && <span>&middot; {c.campaign}</span>}
-                  {c.recordingUrl && (
-                    <a
-                      href={c.recordingUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="ml-auto inline-flex items-center gap-1 font-medium text-primary hover:underline"
-                    >
-                      <PhoneIncoming className="h-3 w-3" /> Recording
-                      <ExternalLink className="h-3 w-3" />
-                    </a>
-                  )}
-                </div>
-              </div>
-            );
-          })}
+          {calls.map((c) => (
+            <CallRow key={c.id} leadId={leadId} call={c} />
+          ))}
         </div>
       )}
     </div>

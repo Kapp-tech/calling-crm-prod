@@ -1092,6 +1092,17 @@ model CallLog {
   calledCount     Int?
   lastLocalCallAt DateTime?
 
+  /// The dialer's own verdict and disposition. `connected` is normalised from
+  /// `callStatus`, falling back to talk time when the dialer sends no status —
+  /// it has been seen to report NOT CONNECTED on a call with seven seconds of
+  /// talk time, so the clock alone would over-count.
+  callStatus             String?
+  connected              Boolean?
+  termReason             String?
+  dispositionDescription String?
+  /// The dialer's own id for the lead, for cross-referencing in their system.
+  dialerLeadId String?
+
   recordingUrl String?
 
   /// The untouched webhook body. Anything not modelled above is still here.
@@ -1103,4 +1114,5 @@ model CallLog {
   @@index([agentId, startedAt])
   @@index([phoneNumber])
   @@index([startedAt])
+  @@index([connected])
 }

@@ -74,7 +74,7 @@ export const KPI_SOURCES: {
   {
     key: 'CALL_CONNECTED_COUNT',
     label: 'Calls answered (dialer)',
-    help: 'Calls where the two parties actually spoke — the dialer reports rung-but-unanswered calls too, and those are excluded here.',
+    help: 'Calls the dialer marked CONNECTED. It reports unanswered calls too, sometimes with a few seconds of talk time, and those are excluded here.',
     needs: [],
     measurable: true,
   },
@@ -235,8 +235,10 @@ export async function computeKpiActual(
       return db.callLog.count({ where: { agentId: userId, startedAt: inPeriod } });
 
     case 'CALL_CONNECTED_COUNT':
+      // The dialer's own CONNECTED verdict, not a talk-time guess — it reports
+      // seconds of talk time on calls that never got through.
       return db.callLog.count({
-        where: { agentId: userId, startedAt: inPeriod, talkTimeSeconds: { gt: 0 } },
+        where: { agentId: userId, startedAt: inPeriod, connected: true },
       });
 
     case 'NOT_MEASURED':

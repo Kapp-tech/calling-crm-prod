@@ -156,14 +156,15 @@ export async function buildAgentReport(
       },
       select: { userId: true, date: true },
     }),
-    // Talk time comes from the dialer's post-call webhook. Only answered calls
-    // are averaged: the dialer reports rung-but-unanswered calls with 00:00 talk
-    // time, and counting those would drag every agent's average toward zero and
-    // make a busy day look like a quiet one.
+    // Talk time comes from the dialer's post-call webhook. Only calls the dialer
+    // itself marked CONNECTED are averaged — it reports a few seconds of "talk
+    // time" on calls that never got through, so averaging everything would drag
+    // each agent toward zero and make a busy day look like a quiet one.
     db.callLog.groupBy({
       by: ['agentId'],
       where: {
         agentId: { in: ids },
+        connected: true,
         talkTimeSeconds: { gt: 0 },
         ...(period ? { startedAt: period } : {}),
       },

@@ -12,6 +12,13 @@ import { istWallClockToInstant } from './ist-time';
 
 export interface DialerCallFacts {
   uniqueId: string | null;
+  /** The dialer's own verdict, e.g. "CONNECTED" / "NOT CONNECTED". */
+  callStatus: string | null;
+  /** Whether the two parties actually spoke. See `connectedFrom`. */
+  connected: boolean | null;
+  termReason: string | null;
+  dispositionDescription: string | null;
+  dialerLeadId: string | null;
   phoneCode: string | null;
   phoneNumber: string;
   /** Last 10 digits — what Lead.phone stores. */
@@ -102,22 +109,54 @@ export function phoneKeyOf(value: unknown): string {
 
 export class DialerWebhookError extends Error {}
 
-/** The `postdata` object, whether it arrived nested or at the top level. */
+/**
+ * The call fields, whether they arrived nested under `postdata` or at the top
+ * level. The provider's documented sample nests them; what they actually send
+ * is flat.
+ */
 function postdataOf(body: unknown): Record<string, unknown> {
   if (!body || typeof body !== 'object') throw new DialerWebhookError('Body must be a JSON object');
   const b = body as Record<string, unknown>;
   const inner = b.postdata;
-  // Tolerating a flat body costs nothing and saves a failed integration if the
-  // provider ever drops the wrapper.
   if (inner && typeof inner === 'object') return inner as Record<string, unknown>;
   return b;
 }
 
+/**
+ * `dynamic_data` is documented as an object holding `uniqueid` and `user`, but
+ * the live feed sends it as an empty string and puts both at the top level
+ * instead. Look in both places rather than trusting either: without this the
+ * call has no dialer id (so retries duplicate) and no seat (so it is attributed
+ * to nobody).
+ */
+function fromEitherLevel(d: Record<string, unknown>, key: string): unknown {
+  const dynamic = d.dynamic_data;
+  if (dynamic && typeof dynamic === 'object' && key in (dynamic as Record<string, unknown>)) {
+    return (dynamic as Record<string, unknown>)[key];
+  }
+  return d[key];
+}
+
+/**
+ * Whether the parties actually spoke.
+ *
+ * The dialer's own `call_status` is authoritative and is used when present — it
+ * has been seen to report NOT CONNECTED on a call with seven seconds of "talk
+ * time", so inferring from the clock alone would over-count. Talk time is only
+ * the fallback for a payload without a status.
+ */
+export function connectedFrom(callStatus: string | null, talkTimeSeconds: number | null): boolean | null {
+  if (callStatus) {
+    const s = callStatus.trim().toUpperCase();
+    if (s === 'CONNECTED') return true;
+    if (s === 'NOT CONNECTED' || s === 'NOTCONNECTED') return false;
+  }
+  if (talkTimeSeconds === null) return null;
+  return talkTimeSeconds > 0;
+}
+
 export function parseDialerCall(body: unknown): DialerCallFacts {
   const d = postdataOf(body);
-  const dynamic = (d.dynamic_data && typeof d.dynamic_data === 'object'
-    ? (d.dynamic_data as Record<string, unknown>)
-    : {}) as Record<string, unknown>;
 
   const phoneNumber = str(d.phone_number);
   if (!phoneNumber) throw new DialerWebhookError('phone_number is required');
@@ -128,15 +167,22 @@ export function parseDialerCall(body: unknown): DialerCallFacts {
 
   const talkTimeRaw = str(d.talk_time);
   const ringTimeRaw = str(d.ring_time);
+  const talkTimeSeconds = parseClockToSeconds(talkTimeRaw);
+  const callStatus = str(d.call_status);
 
   return {
-    uniqueId: str(dynamic.uniqueid),
+    uniqueId: str(fromEitherLevel(d, 'uniqueid')),
+    callStatus,
+    connected: connectedFrom(callStatus, talkTimeSeconds),
+    termReason: str(d.term_reason),
+    dispositionDescription: str(d.disposition_description),
+    dialerLeadId: str(d.lead_id),
     // The provider's sample has a smart quote here ("91) — str() trims but a
     // stray quote would survive, so non-digits are stripped.
     phoneCode: str((str(d.phone_code) ?? '').replace(/\D+/g, '')),
     phoneNumber,
     phoneKey,
-    agentSeat: str(dynamic.user),
+    agentSeat: str(fromEitherLevel(d, 'user')),
     agentFullName: str(d.agent_full_name),
     agentEmail: str(d.agent_email),
     callType: str(d.call_type),
@@ -145,7 +191,7 @@ export function parseDialerCall(body: unknown): DialerCallFacts {
     startedAt: parseDialerTimestamp(d.call_start_time),
     endedAt: parseDialerTimestamp(d.call_end_time),
     durationSeconds: int(d.call_duration),
-    talkTimeSeconds: parseClockToSeconds(talkTimeRaw),
+    talkTimeSeconds,
     ringTimeSeconds: parseClockToSeconds(ringTimeRaw),
     talkTimeRaw,
     ringTimeRaw,

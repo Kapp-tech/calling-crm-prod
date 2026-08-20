@@ -115,6 +115,11 @@ export async function POST(req: NextRequest) {
       ringTimeRaw: facts.ringTimeRaw,
       calledCount: facts.calledCount,
       lastLocalCallAt: facts.lastLocalCallAt,
+      callStatus: facts.callStatus,
+      connected: facts.connected,
+      termReason: facts.termReason,
+      dispositionDescription: facts.dispositionDescription,
+      dialerLeadId: facts.dialerLeadId,
       recordingUrl: facts.recordingUrl,
       payload: body as Prisma.InputJsonValue,
     };
