@@ -87,6 +87,33 @@ export const KPI_SOURCES: {
   },
 ];
 
+/**
+ * What an agent has earned on one KPI.
+ *
+ * Proportional and capped: half the target earns half the points, and beating
+ * the target earns no more than the target was worth. The cap is what keeps a
+ * "max score" meaningful — without it one agent hammering a single easy KPI
+ * could out-score a colleague who hit everything.
+ *
+ * Returns null when the KPI is not scored (no points set) or has no target to
+ * measure against, so the page can show a gap rather than a misleading zero.
+ * A target of 0 is treated as already met: asking for none and getting none is
+ * success, not a division by zero.
+ */
+export function kpiScore(
+  actual: number | null,
+  target: number | null | undefined,
+  points: number | null | undefined,
+): number | null {
+  if (points == null || target == null) return null;
+  if (actual == null) return null;
+  if (target <= 0) return points;
+  const earned = (Math.min(actual, target) / target) * points;
+  // One decimal: enough to separate agents without implying precision the
+  // underlying counts do not have.
+  return Math.round(earned * 10) / 10;
+}
+
 export const KPI_PERIODS: { key: KpiPeriod; label: string }[] = [
   { key: 'DAILY', label: 'Daily' },
   { key: 'WEEKLY', label: 'Weekly' },

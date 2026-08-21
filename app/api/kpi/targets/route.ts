@@ -6,7 +6,7 @@ import { authOptions } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import { logActivity } from '@/lib/permissions';
 import {
-  KPI_SOURCES, KPI_PERIODS, computeKpiActual, kpiPeriodRange, seedDefaultKpisIfEmpty,
+  KPI_SOURCES, KPI_PERIODS, computeKpiActual, kpiPeriodRange, seedDefaultKpisIfEmpty, kpiScore,
 } from '@/lib/kpi';
 
 /**
@@ -53,7 +53,7 @@ export async function GET(req: NextRequest) {
     const [definitions, categories, options, stages] = await Promise.all([
       prisma.kpiDefinition.findMany({
         orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
-        include: { targets: { select: { period: true, target: true, updatedAt: true, setBy: { select: { name: true } } } } },
+        include: { targets: { select: { period: true, target: true, points: true, updatedAt: true, setBy: { select: { name: true } } } } },
       }),
       prisma.feedbackCategory.findMany({ select: { id: true, name: true }, orderBy: { name: 'asc' } }),
       prisma.feedbackOption.findMany({
@@ -83,17 +83,42 @@ export async function GET(req: NextRequest) {
         })
       : [];
 
+    // The score a full house is worth in this period — the denominator every
+    // agent's total is read against. Only scored KPIs (points set) count.
+    const pointsFor = (d: (typeof definitions)[number]) =>
+      d.targets.find((t) => t.period === period)?.points ?? null;
+    const targetFor = (d: (typeof definitions)[number]) =>
+      d.targets.find((t) => t.period === period)?.target ?? null;
+    const maxScore = definitions.reduce((sum, d) => {
+      const pts = pointsFor(d);
+      return sum + (pts != null && targetFor(d) != null ? pts : 0);
+    }, 0);
+
     // Achievement for the selected period only — computing all four for every
     // agent would be four times the queries for numbers that are not on screen.
     const achievement = await Promise.all(
-      agents.map(async (a) => ({
-        user: a,
-        actuals: Object.fromEntries(
-          await Promise.all(
-            definitions.map(async (d) => [d.id, await computeKpiActual(prisma, d, a.id, period, now)] as const),
+      agents.map(async (a) => {
+        const pairs = await Promise.all(
+          definitions.map(
+            async (d) => [d.id, await computeKpiActual(prisma, d, a.id, period, now)] as const,
           ),
-        ),
-      })),
+        );
+        const actuals = Object.fromEntries(pairs);
+        const scores = Object.fromEntries(
+          definitions.map((d) => [d.id, kpiScore(actuals[d.id], targetFor(d), pointsFor(d))] as const),
+        );
+        // A null score means "not scored", which must not read as zero — but the
+        // total is a sum, so nulls simply contribute nothing.
+        const total = Object.values(scores).reduce<number>((sum, v) => sum + (v ?? 0), 0);
+        return {
+          user: a,
+          actuals,
+          scores,
+          // Re-rounded: adding one-decimal values repeatedly reintroduces float
+          // noise (7.5 + 7.5 + 0.1 style artefacts).
+          totalScore: Math.round(total * 10) / 10,
+        };
+      }),
     );
 
     const allTargets = definitions.flatMap((d) => d.targets);
@@ -115,12 +140,16 @@ export async function GET(req: NextRequest) {
         isActive: d.isActive,
         sortOrder: d.sortOrder,
         targets: Object.fromEntries(d.targets.map((t) => [t.period, t.target])),
+        points: Object.fromEntries(
+          d.targets.filter((t) => t.points != null).map((t) => [t.period, t.points as number]),
+        ),
       })),
       sources: KPI_SOURCES,
       periods: KPI_PERIODS,
       ranges,
       period,
       achievement,
+      maxScore,
       choices: { categories, options, leadStages: stages.map((s) => s.value) },
       canEdit: session.user.role === 'SUPER_ADMIN',
       lastSet: lastSet ? { at: lastSet.at.toISOString(), by: lastSet.by } : null,
@@ -138,6 +167,8 @@ const putSchema = z.object({
       period: z.nativeEnum(KpiPeriod),
       // null clears it. 0 is a real target ("none expected"), so it is kept.
       target: z.number().int().min(0).max(1_000_000).nullable(),
+      // null means the KPI is measured but not scored.
+      points: z.number().int().min(0).max(10_000).nullable().optional(),
     }),
   ).max(200),
 });
@@ -160,8 +191,11 @@ export async function PUT(req: NextRequest) {
           ? prisma.kpiTarget.deleteMany({ where: { definitionId: t.definitionId, period: t.period } })
           : prisma.kpiTarget.upsert({
               where: { definitionId_period: { definitionId: t.definitionId, period: t.period } },
-              create: { definitionId: t.definitionId, period: t.period, target: t.target, setById: session.user.id },
-              update: { target: t.target, setById: session.user.id },
+              create: {
+                definitionId: t.definitionId, period: t.period, target: t.target,
+                points: t.points ?? null, setById: session.user.id,
+              },
+              update: { target: t.target, points: t.points ?? null, setById: session.user.id },
             }),
       ),
     );

@@ -360,6 +360,11 @@ model KpiTarget {
   period KpiPeriod
   target Int
 
+  /// What hitting this target is worth, for the agent scoreboard. Null means the
+  /// KPI is tracked but not scored, so a team can measure something without it
+  /// affecting anyone's total.
+  points Int?
+
   setById String
   setBy   User   @relation("KpiTargetSetBy", fields: [setById], references: [id])
 

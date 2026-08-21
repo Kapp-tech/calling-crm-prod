@@ -3,7 +3,7 @@
 import { useState, useMemo, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useSession } from 'next-auth/react';
-import { Target, Save, Loader2, Info, Plus, Pencil, Trash2 } from 'lucide-react';
+import { Target, Save, Loader2, Info, Plus, Pencil, Trash2, Download } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
@@ -37,6 +37,8 @@ interface Definition {
   isActive: boolean;
   sortOrder: number;
   targets: Record<string, number>;
+  /** What hitting the target is worth, per period. Absent = measured, not scored. */
+  points: Record<string, number>;
 }
 
 interface KpiResponse {
@@ -45,7 +47,14 @@ interface KpiResponse {
   periods: PeriodMeta[];
   ranges: Record<string, { label: string }>;
   period: string;
-  achievement: { user: { id: string; name: string; employeeCode?: string | null }; actuals: Record<string, number | null> }[];
+  achievement: {
+    user: { id: string; name: string; employeeCode?: string | null };
+    actuals: Record<string, number | null>;
+    scores: Record<string, number | null>;
+    totalScore: number;
+  }[];
+  /** The score a full house is worth this period — every total's denominator. */
+  maxScore: number;
   choices: {
     categories: { id: string; name: string }[];
     options: { id: string; label: string; categoryId: string | null }[];
@@ -125,6 +134,8 @@ export default function KpiPage() {
       for (const p of data.periods) {
         const v = d.targets[p.key];
         next[`${d.id}:${p.key}`] = v === undefined ? '' : String(v);
+        const pts = d.points?.[p.key];
+        next[`${d.id}:${p.key}:pts`] = pts === undefined ? '' : String(pts);
       }
     }
     setDraft(next);
@@ -132,10 +143,20 @@ export default function KpiPage() {
 
   const saveTargets = useMutation({
     mutationFn: async () => {
-      const targets = Object.entries(draft).map(([k, v]) => {
-        const [definitionId, p] = k.split(':');
-        return { definitionId, period: p, target: v.trim() === '' ? null : Number(v) };
-      });
+      // The draft holds both a target and a points value per cell; only the
+      // target keys are iterated so each KPI/period is sent exactly once.
+      const targets = Object.entries(draft)
+        .filter(([k]) => !k.endsWith(':pts'))
+        .map(([k, v]) => {
+          const [definitionId, p] = k.split(':');
+          const pts = draft[`${k}:pts`] ?? '';
+          return {
+            definitionId,
+            period: p,
+            target: v.trim() === '' ? null : Number(v),
+            points: pts.trim() === '' ? null : Number(pts),
+          };
+        });
       const r = await fetch('/api/kpi/targets', {
         method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ targets }),
       });
@@ -185,11 +206,74 @@ export default function KpiPage() {
   const sourceOf = (key: string) => data?.sources.find((s) => s.key === key);
 
   const invalid = useMemo(
-    () => Object.values(draft).some((v) => v.trim() !== '' && (!/^\d+$/.test(v.trim()) || Number(v) > 1_000_000)),
+    () =>
+      Object.entries(draft).some(([k, v]) => {
+        if (v.trim() === '') return false;
+        if (!/^\d+$/.test(v.trim())) return true;
+        return Number(v) > (k.endsWith(':pts') ? 10_000 : 1_000_000);
+      }),
     [draft],
   );
 
   const targetFor = (id: string) => defs.find((d) => d.id === id)?.targets[period] ?? null;
+  const pointsFor = (id: string) => defs.find((d) => d.id === id)?.points?.[period] ?? null;
+
+  // Only these roles get the export. An agent sees their own row on this page
+  // and has no reason to pull the whole team's scoreboard out of the CRM.
+  const canExport = ['SUPER_ADMIN', 'REPORTS', 'COUNSELLING_TL'].includes(session?.user?.role ?? '');
+
+  // The points weighting is management configuration, so agents do not see it.
+  // The line drawn here is config versus outcome: an agent still sees their own
+  // Score below, which is the whole point of scoring them — they just do not see
+  // how each target was weighted to produce it.
+  const showPoints = session?.user?.role !== 'COUNSELLING_AGENT';
+
+  /**
+   * The scoreboard as CSV — every agent, every KPI, and how the score was
+   * reached rather than just the total. A manager questioning a number needs the
+   * actual, the target and the points to see where it came from, so each KPI
+   * contributes three columns instead of one.
+   *
+   * Built client-side from what is already on screen, so the file always matches
+   * the period shown and cannot disagree with the table above it.
+   */
+  function exportScores() {
+    if (!data) return;
+    const head = [
+      'Agent', 'Employee Code', 'Period', 'Range',
+      ...defs.flatMap((d) => [
+        `${d.name} — achieved`,
+        `${d.name} — target`,
+        `${d.name} — points earned`,
+      ]),
+      'Total Score', 'Max Score', 'Score %',
+    ];
+    const esc = (v: unknown) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+    const periodLabel = periods.find((p) => p.key === period)?.label ?? period;
+    const rangeLabel = data.ranges[period]?.label ?? '';
+    const body = data.achievement.map((row) =>
+      [
+        row.user.name,
+        row.user.employeeCode ?? '',
+        periodLabel,
+        rangeLabel,
+        ...defs.flatMap((d) => [
+          row.actuals[d.id] ?? '',
+          targetFor(d.id) ?? '',
+          row.scores[d.id] ?? '',
+        ]),
+        row.totalScore,
+        data.maxScore,
+        data.maxScore > 0 ? `${Math.round((row.totalScore / data.maxScore) * 100)}%` : '',
+      ].map(esc).join(','),
+    );
+    const blob = new Blob([[head.map(esc).join(','), ...body].join('\n')], { type: 'text/csv' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `kpi_scores_${periodLabel.toLowerCase()}_${(rangeLabel || 'export').replace(/\W+/g, '_')}.csv`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  }
 
   /** Plain-English summary of what a KPI counts, shown under its name. */
   function describe(d: Definition): string {
@@ -199,6 +283,12 @@ export default function KpiPage() {
     if (d.source === 'LEAD_STAGE_LIVE') return `Assigned leads currently at ${d.leadStages.join(' or ') || '(no stage chosen)'} — live count.`;
     if (d.source === 'RECEIPT_COUNT') return `Approved ${(d.receiptType ?? '').toLowerCase()} receipts, by date paid.`;
     if (d.source === 'LEADS_ASSIGNED') return 'Leads assigned to the agent in the period.';
+    // The dialer-fed sources have no feedback config to describe, and falling
+    // through to the feedback wording below labelled Talktime as "follow-ups
+    // logged", which is the wrong data entirely.
+    if (d.source === 'CALL_TALKTIME_MINUTES') return 'Minutes talked, from the dialer’s post-call records.';
+    if (d.source === 'CALL_COUNT') return 'Calls the dialer reported in the period, answered or not.';
+    if (d.source === 'CALL_CONNECTED_COUNT') return 'Calls the dialer marked CONNECTED in the period.';
     const cats = d.feedbackCategoryIds.map((id) => data?.choices.categories.find((c) => c.id === id)?.name).filter(Boolean);
     const opts = d.feedbackOptionIds.map((id) => data?.choices.options.find((o) => o.id === id)?.label).filter(Boolean);
     const bits = [...cats.map((c) => `${c} category`), ...opts];
@@ -281,15 +371,35 @@ export default function KpiPage() {
                         </td>
                         {periods.map((p) => (
                           <td key={p.key} className="px-4 py-3 text-center align-top">
-                            <input
-                              value={draft[`${d.id}:${p.key}`] ?? ''}
-                              onChange={(e) => { setDraft((x) => ({ ...x, [`${d.id}:${p.key}`]: e.target.value.replace(/[^\d]/g, '') })); setDirty(true); }}
-                              disabled={!canEdit}
-                              inputMode="numeric"
-                              placeholder="—"
-                              aria-label={`${d.name} ${p.label} target`}
-                              className="h-9 w-24 rounded-md border border-input bg-background px-2 text-center text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-70"
-                            />
+                            <div className="inline-flex flex-col items-center gap-1">
+                              <input
+                                value={draft[`${d.id}:${p.key}`] ?? ''}
+                                onChange={(e) => { setDraft((x) => ({ ...x, [`${d.id}:${p.key}`]: e.target.value.replace(/[^\d]/g, '') })); setDirty(true); }}
+                                disabled={!canEdit}
+                                inputMode="numeric"
+                                placeholder="—"
+                                aria-label={`${d.name} ${p.label} target`}
+                                className="h-9 w-24 rounded-md border border-input bg-background px-2 text-center text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-70"
+                              />
+                              {/* Points sit under the target they belong to: a
+                                  target is meaningless to score without knowing
+                                  what it is worth, and a separate table would put
+                                  the two halves of one decision far apart. */}
+                              {showPoints && (
+                              <label className="flex items-center gap-1 text-[10px] text-muted-foreground">
+                                <input
+                                  value={draft[`${d.id}:${p.key}:pts`] ?? ''}
+                                  onChange={(e) => { setDraft((x) => ({ ...x, [`${d.id}:${p.key}:pts`]: e.target.value.replace(/[^\d]/g, '') })); setDirty(true); }}
+                                  disabled={!canEdit || (draft[`${d.id}:${p.key}`] ?? '').trim() === ''}
+                                  inputMode="numeric"
+                                  placeholder="—"
+                                  aria-label={`${d.name} ${p.label} points`}
+                                  className="h-6 w-14 rounded border border-input bg-background px-1 text-center text-[11px] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+                                />
+                                pts
+                              </label>
+                              )}
+                            </div>
                           </td>
                         ))}
                         {canEdit && (
@@ -315,6 +425,7 @@ export default function KpiPage() {
             <div className="space-y-1 text-xs text-muted-foreground">
               {invalid && <p className="text-destructive">Targets must be whole numbers up to 1,000,000.</p>}
               <p>Leave a box empty for no target. A target is per period — a Daily target of 50 means 50 each day, for every agent.</p>
+              {showPoints && <p><strong>pts</strong> is what hitting that target is worth on the scoreboard. Points are pro-rata and capped: half the target earns half the points, and beating it earns no more than the target was worth. Leave pts empty to measure a KPI without scoring it.</p>}
               <p>Weeks run Monday to Sunday and quarters are calendar quarters, both on IST dates.</p>
               {data.lastSet && <p>Last updated {new Date(data.lastSet.at).toLocaleString('en-IN')} by {data.lastSet.by}.</p>}
               {!canEdit && <p className="text-amber-600">View only — a Super Admin sets KPIs and targets.</p>}
@@ -327,14 +438,27 @@ export default function KpiPage() {
               <h2 className="text-sm font-semibold">
                 Agent achievement <span className="ml-1 font-normal text-muted-foreground">{data.ranges[period]?.label}</span>
               </h2>
-              <div className="flex items-center gap-1 rounded-lg border border-border p-0.5">
-                {periods.map((p) => (
-                  <button key={p.key} onClick={() => setPeriod(p.key)}
-                    className={cn('rounded-md px-3 py-1 text-xs font-medium transition-colors',
-                      period === p.key ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-muted')}>
-                    {p.label}
-                  </button>
-                ))}
+              <div className="flex items-center gap-2">
+                <div className="flex items-center gap-1 rounded-lg border border-border p-0.5">
+                  {periods.map((p) => (
+                    <button key={p.key} onClick={() => setPeriod(p.key)}
+                      className={cn('rounded-md px-3 py-1 text-xs font-medium transition-colors',
+                        period === p.key ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-muted')}>
+                      {p.label}
+                    </button>
+                  ))}
+                </div>
+                {canExport && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={exportScores}
+                    disabled={data.achievement.length === 0}
+                    className="gap-1.5 text-xs"
+                  >
+                    <Download className="h-3.5 w-3.5" /> Export
+                  </Button>
+                )}
               </div>
             </div>
             <div className="overflow-x-auto rounded-xl border border-border/60">
@@ -347,14 +471,23 @@ export default function KpiPage() {
                         {d.name}
                         <span className="block text-[10px] font-normal text-muted-foreground">
                           {targetFor(d.id) === null ? 'no target' : `target ${targetFor(d.id)}`}
+                          {/* Same weighting as the hidden config boxes — showing
+                              it here would make hiding them pointless. */}
+                          {showPoints && pointsFor(d.id) !== null && ` · ${pointsFor(d.id)} pts`}
                         </span>
                       </th>
                     ))}
+                    <th className="px-4 py-3 text-center font-semibold whitespace-nowrap">
+                      Score
+                      <span className="block text-[10px] font-normal text-muted-foreground">
+                        {data.maxScore > 0 ? `out of ${data.maxScore}` : 'no points set'}
+                      </span>
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
                   {data.achievement.length === 0 ? (
-                    <tr><td colSpan={defs.length + 1} className="px-4 py-10 text-center text-muted-foreground">No agents to show.</td></tr>
+                    <tr><td colSpan={defs.length + 2} className="px-4 py-10 text-center text-muted-foreground">No agents to show.</td></tr>
                   ) : data.achievement.map((row) => (
                     <tr key={row.user.id} className="border-t border-border/50 hover:bg-muted/30">
                       <td className="px-4 py-2.5 whitespace-nowrap">
@@ -373,9 +506,27 @@ export default function KpiPage() {
                             ) : (
                               <span className={cn('text-xs font-medium', toneFor(actual, target))}>{actual} / {target}</span>
                             )}
+                            {row.scores[d.id] !== null && row.scores[d.id] !== undefined && (
+                              <span className="block text-[10px] text-muted-foreground">{row.scores[d.id]} pts</span>
+                            )}
                           </td>
                         );
                       })}
+                      <td className="px-4 py-2.5 text-center whitespace-nowrap">
+                        {data.maxScore > 0 ? (
+                          <>
+                            <span className={cn('text-sm font-bold', toneFor(row.totalScore, data.maxScore))}>
+                              {row.totalScore}
+                            </span>
+                            <span className="text-xs text-muted-foreground"> / {data.maxScore}</span>
+                            <span className="block text-[10px] text-muted-foreground">
+                              {Math.round((row.totalScore / data.maxScore) * 100)}%
+                            </span>
+                          </>
+                        ) : (
+                          <span className="text-xs text-muted-foreground/60">—</span>
+                        )}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
