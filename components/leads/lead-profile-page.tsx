@@ -1652,7 +1652,10 @@ function ReferralPushStatus({ logs }: { logs: ReferralIntegrationLog[] }) {
 
 interface DeliveryStatus {
   found: boolean;
+  reason?: 'NOT_FOUND' | 'BAD_REQUEST' | 'UPSTREAM_ERROR';
   message?: string;
+  upstreamMessage?: string | null;
+  queried?: Record<string, string | number | null>;
   error?: string;
   status?: string | null;
   leadConfirmation?: string | null;
@@ -1745,18 +1748,51 @@ function ReferralDeliveryStatus({ leadId }: { leadId: string }) {
   }
 
   if (!data.found) {
+    // A rejected lookup is not the same statement as an undelivered lead, and
+    // showing both the same way is what let a breaking API change sit unnoticed.
+    const rejected = data.reason && data.reason !== 'NOT_FOUND';
     return (
-      <p className="flex flex-wrap items-center gap-1 text-[11px] text-muted-foreground/70">
-        <Send className="h-3 w-3" />
-        {data.message ?? 'No client delivery recorded yet'}
+      <div className="min-w-0 max-w-full text-[11px]">
         <button
           type="button"
-          onClick={() => refetch()}
-          className="ml-1 inline-flex items-center gap-0.5 underline transition-colors hover:text-foreground"
+          onClick={() => setExpanded((v) => !v)}
+          className={cn(
+            'flex max-w-full flex-wrap items-center gap-1 text-left transition-colors hover:text-foreground',
+            rejected ? 'text-amber-700 dark:text-amber-400' : 'text-muted-foreground/70',
+          )}
         >
-          <RefreshCw className={cn('h-2.5 w-2.5', isFetching && 'animate-spin')} /> Check again
+          {rejected ? <AlertTriangle className="h-3 w-3" /> : <Send className="h-3 w-3" />}
+          {data.message ?? 'No client delivery recorded yet'}
+          {expanded ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
         </button>
-      </p>
+
+        {expanded && (
+          <div className="mt-2 space-y-2 rounded-lg border border-border/60 bg-muted/20 p-2.5">
+            {/* Every parameter is an AND filter upstream, so one stale value is
+                enough to hide a real delivery. Showing what was sent turns an
+                unexplained "not found" into something checkable. */}
+            <p className="font-semibold text-muted-foreground">Looked up with</p>
+            <pre className="max-h-40 max-w-full overflow-y-auto whitespace-pre-wrap break-all rounded bg-background/60 p-1.5 font-mono text-[10px]">
+              {pretty(data.queried ?? null)}
+            </pre>
+            {data.upstreamMessage && (
+              <>
+                <p className="font-semibold text-muted-foreground">LMS said</p>
+                <pre className="max-w-full whitespace-pre-wrap break-all rounded bg-background/60 p-1.5 font-mono text-[10px]">
+                  {data.upstreamMessage}
+                </pre>
+              </>
+            )}
+            <button
+              type="button"
+              onClick={() => refetch()}
+              className="inline-flex items-center gap-0.5 underline text-muted-foreground transition-colors hover:text-foreground"
+            >
+              <RefreshCw className={cn('h-2.5 w-2.5', isFetching && 'animate-spin')} /> Check again
+            </button>
+          </div>
+        )}
+      </div>
     );
   }
 

@@ -285,38 +285,70 @@ export interface LmsDeliveryLog {
 
 export interface LmsDeliveryStatusResult {
   found: boolean;
-  /** The upstream's own explanation when nothing matched. */
+  /**
+   * Distinguishes "the client has not taken this lead" from "the CRM could not
+   * ask properly". Conflating them hid a real breakage for two days: the API
+   * began rejecting our request and the page reported it as "not delivered".
+   */
+  reason?: 'NOT_FOUND' | 'BAD_REQUEST' | 'UPSTREAM_ERROR';
   message?: string;
   log?: LmsDeliveryLog;
+}
+
+export interface LmsDeliveryStatusQuery {
+  kaapId: string | number | null;
+  email: string | null;
+  phone: string | null;
+  courseId: number | null;
+  cityId: number | null;
+  stateId: number | null;
+  counsellorId: string | number | null;
 }
 
 /**
  * Looks up one lead's delivery log.
  *
- * **Every parameter is an AND filter.** Verified against the live endpoint: a
- * correct phone with one wrong `city_id` returns "No delivery log found", so
- * sending more fields makes a false negative *more* likely, not less. Only pass
- * values that are certain to match what was actually delivered — the caller
- * deliberately sends phone (+ kaap_id when the lead carries one) and nothing
- * else, since a later edit to the lead's city, course or counsellor would
- * otherwise make a delivered lead look undelivered.
+ * **All seven parameters are mandatory and every one is an AND filter.** The
+ * endpoint used to accept a phone number on its own; it now returns HTTP 400
+ * listing each missing field, and any single value that disagrees with what was
+ * delivered yields "No delivery log found" rather than a partial match. So a
+ * lead reassigned since the push — changing `counsellor_id` — will read as
+ * undelivered. There is no narrower query available to avoid that.
  *
- * "Nothing matched" arrives as HTTP 200 with `success: false`, so the body has
- * to be inspected — the status code alone would read as a hit.
+ * "Nothing matched" arrives as HTTP 200 with `success: false`, so the body has to
+ * be inspected; the status code alone would read as a hit.
  */
-export async function fetchLmsDeliveryStatus(params: {
-  phone?: string | null;
-  kaapId?: string | null;
-  email?: string | null;
-}): Promise<LmsDeliveryStatusResult> {
-  const query = new URLSearchParams();
-  if (params.phone) query.set('phone', params.phone);
-  if (params.kaapId) query.set('kaap_id', params.kaapId);
-  if (params.email) query.set('email', params.email);
-  // The upstream 404s on an empty query rather than returning nothing.
-  if (query.toString() === '') {
-    return { found: false, message: 'This lead has no phone or college id to look up' };
+export async function fetchLmsDeliveryStatus(
+  q: LmsDeliveryStatusQuery,
+): Promise<LmsDeliveryStatusResult> {
+  // Checked before sending: the upstream's own 400 lists field names the
+  // counsellor has no way to act on, whereas naming the missing lead field is
+  // something they can fix.
+  const missing: string[] = [];
+  if (!q.phone) missing.push('phone number');
+  if (!q.email) missing.push('email');
+  if (!q.kaapId) missing.push('college id (KAPP)');
+  if (q.courseId == null) missing.push('course');
+  if (q.cityId == null) missing.push('city');
+  if (q.stateId == null) missing.push('state');
+  if (!q.counsellorId) missing.push('assigned counsellor code');
+  if (missing.length > 0) {
+    return {
+      found: false,
+      reason: 'BAD_REQUEST',
+      message: `The LMS needs all of phone, email, college, course, city, state and counsellor to look this up. Missing or unresolved here: ${missing.join(', ')}.`,
+    };
   }
+
+  const query = new URLSearchParams({
+    kaap_id: String(q.kaapId),
+    email: String(q.email),
+    phone: String(q.phone),
+    course_id: String(q.courseId),
+    city_id: String(q.cityId),
+    state_id: String(q.stateId),
+    counsellor_id: String(q.counsellorId),
+  });
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
@@ -330,14 +362,25 @@ export async function fetchLmsDeliveryStatus(params: {
     });
 
     const json = (await res.json().catch(() => null)) as
-      | { success?: boolean; message?: string; data?: LmsDeliveryLog | null }
+      | { success?: boolean; message?: string | string[]; data?: LmsDeliveryLog | null }
       | null;
 
+    // The upstream sends `message` as an array on a validation failure and a
+    // plain string otherwise.
+    const message = Array.isArray(json?.message) ? json?.message.join('; ') : json?.message;
+
+    if (res.status === 400) {
+      return {
+        found: false,
+        reason: 'BAD_REQUEST',
+        message: message ?? 'The LMS rejected the lookup request',
+      };
+    }
     if (!res.ok) {
-      return { found: false, message: json?.message ?? `LMS returned HTTP ${res.status}` };
+      return { found: false, reason: 'UPSTREAM_ERROR', message: message ?? `LMS returned HTTP ${res.status}` };
     }
     if (!json?.success || !json.data) {
-      return { found: false, message: json?.message ?? 'No delivery log found for this lead' };
+      return { found: false, reason: 'NOT_FOUND', message: message ?? 'No delivery log found for this lead' };
     }
     return { found: true, log: json.data };
   } catch (err) {

@@ -4,6 +4,8 @@ import { authOptions } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import { canAccessLead } from '@/lib/lead-access';
 import { fetchLmsDeliveryStatus } from '@/lib/lms-api';
+import { resolveCityId, resolveStateId } from '@/lib/lms-location-lookup';
+import { resolveCourseGroupId } from '@/lib/lms-course-lookup';
 
 /**
  * What the *client* said about a lead the CRM pushed to the LMS.
@@ -28,26 +30,56 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
 
     const lead = await prisma.lead.findUnique({
       where: { id: params.id },
-      select: { id: true, phone: true, kappCollegeId: true },
+      select: {
+        id: true, phone: true, email: true, kappCollegeId: true,
+        city: true, state: true, course: true,
+        assignedTo: { select: { employeeCode: true } },
+      },
     });
     if (!lead) return NextResponse.json({ error: 'Lead not found' }, { status: 404 });
 
-    // Phone and college id only. Every extra parameter narrows the upstream
-    // match, so sending the lead's current city/course/counsellor would turn a
-    // later correction to any of them into a false "not delivered".
+    // The endpoint requires all seven fields, so the CRM's names have to be
+    // resolved to the LMS's own ids. These lookups are cached for an hour by the
+    // same helpers the lead-integration push uses, so the values sent here match
+    // the values that were delivered.
+    const [courseId, cityId, stateId] = await Promise.all([
+      resolveCourseGroupId(lead.course),
+      resolveCityId(lead.city),
+      resolveStateId(lead.state),
+    ]);
+
     const result = await fetchLmsDeliveryStatus({
-      phone: lead.phone,
       kaapId: lead.kappCollegeId,
+      email: lead.email,
+      phone: lead.phone,
+      courseId,
+      cityId,
+      stateId,
+      // The numeric part of the employee code — the same value the integration
+      // template sends as counsellor_id via {{digits(assignedTo_employeeCode)}}.
+      counsellorId: (lead.assignedTo?.employeeCode ?? '').replace(/\D+/g, '') || null,
     });
 
     if (!result.found || !result.log) {
-      // The upstream's own wording ("No delivery log found matching the given
-      // parameters") is developer-speak and hides *what* was matched on. Say it
-      // in the counsellor's terms and keep the raw text for diagnosis.
+      // A rejected request is not the same claim as an undelivered lead. Saying
+      // "no delivery recorded" for both is what hid this breaking upstream
+      // change: the API started demanding all seven parameters and the card
+      // reported it as the client simply not having taken the lead.
+      const notFound = result.reason === 'NOT_FOUND';
       return NextResponse.json({
         found: false,
-        message: 'The LMS has no client delivery recorded for this phone and college yet',
+        reason: result.reason ?? 'NOT_FOUND',
+        message: notFound
+          ? 'The LMS has no client delivery recorded for this lead yet'
+          : (result.message ?? 'The LMS could not complete the lookup'),
         upstreamMessage: result.message ?? null,
+        // Echoed back so a "not found" is diagnosable: every one of these is an
+        // AND filter, and one stale value is enough to hide a real delivery.
+        queried: {
+          kaapId: lead.kappCollegeId, email: lead.email, phone: lead.phone,
+          courseId, cityId, stateId,
+          counsellorId: (lead.assignedTo?.employeeCode ?? '').replace(/\D+/g, '') || null,
+        },
       });
     }
 
