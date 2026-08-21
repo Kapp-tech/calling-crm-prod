@@ -594,6 +594,26 @@ function FollowUpSlot({
     },
   });
 
+  const submitFollowUp = handleSubmit((d) => mutation.mutate(d));
+
+  /**
+   * Enter saves the follow-up instead of adding a line to Remarks.
+   *
+   * An agent types a short remark and moves on, so the newline was almost never
+   * what they wanted and the reach for the button cost a second on every call.
+   * Shift+Enter still inserts a newline for the occasional longer note.
+   *
+   * Two guards: a keystroke while the save is already in flight is ignored, so
+   * holding Enter cannot fire duplicate submissions; and an Enter that is
+   * closing an IME composition is left alone, since for anyone typing in an
+   * Indic script that key press is confirming a character, not finishing input.
+   */
+  function remarksKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
+    if (e.key !== 'Enter' || e.shiftKey || e.nativeEvent.isComposing) return;
+    e.preventDefault();
+    if (!mutation.isPending && feedbackOptions.length > 0) void submitFollowUp();
+  }
+
   if (existing) {
     return (
       <div className="rounded-lg border border-border/60 overflow-hidden">
@@ -650,7 +670,7 @@ function FollowUpSlot({
         </span>
       </div>
 
-      <form onSubmit={handleSubmit((d) => mutation.mutate(d))} className="px-4 py-3 space-y-3">
+      <form onSubmit={submitFollowUp} className="px-4 py-3 space-y-3">
         <div className="space-y-1.5">
           <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
             Feedback <span className="text-destructive">*</span>
@@ -688,8 +708,9 @@ function FollowUpSlot({
           </label>
           <textarea
             className="flex min-h-[72px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring placeholder:text-muted-foreground resize-none"
-            placeholder="Describe the conversation outcome..."
+            placeholder="Describe the conversation outcome, then press Enter to save..."
             {...register('remarks')}
+            onKeyDown={remarksKeyDown}
           />
           {errors.remarks && (
             <p className="text-xs text-destructive">{errors.remarks.message}</p>
