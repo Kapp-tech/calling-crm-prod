@@ -15,7 +15,7 @@
 // The provider moves tenants between dialer hosts, so the base is configurable
 // via DIALSHREE_BASE_URL and the next move needs no code change. A trailing
 // slash in the env value is tolerated — otherwise every path would double up.
-const BASE_URL = (process.env.DIALSHREE_BASE_URL ?? 'https://dialer5.elisiontec.com:9011').replace(/\/+$/, '');
+const BASE_URL = (process.env.DIALSHREE_BASE_URL ?? 'https://dialer5.elisiontec.com').replace(/\/+$/, '');
 
 // Login lives on the same host on purpose: the bearer token is minted by one
 // dialer instance and is not accepted by another, so pointing dial/hangup at a
