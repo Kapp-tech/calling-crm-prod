@@ -12,8 +12,7 @@ import {
   UserCircle, UserCheck, ClipboardList, LogOut, ChevronRight, ChevronDown,
   GitBranch, CalendarClock, X, ChevronsLeft, ChevronsRight,
   GraduationCap, Tag, Globe2, CheckSquare, ShieldCheck, Phone,
-  Megaphone, Gauge, Receipt, Layers, KeyRound, Settings, Trash2, Webhook, Search, Target, FileBarChart,
-} from 'lucide-react';
+  Megaphone, Gauge, Receipt, Layers, KeyRound, Settings, Trash2, Webhook, Search, Target, FileBarChart, Mail,} from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
@@ -364,6 +363,12 @@ const NAV: NavEntry[] = [
         href: '/dashboard/super-admin/configurations/lead-integrations',
         label: 'Lead Integrations',
         icon: Webhook,
+        roles: ['SUPER_ADMIN'],
+      },
+      {
+        href: '/dashboard/super-admin/configurations/email-automation',
+        label: 'Email Automation',
+        icon: Mail,
         roles: ['SUPER_ADMIN'],
       },
     ],

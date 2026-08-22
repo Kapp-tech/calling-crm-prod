@@ -235,6 +235,8 @@ model User {
   kpiDefinitions KpiDefinition[] @relation("KpiDefinitionCreatedBy")
   kpiTargetsSet  KpiTarget[]     @relation("KpiTargetSetBy")
   callLogs       CallLog[]
+  emailRules     EmailRule[]     @relation("EmailRuleCreatedBy")
+  emailRuleScope EmailRule[]     @relation("EmailRuleScopeTl")
 
   // Generic manager link (SA → TL, TL → Agent, SA → Operations)
   managerId String?
@@ -1120,4 +1122,109 @@ model CallLog {
   @@index([phoneNumber])
   @@index([startedAt])
   @@index([connected])
+}
+
+
+/// What a scheduled email contains.
+enum EmailReportType {
+  /// One email per agent, carrying only that agent's own numbers.
+  AGENT_PERFORMANCE
+  /// One email listing every agent in scope — the management view.
+  TEAM_SUMMARY
+}
+
+enum EmailFrequency {
+  DAILY
+  WEEKLY
+  MONTHLY
+  QUARTERLY
+}
+
+/// How the "To" line is resolved when the rule runs.
+enum EmailAudience {
+  /// Addresses typed in by an admin.
+  FIXED
+  /// Everyone holding one of the chosen roles, using their CRM email.
+  BY_ROLE
+  /// A separate email to each agent in scope, addressed to them.
+  EACH_AGENT
+}
+
+/// One scheduled email. Everything an admin can decide lives here rather than in
+/// code: what it contains, when it goes, who receives it and who is copied.
+model EmailRule {
+  id   String @id @default(cuid())
+  name String
+
+  reportType EmailReportType
+  frequency  EmailFrequency
+
+  /// Send time as IST wall clock. The server runs UTC, so storing an instant
+  /// would drift the moment anything about the box changed; an hour and minute
+  /// in the timezone the business actually works in cannot.
+  sendHour   Int
+  sendMinute Int @default(0)
+  /// 1 = Monday … 7 = Sunday. Weekly rules only.
+  weekday    Int?
+  /// 1–28 only, so a monthly rule cannot silently skip February.
+  dayOfMonth Int?
+
+  audience EmailAudience
+  /// [{ emailid, name }] — used when the audience is FIXED.
+  toEmails  Json  @default("[]")
+  /// Role names, used when the audience is BY_ROLE.
+  toRoles   String[]
+  ccEmails  Json  @default("[]")
+  ccRoles   String[]
+  bccEmails Json  @default("[]")
+
+  /// Limit the report to one Team Leader's agents. Null covers everyone.
+  scopeTlId String?
+  scopeTl   User?   @relation("EmailRuleScopeTl", fields: [scopeTlId], references: [id], onDelete: SetNull)
+
+  attachCsv Boolean @default(false)
+  isActive  Boolean @default(true)
+
+  /// The period this rule last completed, e.g. "2026-08-22" or "2026-W34".
+  /// Compared against the current period so a rule fires once per period even
+  /// if the scheduler runs every few minutes or the box was down at the time.
+  lastPeriodKey String?
+  lastRunAt     DateTime?
+
+  createdById String
+  createdBy   User   @relation("EmailRuleCreatedBy", fields: [createdById], references: [id])
+
+  logs      EmailLog[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([isActive])
+}
+
+/// Every send attempt. Without this nobody can answer "did the 9am report go?",
+/// and the provider returns HTTP 200 on failure, so the outcome has to be
+/// recorded from the response body at the time.
+model EmailLog {
+  id     String     @id @default(cuid())
+  ruleId String?
+  rule   EmailRule? @relation(fields: [ruleId], references: [id], onDelete: SetNull)
+
+  reportType  EmailReportType
+  periodLabel String
+  subject     String
+
+  toEmails  String[]
+  ccEmails  String[]
+  bccEmails String[]
+
+  success Boolean
+  /// The provider's own tracking id, for chasing a specific message with them.
+  providerGuid     String?
+  providerResponse Json?
+  error            String?
+
+  sentAt DateTime @default(now())
+
+  @@index([ruleId, sentAt])
+  @@index([sentAt])
 }
