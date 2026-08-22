@@ -1,8 +1,8 @@
 import { EmailRule, Prisma, PrismaClient } from '@prisma/client';
 import { sendEmail, EmailAddress, isEmailConfigured } from './email';
-import { buildAgentEmail, buildTeamSummary } from './email-reports';
-import { buildAgentReport } from './reports';
+import { buildAgentEmail, buildTeamSummary, buildAgentBlocks, buildWelcomeEmail } from './email-reports';
 import { isRuleDue, periodKeyFor, reportWindowFor } from './email-schedule';
+import { istDayKey } from './ist-time';
 
 /**
  * Turning a saved rule into sent mail.
@@ -104,25 +104,51 @@ export async function runEmailRule(
     else out.failed += 1;
   };
 
-  if (rule.reportType === 'AGENT_PERFORMANCE') {
+  if (rule.reportType === 'WELCOME') {
+    // Re-sending the welcome. The password is unrecoverable by then — it is
+    // bcrypt-hashed — so this variant tells the person to ask their manager
+    // rather than pretending a field is missing.
+    const people = await db.user.findMany({
+      where: scopeFor(rule),
+      select: { id: true, name: true, email: true, employeeCode: true },
+      orderBy: { name: 'asc' },
+    });
+    if (people.length === 0) {
+      out.skipped = 'No users in scope';
+      return out;
+    }
+    for (const person of people) {
+      const built = buildWelcomeEmail({
+        name: person.name, employeeCode: person.employeeCode, email: person.email,
+      });
+      const to: EmailAddress[] = [{ emailid: person.email, name: person.name }];
+      const result = await sendEmail({
+        subject: built.subject, html: built.html, to, cc, bcc,
+        messageId: `crm-${stamp}-w${person.id.slice(-6)}`,
+      });
+      await record(built.subject, to, result);
+      await new Promise((r) => setTimeout(r, 400));
+    }
+  } else if (rule.reportType === 'AGENT_PERFORMANCE') {
     // One email per agent. Sent in series with a short pause: the box has under
     // 400 MB free and a burst of parallel sends is the kind of thing that takes
     // the whole app down at 9am.
-    const { rows } = await buildAgentReport(db, scopeFor(rule), 'DATEWISE', window.from, window.to, now);
+    const today = istDayKey(now);
+    const { blocks } = await buildAgentBlocks(db, scopeFor(rule), now);
     const agents = await db.user.findMany({
-      where: { id: { in: rows.map((r) => r.id) } },
+      where: { id: { in: blocks.map((b) => b.id) } },
       select: { id: true, email: true, name: true },
     });
     const emailOf = new Map(agents.map((a) => [a.id, a]));
 
-    for (const row of rows) {
-      const agent = emailOf.get(row.id);
+    for (const block of blocks) {
+      const agent = emailOf.get(block.id);
       if (!agent?.email) continue;
-      const built = buildAgentEmail(row, window.label);
+      const built = buildAgentEmail(block, today);
       const to: EmailAddress[] = [{ emailid: agent.email, name: agent.name }];
       const result = await sendEmail({
         subject: built.subject, html: built.html, to, cc, bcc,
-        messageId: `crm-${stamp}-${row.id.slice(-6)}`,
+        messageId: `crm-${stamp}-${block.id.slice(-6)}`,
       });
       await record(built.subject, to, result);
       await new Promise((r) => setTimeout(r, 400));
@@ -152,7 +178,7 @@ export async function runEmailRule(
           ? [
               {
                 content: Buffer.from(built.csv, 'utf8').toString('base64'),
-                filename: `team_performance_${window.from}.csv`,
+                filename: `team_performance_${istDayKey(now)}.csv`,
                 type: 'text/csv',
               },
             ]

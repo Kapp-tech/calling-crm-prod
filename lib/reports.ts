@@ -61,7 +61,9 @@ export interface AgentReportRow {
   manager: string | null;
   zone: string | null;
   language: string | null;
-  workingDays: number;
+  /** ISO date. How long someone has been in the seat is the context a manager
+   *  reads a new joiner's numbers against. */
+  joiningDate: string | null;
   dialedCalls: number;
   connectedCalls: number;
   notConnectedCalls: number;
@@ -95,7 +97,7 @@ export async function buildAgentReport(
   const agents = await db.user.findMany({
     where: agentWhere,
     select: {
-      id: true, name: true, employeeCode: true, zone: true, language: true,
+      id: true, name: true, employeeCode: true, zone: true, language: true, joiningDate: true,
       managedBy: { select: { name: true } },
       team: { select: { teamLead: { select: { name: true } } } },
       manager: { select: { name: true } },
@@ -117,7 +119,7 @@ export async function buildAgentReport(
     ...(period ? { createdAt: period } : {}),
   };
 
-  const [dialed, connected, notConnected, receipts, attendance, talktime] = await Promise.all([
+  const [dialed, connected, notConnected, receipts, talktime] = await Promise.all([
     db.leadFeedback.groupBy({ by: ['agentId'], where: feedbackBase, _count: { _all: true } }),
     connectedId
       ? db.leadFeedback.groupBy({
@@ -143,18 +145,6 @@ export async function buildAgentReport(
         lead: { assignedToId: { in: ids } },
       },
       select: { type: true, lead: { select: { assignedToId: true } } },
-    }),
-    // A working day is a day the agent punched in at all. Attendance.date is a
-    // "YYYY-MM-DD" IST string, so it is filtered as a string range rather than
-    // being cast to a timestamp.
-    db.attendance.findMany({
-      where: {
-        userId: { in: ids },
-        ...(window.from && window.to
-          ? { date: { gte: istDayKey(window.from), lte: istDayKey(window.to) } }
-          : {}),
-      },
-      select: { userId: true, date: true },
     }),
     // Talk time comes from the dialer's post-call webhook. Only calls the dialer
     // itself marked CONNECTED are averaged — it reports a few seconds of "talk
@@ -197,13 +187,6 @@ export async function buildAgentReport(
     m.set(aid, (m.get(aid) ?? 0) + 1);
   }
 
-  // Distinct dates — two punch-ins on one day are still one working day.
-  const daysBy = new Map<string, Set<string>>();
-  for (const a of attendance) {
-    if (!daysBy.has(a.userId)) daysBy.set(a.userId, new Set());
-    daysBy.get(a.userId)!.add(a.date);
-  }
-
   const rows: AgentReportRow[] = agents.map((a) => {
     return {
       id: a.id,
@@ -215,7 +198,7 @@ export async function buildAgentReport(
       manager: a.manager?.name ?? null,
       zone: a.zone,
       language: a.language,
-      workingDays: daysBy.get(a.id)?.size ?? 0,
+      joiningDate: a.joiningDate ? istDayKey(a.joiningDate) : null,
       dialedCalls: dialedBy.get(a.id) ?? 0,
       connectedCalls: connectedBy.get(a.id) ?? 0,
       notConnectedCalls: notConnectedBy.get(a.id) ?? 0,

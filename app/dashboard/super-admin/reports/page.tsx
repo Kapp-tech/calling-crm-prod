@@ -14,7 +14,7 @@ import { istDayKey } from '@/lib/ist-time';
 interface Row {
   id: string; employeeCode: string | null; name: string;
   tl: string | null; manager: string | null; zone: string | null; language: string | null;
-  workingDays: number; dialedCalls: number; connectedCalls: number; notConnectedCalls: number;
+  joiningDate: string | null; dialedCalls: number; connectedCalls: number; notConnectedCalls: number;
   applications: number; admissions: number; avgTalktimeMin: number | null;
 }
 
@@ -87,13 +87,14 @@ export default function ReportsPage() {
   function exportCsv() {
     if (!data) return;
     const head = [
-      'Agent ID', 'Agent Name', 'Agent TL', 'Agent Manager', 'Total Working Days', 'Agent Zone', 'Agent Language',
+      'Agent ID', 'Agent Name', 'Agent TL', 'Agent Manager', 'Joining Date', 'Agent Zone', 'Agent Language',
       'Total Dialed Calls', 'Total Connected Calls', 'Total Not Connected Calls',
       'Total Application', 'Total Admission', 'Average Talktime (min)',
     ];
     const esc = (v: unknown) => `"${String(v ?? '').replace(/"/g, '""')}"`;
     const body = rows.map((r) => [
-      r.employeeCode ?? '', r.name, r.tl ?? '', r.manager ?? '', r.workingDays, r.zone ?? '', r.language ?? '',
+      // ISO in the export so it sorts and filters properly in Excel.
+      r.employeeCode ?? '', r.name, r.tl ?? '', r.manager ?? '', r.joiningDate ?? '', r.zone ?? '', r.language ?? '',
       r.dialedCalls, r.connectedCalls, r.notConnectedCalls, r.applications, r.admissions,
       r.avgTalktimeMin ?? '',
     ].map(esc).join(','));
@@ -211,7 +212,7 @@ export default function ReportsPage() {
               <table className="w-full min-w-[1100px] text-xs">
                 <thead className="bg-muted/60">
                   <tr>
-                    {['Agent ID', 'Agent Name', 'Agent TL', 'Agent Manager', 'Working Days', 'Zone', 'Language',
+                    {['Agent ID', 'Agent Name', 'Agent TL', 'Agent Manager', 'Joining Date', 'Zone', 'Language',
                       'Dialed', 'Connected', 'Not Connected', 'Application', 'Admission', 'Avg Talktime'].map((h, i) => (
                       <th key={h} className={cn('px-3 py-2.5 font-semibold whitespace-nowrap text-muted-foreground', i > 6 ? 'text-center' : 'text-left')}>{h}</th>
                     ))}
@@ -226,7 +227,13 @@ export default function ReportsPage() {
                       <td className="px-3 py-2.5 font-medium whitespace-nowrap">{r.name}</td>
                       <td className="px-3 py-2.5 whitespace-nowrap text-muted-foreground">{r.tl ?? '—'}</td>
                       <td className="px-3 py-2.5 whitespace-nowrap text-muted-foreground">{r.manager ?? '—'}</td>
-                      <td className="px-3 py-2.5 text-center tabular-nums">{r.workingDays}</td>
+                      <td className="px-3 py-2.5 text-center whitespace-nowrap text-muted-foreground">
+                        {r.joiningDate
+                          ? new Date(`${r.joiningDate}T00:00:00Z`).toLocaleDateString('en-IN', {
+                              day: '2-digit', month: 'short', year: 'numeric', timeZone: 'UTC',
+                            })
+                          : '—'}
+                      </td>
                       <td className="px-3 py-2.5 whitespace-nowrap text-muted-foreground">{r.zone ?? '—'}</td>
                       <td className="px-3 py-2.5 whitespace-nowrap text-muted-foreground">{r.language ?? '—'}</td>
                       <td className="px-3 py-2.5 text-center tabular-nums font-medium">{r.dialedCalls}</td>
@@ -245,7 +252,7 @@ export default function ReportsPage() {
             <p className="text-[11px] text-muted-foreground">
               <Info className="mr-1 inline h-3 w-3" />
               Average Talktime needs the dialer’s call records, which are not yet integrated.
-              Working Days counts days the agent punched in. Applications and Admissions are approved receipts, counted by date paid.
+              Applications and Admissions are approved receipts, counted by date paid.
             </p>
           </section>
 

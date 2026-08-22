@@ -275,6 +275,45 @@ export async function computeKpiActual(
 }
 
 /**
+ * One agent's KPI score for a period, and the score a full house would be worth.
+ *
+ * `now` decides which window is measured, so passing yesterday's instant scores
+ * yesterday against the same daily target — that is how the report shows Today
+ * and Yesterday side by side without a second set of targets.
+ *
+ * Caveat worth knowing: a LEAD_STAGE_LIVE KPI is a snapshot of where leads sit
+ * *right now*, so it reads the same for Today and Yesterday. It measures a
+ * standing position, not something that happened on a given day.
+ */
+export async function kpiScoreboardFor(
+  db: PrismaClient | Prisma.TransactionClient,
+  defs: (KpiDefinitionLike & { targets: { period: KpiPeriod; target: number; points: number | null }[] })[],
+  userId: string,
+  period: KpiPeriod,
+  now = new Date(),
+): Promise<{ score: number | null; max: number }> {
+  let total = 0;
+  let max = 0;
+  let scoredAnything = false;
+
+  for (const def of defs) {
+    const t = def.targets.find((x) => x.period === period);
+    if (!t || t.points == null) continue;
+    max += t.points;
+    const actual = await computeKpiActual(db, def, userId, period, now);
+    const earned = kpiScore(actual, t.target, t.points);
+    if (earned !== null) {
+      total += earned;
+      scoredAnything = true;
+    }
+  }
+
+  // No scored KPI at all for this period reads as "not scored", not as zero.
+  if (max === 0) return { score: null, max: 0 };
+  return { score: scoredAnything ? Math.round(total * 10) / 10 : 0, max };
+}
+
+/**
  * The KPIs the system starts with — ordinary definitions, editable and
  * deletable like any other, seeded once so the page is never empty.
  */
