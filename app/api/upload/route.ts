@@ -143,8 +143,36 @@ export async function POST(req: NextRequest) {
         college: l._resolvedCollege ?? l.college,
       }));
 
-      const toInsert      = resolvedValid.filter((l) => !existingKeys.has(dupKey(l)));
-      const duplicateList = resolvedValid.filter((l) =>  existingKeys.has(dupKey(l)));
+      const alreadyInDb = resolvedValid.filter((l) => existingKeys.has(dupKey(l)));
+
+      // De-duplicate the file against itself as well as against the database.
+      //
+      // Checking only the database was the whole bug: every copy of a row inside
+      // one file is genuinely absent from the Lead table at the moment of the
+      // check, so all of them passed and createMany inserted the lot. A single
+      // upload on 22 Aug 2026 put 370 rows in for 88 real people — 282 surplus —
+      // and because leads are round-robin assigned, five different agents ended
+      // up separately phoning the same person.
+      //
+      // Same key as the database check (email + college), so a row is treated
+      // identically whether its twin is in the file or already stored. The first
+      // occurrence wins, which keeps the result predictable: it is the row the
+      // person who built the file would expect to survive.
+      const seenInFile = new Set<string>();
+      const toInsert: typeof resolvedValid = [];
+      const repeatedInFile: typeof resolvedValid = [];
+      for (const lead of resolvedValid) {
+        const key = dupKey(lead);
+        if (existingKeys.has(key)) continue;      // counted in alreadyInDb
+        if (seenInFile.has(key)) {
+          repeatedInFile.push(lead);
+          continue;
+        }
+        seenInFile.add(key);
+        toInsert.push(lead);
+      }
+
+      const duplicateList = [...alreadyInDb, ...repeatedInFile];
       const duplicateEmails = duplicateList.map((l) => l.email.trim().toLowerCase());
 
       const batch = await tx.uploadBatch.create({
@@ -200,6 +228,11 @@ export async function POST(req: NextRequest) {
         fileName:       batch.fileName,
         inserted:       toInsert.length,
         duplicates:     duplicateEmails,
+        // Split out so the person uploading can tell "this lead is already in
+        // the CRM" from "your file lists this lead more than once" — two
+        // different problems with two different fixes.
+        alreadyInCrm:   alreadyInDb.length,
+        repeatedInFile: repeatedInFile.length,
         total:          leads.length + clientErrorCount,
         invalidLeads,
       };

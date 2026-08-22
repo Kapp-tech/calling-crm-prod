@@ -64,6 +64,10 @@ interface UploadApiResult {
   fileName: string;
   inserted: number;
   duplicates: string[];
+  /** Skipped because the lead is already in the CRM. */
+  alreadyInCrm?: number;
+  /** Skipped because the file itself listed the lead more than once. */
+  repeatedInFile?: number;
   total: number;
   invalidLeads: { row: number; email: string; errors: string[] }[];
 }
@@ -549,6 +553,24 @@ export default function OperationsPage() {
                       <ResultStat label="Successfully Inserted" value={uploadResult.inserted} color="emerald" />
                       <ResultStat label="Duplicates Skipped" value={uploadResult.duplicates.length} color={uploadResult.duplicates.length > 0 ? 'amber' : 'slate'} />
                     </div>
+                    {/* "Already in the CRM" and "listed twice in your file" are
+                        different problems with different fixes, so the split is
+                        worth showing rather than one lump figure. */}
+                    {(uploadResult.repeatedInFile ?? 0) > 0 && (
+                      <div className="flex items-start gap-2 rounded-md bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-800">
+                        <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+                        <span>
+                          <strong>{uploadResult.repeatedInFile}</strong> row
+                          {uploadResult.repeatedInFile !== 1 ? 's were' : ' was'} listed more than once
+                          inside this file and {uploadResult.repeatedInFile !== 1 ? 'were' : 'was'} added
+                          only once. {(uploadResult.alreadyInCrm ?? 0) > 0 && (
+                            <>The other {uploadResult.alreadyInCrm} skipped row
+                            {uploadResult.alreadyInCrm !== 1 ? 's were' : ' was'} already in the CRM. </>
+                          )}
+                          Worth checking the source of the file — repeated rows usually mean an export ran twice.
+                        </span>
+                      </div>
+                    )}
                     {invalidRows.length > 0 && (
                       <div className="flex items-start gap-2 rounded-md bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-800">
                         <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
