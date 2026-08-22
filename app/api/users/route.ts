@@ -6,6 +6,7 @@ import { authOptions } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import { Role, UserStatus, WorkType } from '@prisma/client';
 import { generateEmployeeCode, logActivity } from '@/lib/permissions';
+import { sendWelcomeEmail } from '@/lib/welcome-email';
 
 // Optional, but must be a real 10-digit number when provided. An empty string
 // stores NULL rather than "". Matches the referral form's existing rule in
@@ -186,6 +187,18 @@ export async function POST(req: NextRequest) {
     });
 
     return u;
+  });
+
+  // Welcome the new joiner. Deliberately outside the transaction and never
+  // awaited for its result: a mail provider having a bad minute must not roll
+  // back a created account or leave the admin staring at a spinner. Failures
+  // land in EmailLog, where they can be seen and re-sent.
+  void sendWelcomeEmail({
+    name: user.name,
+    employeeCode: user.employeeCode,
+    email: user.email,
+    // The only moment the plaintext exists — it is bcrypt-hashed in the row.
+    password,
   });
 
   return NextResponse.json({ ...user, tempPassword: password }, { status: 201 });

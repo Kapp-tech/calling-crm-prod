@@ -10,6 +10,8 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { useToast } from '@/components/ui/use-toast';
+import { PinGate } from '@/components/shared/pin-gate';
+import { PIN_GATED_ACTIONS } from '@/lib/pin-gated-actions';
 import { cn } from '@/lib/utils';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -19,7 +21,7 @@ interface Address { emailid: string; name?: string }
 interface Rule {
   id: string;
   name: string;
-  reportType: 'AGENT_PERFORMANCE' | 'TEAM_SUMMARY';
+  reportType: 'AGENT_PERFORMANCE' | 'TEAM_SUMMARY' | 'WELCOME';
   frequency: 'DAILY' | 'WEEKLY' | 'MONTHLY' | 'QUARTERLY';
   sendHour: number;
   sendMinute: number;
@@ -55,6 +57,7 @@ interface Payload {
 const REPORT_LABEL: Record<Rule['reportType'], string> = {
   AGENT_PERFORMANCE: 'Agent performance — one email per agent',
   TEAM_SUMMARY: 'Team summary — one email listing everyone',
+  WELCOME: 'Welcome email — login details and links',
 };
 
 const ROLES = ['SUPER_ADMIN', 'REPORTS', 'OPERATIONS', 'COUNSELLING_TL'];
@@ -105,6 +108,14 @@ const addressesToText = (list: Address[]) =>
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function EmailAutomationPage() {
+  return (
+    <PinGate action={PIN_GATED_ACTIONS.EMAIL_AUTOMATION} title="Email Automation">
+      <EmailAutomationContent />
+    </PinGate>
+  );
+}
+
+function EmailAutomationContent() {
   const qc = useQueryClient();
   const { toast } = useToast();
   const [editing, setEditing] = useState<(typeof BLANK & { id?: string }) | null>(null);
@@ -336,7 +347,10 @@ export default function EmailAutomationPage() {
           <DialogHeader><DialogTitle>{editing?.id ? 'Edit rule' : 'Add rule'}</DialogTitle></DialogHeader>
           {editing && (() => {
             const set = (patch: Partial<typeof BLANK>) => setEditing({ ...editing, ...patch });
-            const isAgentReport = editing.reportType === 'AGENT_PERFORMANCE';
+            // Both of these carry one person's own details, so the recipient is
+            // always that person; only Cc and Bcc are free to configure.
+            const isAgentReport =
+              editing.reportType === 'AGENT_PERFORMANCE' || editing.reportType === 'WELCOME';
             return (
               <div className="space-y-4 py-1">
                 <div className="space-y-1.5">
@@ -352,10 +366,14 @@ export default function EmailAutomationPage() {
                       const reportType = e.target.value as Rule['reportType'];
                       // The audience is dictated by the report: a per-agent email
                       // must go to each agent, a team summary must not.
-                      set({ reportType, audience: reportType === 'AGENT_PERFORMANCE' ? 'EACH_AGENT' : 'FIXED' });
+                      set({
+                        reportType,
+                        audience: reportType === 'TEAM_SUMMARY' ? 'FIXED' : 'EACH_AGENT',
+                      });
                     }}>
                     <option value="TEAM_SUMMARY">{REPORT_LABEL.TEAM_SUMMARY}</option>
                     <option value="AGENT_PERFORMANCE">{REPORT_LABEL.AGENT_PERFORMANCE}</option>
+                    <option value="WELCOME">{REPORT_LABEL.WELCOME}</option>
                   </select>
                 </div>
 
@@ -406,7 +424,9 @@ export default function EmailAutomationPage() {
                   <Label>Who receives it</Label>
                   {isAgentReport ? (
                     <p className="rounded-md border border-border/60 bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
-                      Each agent receives their own numbers, at their CRM email address.
+                      {editing.reportType === 'WELCOME'
+                        ? 'Each person receives their own login details, at their CRM email address. A welcome also goes out automatically the moment an account is created — this rule is for re-sending. Use Cc to copy a manager.'
+                        : 'Each agent receives their own numbers, at their CRM email address.'}
                     </p>
                   ) : (
                     <select className={SELECT} value={editing.audience}

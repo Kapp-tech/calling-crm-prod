@@ -6,6 +6,8 @@ import { authOptions } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import { logActivity } from '@/lib/permissions';
 import { isEmailConfigured, cleanAddresses } from '@/lib/email';
+import { isActionUnlocked } from '@/lib/security-pin';
+import { PIN_GATED_ACTIONS } from '@/lib/pin-gated-actions';
 import { runEmailRule } from '@/lib/email-runner';
 
 /**
@@ -39,11 +41,26 @@ const ruleSchema = z.object({
   isActive: z.boolean().default(true),
 });
 
+/**
+ * Super Admin *and* an unlocked security PIN.
+ *
+ * Enforced on the server, not only in the UI: the gate is meaningless if the
+ * endpoints behind it answer a plain fetch. A rule can send company performance
+ * data to any address, which is the same class of power as an API key.
+ */
 async function requireSuperAdmin() {
   const session = await getServerSession(authOptions);
   if (!session) return { error: NextResponse.json({ error: 'Unauthorized' }, { status: 401 }) };
   if (session.user.role !== 'SUPER_ADMIN') {
     return { error: NextResponse.json({ error: 'Only a Super Admin can manage email automation' }, { status: 403 }) };
+  }
+  if (!(await isActionUnlocked(session.user.id, PIN_GATED_ACTIONS.EMAIL_AUTOMATION))) {
+    return {
+      error: NextResponse.json(
+        { error: 'This tool is PIN-locked — verify your security PIN first', code: 'PIN_LOCKED' },
+        { status: 423 },
+      ),
+    };
   }
   return { session };
 }
@@ -52,6 +69,9 @@ async function requireSuperAdmin() {
 function validateAudience(d: z.infer<typeof ruleSchema>): string | null {
   if (d.reportType === 'AGENT_PERFORMANCE' && d.audience !== 'EACH_AGENT') {
     return 'An agent performance email must be addressed to each agent — that is what makes it personal.';
+  }
+  if (d.reportType === 'WELCOME' && d.audience !== 'EACH_AGENT') {
+    return 'A welcome email carries one person’s own login details, so it goes to each agent individually. Use Cc to copy a manager.';
   }
   if (d.reportType === 'TEAM_SUMMARY' && d.audience === 'EACH_AGENT') {
     return 'A team summary lists everyone, so it cannot be addressed to each agent individually.';

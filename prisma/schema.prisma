@@ -1131,6 +1131,9 @@ enum EmailReportType {
   AGENT_PERFORMANCE
   /// One email listing every agent in scope — the management view.
   TEAM_SUMMARY
+  /// Login details and getting-started links for a newly created user. Sent
+  /// automatically when the account is made, and re-sendable from a rule.
+  WELCOME
 }
 
 enum EmailFrequency {

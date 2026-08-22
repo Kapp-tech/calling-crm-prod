@@ -8,6 +8,9 @@ export const PIN_GATED_ACTIONS = {
   MANAGE_PERMISSIONS: 'MANAGE_PERMISSIONS',
   API_KEYS: 'API_KEYS',
   LEAD_INTEGRATIONS: 'LEAD_INTEGRATIONS',
+  // Email rules decide who outside the CRM receives company performance data,
+  // and a rule can be pointed at any address — worth the same gate as API keys.
+  EMAIL_AUTOMATION: 'EMAIL_AUTOMATION',
 } as const;
 
 export type PinGatedAction = (typeof PIN_GATED_ACTIONS)[keyof typeof PIN_GATED_ACTIONS];
