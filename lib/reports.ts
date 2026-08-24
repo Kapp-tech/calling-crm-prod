@@ -1,5 +1,5 @@
 import { Prisma, PrismaClient } from '@prisma/client';
-import { istStartOfDay, istEndOfDay, istDayKey, istShiftDays } from './ist-time';
+import { istStartOfDay, istEndOfDay, istDayKey, istShiftDays, toUtcSqlTimestamp } from './ist-time';
 
 /**
  * Agent performance reporting.
@@ -114,27 +114,61 @@ export async function buildAgentReport(
   const connectedId = catId('Connected');
   const notConnectedId = catId('Not Connected');
 
-  const feedbackBase: Prisma.LeadFeedbackWhereInput = {
-    agentId: { in: ids },
-    ...(period ? { createdAt: period } : {}),
-  };
-
-  const [dialed, connected, notConnected, receipts, talktime] = await Promise.all([
-    db.leadFeedback.groupBy({ by: ['agentId'], where: feedbackBase, _count: { _all: true } }),
-    connectedId
-      ? db.leadFeedback.groupBy({
-          by: ['agentId'],
-          where: { ...feedbackBase, feedbackOption: { categoryId: connectedId } },
-          _count: { _all: true },
-        })
-      : Promise.resolve([]),
-    notConnectedId
-      ? db.leadFeedback.groupBy({
-          by: ['agentId'],
-          where: { ...feedbackBase, feedbackOption: { categoryId: notConnectedId } },
-          _count: { _all: true },
-        })
-      : Promise.resolve([]),
+  const [callCounts, receipts, talktime] = await Promise.all([
+    /**
+     * Dialed / Connected / Not Connected, counted as LEADS rather than as
+     * follow-ups.
+     *
+     * An agent who rings a student, gets no answer, logs it, and reaches them
+     * a minute later has worked one lead — not two. Counting follow-up rows
+     * inflated a normal day by a few per cent and the worst observed agent-day
+     * by 13%, which matters because these figures are scored against targets.
+     * The Dialed Calls KPI counts leads for the same reason.
+     *
+     * The category split uses each agent's LAST follow-up on that lead inside
+     * the window. That is the same rule the All Leads pills follow (they read
+     * Lead.currentFeedbackOptionId, the latest feedback), so the two pages
+     * agree — and it keeps the row adding up: a lead counted once under Dialed
+     * lands in exactly one of the two category columns, never both. Counting
+     * "any Connected follow-up" instead would double-count the leads that were
+     * missed and then reached, and the columns would overshoot the total.
+     *
+     * Raw SQL because Prisma cannot count DISTINCT on a column. The
+     * alternative — grouping by (agentId, leadId) and counting in JS — would
+     * pull one row per agent-lead pair, which on OVERALL is every follow-up
+     * relationship in the database.
+     */
+    db.$queryRaw<{ agentId: string; dialed: bigint; connected: bigint; notConnected: bigint }[]>(
+      Prisma.sql`
+        WITH latest AS (
+          SELECT DISTINCT ON (f."agentId", f."leadId") f."agentId", fo."categoryId"
+          FROM "LeadFeedback" f
+          LEFT JOIN "FeedbackOption" fo ON fo.id = f."feedbackOptionId"
+          WHERE f."agentId" IN (${Prisma.join(ids)})
+            ${
+              // Explicit UTC literals, never a JS Date: the driver serialises a
+              // Date in the Node process's timezone, and casting that to
+              // `timestamp without time zone` drops the offset — which on the
+              // UTC server would shift every report window by 5h30m.
+              window.from
+                ? Prisma.sql`AND f."createdAt" >= ${toUtcSqlTimestamp(window.from)}::timestamp`
+                : Prisma.empty
+            }
+            ${
+              window.to
+                ? Prisma.sql`AND f."createdAt" <= ${toUtcSqlTimestamp(window.to)}::timestamp`
+                : Prisma.empty
+            }
+          ORDER BY f."agentId", f."leadId", f."createdAt" DESC
+        )
+        SELECT "agentId",
+               count(*)                                                       AS "dialed",
+               count(*) FILTER (WHERE "categoryId" = ${connectedId ?? ''})     AS "connected",
+               count(*) FILTER (WHERE "categoryId" = ${notConnectedId ?? ''})  AS "notConnected"
+        FROM latest
+        GROUP BY 1
+      `,
+    ),
     // Receipts belong to the agent the lead is assigned to, counted by the date
     // the student paid rather than when it was approved — approval can lag by
     // days and would otherwise land the credit in the wrong period.
@@ -172,11 +206,11 @@ export async function buildAgentReport(
     }
   }
 
-  const num = (rows: { agentId: string; _count: { _all: number } }[]) =>
-    new Map(rows.map((r) => [r.agentId, r._count._all]));
-  const dialedBy = num(dialed as never);
-  const connectedBy = num(connected as never);
-  const notConnectedBy = num(notConnected as never);
+  // count() comes back as bigint over the wire; Number is safe here because a
+  // lead count cannot approach 2^53.
+  const dialedBy        = new Map(callCounts.map((r) => [r.agentId, Number(r.dialed)]));
+  const connectedBy     = new Map(callCounts.map((r) => [r.agentId, Number(r.connected)]));
+  const notConnectedBy  = new Map(callCounts.map((r) => [r.agentId, Number(r.notConnected)]));
 
   const appsBy = new Map<string, number>();
   const admsBy = new Map<string, number>();
