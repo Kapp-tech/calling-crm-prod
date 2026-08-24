@@ -642,6 +642,11 @@ model DropdownOption {
   // (API and CSV) instead of being sent per lead.
   collegeZone     String?
   collegeDealType String?
+  // COLLEGE-only as well: the college's application landing page, handed to
+  // students by counsellors. Stored as a template containing {{%agent%}}, which
+  // is replaced with the reading agent's ID at display time so the click is
+  // attributed to whoever shared it. See lib/landing-page.ts.
+  landingPageUrl  String?
   isActive        Boolean      @default(true)
   sortOrder       Int          @default(0)
   createdBy       String

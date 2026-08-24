@@ -1,12 +1,12 @@
 'use client';
 
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useSession } from 'next-auth/react';
 import {
   Plus, Pencil, Trash2, Loader2, ListChecks, Tag, ShieldCheck, Globe2,
-  GraduationCap, MapPin, PhoneCall, CheckCircle2, Layers, Inbox, Handshake,
+  GraduationCap, MapPin, PhoneCall, CheckCircle2, Layers, Inbox, Handshake, Link2,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -16,6 +16,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { useToast } from '@/components/ui/use-toast';
 import { cn } from '@/lib/utils';
 import { COLLEGE_ZONES, COLLEGE_DEAL_TYPES } from '@/lib/college-attributes';
+import { AGENT_TOKEN, checkLandingPageUrl, hasAgentToken, resolveLandingPageUrl } from '@/lib/landing-page';
 import { useUndoable } from '@/components/shared/use-undoable';
 
 const TYPE_META: Record<string, { icon: React.ComponentType<{ className?: string }>; color: string; bg: string; ring: string }> = {
@@ -34,6 +35,12 @@ const TYPE_META: Record<string, { icon: React.ComponentType<{ className?: string
 const SELECT_CLASS =
   'flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background transition-all duration-200 hover:border-muted-foreground/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:border-primary/50 disabled:cursor-not-allowed disabled:opacity-50';
 
+/** The input's current selection, or a plain caret when nothing is highlighted. */
+function rangeOf(el: HTMLInputElement): { start: number; end: number } {
+  const start = el.selectionStart ?? el.value.length;
+  return { start, end: el.selectionEnd ?? start };
+}
+
 const DEFAULT_META = { icon: ListChecks, color: 'text-slate-600 dark:text-slate-400', bg: 'bg-slate-500/10', ring: 'from-slate-500 to-slate-600' };
 
 interface DropdownOption {
@@ -43,6 +50,7 @@ interface DropdownOption {
   kappCollegeId?: string | null;
   collegeZone?: string | null;
   collegeDealType?: string | null;
+  landingPageUrl?: string | null;
   isActive: boolean;
   createdAt: string;
 }
@@ -78,6 +86,14 @@ export function DropdownOptionsManager({ type, title, description, placeholder, 
   const [kappCollegeId, setKappId]      = useState('');
   const [collegeZone, setCollegeZone]         = useState('');
   const [collegeDealType, setCollegeDealType] = useState('');
+  const [landingPageUrl, setLandingPageUrl]   = useState('');
+  const landingInputRef = useRef<HTMLInputElement>(null);
+  // Where the {{%agent%}} chip inserts. Tracked rather than read on demand
+  // because an input that has never been focused reports a caret at position 0,
+  // which would put the token in front of "https://" instead of after it.
+  // Both ends are kept so that highlighted text is replaced rather than
+  // straddled, which is what every other text field does.
+  const landingCaretRef = useRef<{ start: number; end: number } | null>(null);
 
   const queryKey = ['dropdown-options', type];
 
@@ -99,6 +115,8 @@ export function DropdownOptionsManager({ type, title, description, placeholder, 
     setKappId('');
     setCollegeZone('');
     setCollegeDealType('');
+    setLandingPageUrl('');
+    landingCaretRef.current = null;
     setShowDialog(true);
   };
 
@@ -108,10 +126,38 @@ export function DropdownOptionsManager({ type, title, description, placeholder, 
     setKappId(opt.kappCollegeId ?? '');
     setCollegeZone(opt.collegeZone ?? '');
     setCollegeDealType(opt.collegeDealType ?? '');
+    setLandingPageUrl(opt.landingPageUrl ?? '');
+    landingCaretRef.current = null;
     setShowDialog(true);
   };
 
-  const canSave = value.trim() !== '' && (!idField || kappCollegeId.trim() !== '');
+  // Checked as the admin types so a malformed link is caught before saving,
+  // using the same function the API validates with — the two cannot disagree.
+  const landingCheck = collegeAttributes ? checkLandingPageUrl(landingPageUrl) : { ok: true as const };
+  const canSave =
+    value.trim() !== '' && (!idField || kappCollegeId.trim() !== '') && landingCheck.ok;
+
+  /**
+   * Drops the token in at the caret, or at the end if the admin has not put a
+   * cursor anywhere yet. Blind appending was worse than it looks: on a URL
+   * ending `…&utm_campaign=2027` it produced `2027{{%agent%}}`, which resolves
+   * to `2027019` — a corrupted campaign value rather than an agent tag.
+   */
+  const insertAgentToken = () => {
+    const sel = landingCaretRef.current;
+    const start = sel?.start ?? landingPageUrl.length;
+    const end = sel?.end ?? start;
+    const next = landingPageUrl.slice(0, start) + AGENT_TOKEN + landingPageUrl.slice(end);
+    const caret = start + AGENT_TOKEN.length;
+    landingCaretRef.current = { start: caret, end: caret };
+    setLandingPageUrl(next);
+    // After React has painted the new value, or setSelectionRange would run
+    // against the old one and the cursor would jump.
+    requestAnimationFrame(() => {
+      landingInputRef.current?.focus();
+      landingInputRef.current?.setSelectionRange(caret, caret);
+    });
+  };
 
   const saveMutation = useMutation({
     mutationFn: async () => {
@@ -121,6 +167,7 @@ export function DropdownOptionsManager({ type, title, description, placeholder, 
         if (collegeAttributes) {
           body.collegeZone = collegeZone.trim();
           body.collegeDealType = collegeDealType.trim();
+          body.landingPageUrl = landingPageUrl.trim();
         }
         const r = await fetch(`/api/dropdown-options/${editOption.id}`, {
           method: 'PATCH',
@@ -137,6 +184,7 @@ export function DropdownOptionsManager({ type, title, description, placeholder, 
         if (collegeAttributes) {
           body.collegeZone = collegeZone.trim();
           body.collegeDealType = collegeDealType.trim();
+          body.landingPageUrl = landingPageUrl.trim();
         }
         const r = await fetch('/api/dropdown-options', {
           method: 'POST',
@@ -276,11 +324,19 @@ export function DropdownOptionsManager({ type, title, description, placeholder, 
                     <p className={cn('font-semibold truncate', !opt.isActive && 'line-through text-muted-foreground')}>
                       {opt.value}
                     </p>
-                    {idField && opt.kappCollegeId && (
-                      <p className="text-[11px] text-muted-foreground mt-0.5">
-                        {idField.label}: <span className="font-mono">{opt.kappCollegeId}</span>
-                      </p>
-                    )}
+                    <div className="mt-0.5 flex flex-wrap items-center gap-x-2.5 gap-y-1">
+                      {idField && opt.kappCollegeId && (
+                        <p className="text-[11px] text-muted-foreground">
+                          {idField.label}: <span className="font-mono">{opt.kappCollegeId}</span>
+                        </p>
+                      )}
+                      {opt.landingPageUrl && (
+                        <span className="inline-flex items-center gap-1 text-[11px] font-medium text-primary">
+                          <Link2 className="h-3 w-3" />
+                          Landing page
+                        </span>
+                      )}
+                    </div>
                   </div>
 
                   <span
@@ -403,6 +459,65 @@ export function DropdownOptionsManager({ type, title, description, placeholder, 
                   Every lead brought in for this college — by API or CSV — inherits
                   this Zone and Deal Type. Choose “Not set” to leave them empty.
                 </p>
+
+                <div className="space-y-1.5 border-t border-border/60 pt-4">
+                  <Label htmlFor="opt-landing-page">Landing Page Link</Label>
+                  <Input
+                    id="opt-landing-page"
+                    ref={landingInputRef}
+                    value={landingPageUrl}
+                    onChange={(e) => {
+                      setLandingPageUrl(e.target.value);
+                      landingCaretRef.current = rangeOf(e.target);
+                    }}
+                    onSelect={(e) => { landingCaretRef.current = rangeOf(e.currentTarget); }}
+                    placeholder={`https://apply.college.edu/?utm_medium=kcll_${AGENT_TOKEN}`}
+                    spellCheck={false}
+                    className={cn('font-mono text-xs', !landingCheck.ok && 'border-destructive focus-visible:ring-destructive')}
+                  />
+
+                  {!landingCheck.ok ? (
+                    <p className="text-[11px] font-medium text-destructive">{landingCheck.error}</p>
+                  ) : (
+                    <p className="text-[11px] text-muted-foreground">
+                      Paste the college’s application link. Put{' '}
+                      <button
+                        type="button"
+                        onClick={insertAgentToken}
+                        // Keeps the caret where the admin put it: without this
+                        // the button takes focus on mousedown and the input's
+                        // selection is gone before the click handler runs.
+                        onMouseDown={(e) => e.preventDefault()}
+                        className="rounded bg-primary/10 px-1 py-0.5 font-mono font-semibold text-primary transition-colors hover:bg-primary/20"
+                        title="Insert this token at the cursor"
+                      >
+                        {AGENT_TOKEN}
+                      </button>{' '}
+                      where the agent’s ID belongs — each agent sees their own ID
+                      there, so the college can tell who sent the student.
+                    </p>
+                  )}
+
+                  {/* Shown with a sample ID rather than the admin's own: this
+                      link is configured once for the whole floor, so what
+                      matters is the shape, not who is looking at it. */}
+                  {landingCheck.ok && landingPageUrl.trim() !== '' && (
+                    <div className="rounded-lg border border-border/60 bg-muted/40 px-3 py-2">
+                      <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                        {hasAgentToken(landingPageUrl) ? 'An agent with ID 019 would share' : 'Agents would share'}
+                      </p>
+                      <p className="mt-1 break-all font-mono text-[11px] leading-relaxed text-foreground">
+                        {resolveLandingPageUrl(landingPageUrl.trim(), '019')}
+                      </p>
+                      {!hasAgentToken(landingPageUrl) && (
+                        <p className="mt-1.5 text-[11px] text-amber-600 dark:text-amber-400">
+                          No {AGENT_TOKEN} in this link — every agent shares the
+                          same URL and the college cannot tell them apart.
+                        </p>
+                      )}
+                    </div>
+                  )}
+                </div>
               </>
             )}
           </div>

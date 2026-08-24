@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { authOptions } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import { COLLEGE_ZONES, COLLEGE_DEAL_TYPES } from '@/lib/college-attributes';
+import { checkLandingPageUrl } from '@/lib/landing-page';
 import { DropdownType } from '@prisma/client';
 
 const VALID_TYPES = Object.values(DropdownType);
@@ -18,6 +19,9 @@ const createSchema = z.object({
   // how an admin clears the value.
   collegeZone:     z.enum(['', ...COLLEGE_ZONES]).optional().nullable(),
   collegeDealType: z.enum(['', ...COLLEGE_DEAL_TYPES]).optional().nullable(),
+  // COLLEGE only. Shape-checked below rather than here so the admin gets a
+  // sentence explaining what is wrong instead of a zod field error.
+  landingPageUrl:  z.string().max(1000).optional().nullable(),
 });
 
 export async function GET(req: NextRequest) {
@@ -39,7 +43,7 @@ export async function GET(req: NextRequest) {
         ...(showAll ? {} : { isActive: true }),
       },
       orderBy: [{ value: 'asc' }],
-      select: { id: true, type: true, value: true, kappCollegeId: true, collegeZone: true, collegeDealType: true, isActive: true, createdAt: true },
+  select: { id: true, type: true, value: true, kappCollegeId: true, collegeZone: true, collegeDealType: true, landingPageUrl: true, isActive: true, createdAt: true },
     });
     return NextResponse.json(options);
   } catch (err) {
@@ -65,6 +69,11 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'KAPP College ID is required for colleges' }, { status: 400 });
   }
 
+  const landingCheck = checkLandingPageUrl(parsed.data.landingPageUrl ?? '');
+  if (!landingCheck.ok) {
+    return NextResponse.json({ error: landingCheck.error }, { status: 400 });
+  }
+
   // Ensure kappCollegeId is unique within COLLEGE type
   if (parsed.data.type === 'COLLEGE' && parsed.data.kappCollegeId) {
     const existing = await prisma.dropdownOption.findFirst({
@@ -85,6 +94,7 @@ export async function POST(req: NextRequest) {
         // leaves the corresponding lead field null rather than empty-string.
         collegeZone:     parsed.data.type === 'COLLEGE' ? (parsed.data.collegeZone || null) : null,
         collegeDealType: parsed.data.type === 'COLLEGE' ? (parsed.data.collegeDealType || null) : null,
+        landingPageUrl:  parsed.data.type === 'COLLEGE' ? (parsed.data.landingPageUrl?.trim() || null) : null,
         createdBy:     session.user.id,
       },
     });

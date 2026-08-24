@@ -5,6 +5,7 @@ import { authOptions } from '@/lib/auth';
 import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { COLLEGE_ZONES, COLLEGE_DEAL_TYPES } from '@/lib/college-attributes';
+import { checkLandingPageUrl } from '@/lib/landing-page';
 
 const updateSchema = z.object({
   value:         z.string().min(1).max(200).optional(),
@@ -13,6 +14,7 @@ const updateSchema = z.object({
   // "not configured"; anything outside the fixed lists is rejected.
   collegeZone:     z.enum(['', ...COLLEGE_ZONES]).optional().nullable(),
   collegeDealType: z.enum(['', ...COLLEGE_DEAL_TYPES]).optional().nullable(),
+  landingPageUrl:  z.string().max(1000).optional().nullable(),
   isActive:      z.boolean().optional(),
 });
 
@@ -32,10 +34,15 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   // "not configured" and should leave the lead's zone unset, whereas '' would be
   // copied onto every lead as a real (blank) value. No trimming needed — zod has
   // already restricted these to '' or an exact list member.
-  const { collegeZone, collegeDealType, ...rest } = parsed.data;
+  const { collegeZone, collegeDealType, landingPageUrl, ...rest } = parsed.data;
   const data: Prisma.DropdownOptionUpdateInput = { ...rest };
   if (collegeZone !== undefined) data.collegeZone = collegeZone || null;
   if (collegeDealType !== undefined) data.collegeDealType = collegeDealType || null;
+  if (landingPageUrl !== undefined) {
+    const check = checkLandingPageUrl(landingPageUrl ?? '');
+    if (!check.ok) return NextResponse.json({ error: check.error }, { status: 400 });
+    data.landingPageUrl = landingPageUrl?.trim() || null;
+  }
 
   try {
     const option = await prisma.dropdownOption.update({
