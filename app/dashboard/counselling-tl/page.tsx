@@ -743,6 +743,45 @@ const FILTER_GROUPS: { group: string; filters: FilterDef[] }[] = [
 
 // ─── Main page ────────────────────────────────────────────────────────────────
 
+/** Initials for the avatar — first and last word, so "Yash Kumar Sharma" is YS. */
+function agentInitials(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return '?';
+  const first = parts[0][0] ?? '';
+  const last = parts.length > 1 ? parts[parts.length - 1][0] ?? '' : '';
+  return (first + last).toUpperCase();
+}
+
+/**
+ * Who a lead belongs to, in one line.
+ *
+ * This was a pill badge with no width limit, so "Yash sharma" wrapped onto two
+ * lines and pushed the row taller than its neighbours. An avatar plus a
+ * truncating name keeps every row the same height whatever the name's length,
+ * and the full name stays available on hover.
+ *
+ * Unassigned deliberately mirrors the same shape — a dashed ring where the
+ * avatar would be — so rows do not change height depending on their state.
+ */
+function AssigneeCell({ name }: { name: string | null }) {
+  if (!name) {
+    return (
+      <span className="flex items-center gap-2 text-xs font-medium text-amber-600 dark:text-amber-400">
+        <span className="h-6 w-6 shrink-0 rounded-full border border-dashed border-amber-400/70" />
+        Unassigned
+      </span>
+    );
+  }
+  return (
+    <span className="flex min-w-0 items-center gap-2" title={name}>
+      <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary/10 text-[10px] font-bold uppercase text-primary">
+        {agentInitials(name)}
+      </span>
+      <span className="truncate text-sm font-medium text-foreground">{name}</span>
+    </span>
+  );
+}
+
 export default function CounsellingTLPage() {
   const { data: session } = useSession();
   const { toast } = useToast();
@@ -1395,7 +1434,7 @@ export default function CounsellingTLPage() {
                     <th className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground whitespace-nowrap">Course</th>
                     <th className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground whitespace-nowrap">College</th>
                     <th className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground whitespace-nowrap">Lead Code</th>
-                    <th className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground whitespace-nowrap">Assigned To</th>
+                    <th className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground whitespace-nowrap min-w-[190px]">Assigned To</th>
                     <th className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground whitespace-nowrap">Calls</th>
                     <th className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground whitespace-nowrap">Added</th>
                     {canAssign && <th className="pr-4 py-3 text-right text-[11px] font-semibold uppercase tracking-wider text-muted-foreground whitespace-nowrap">Actions</th>}
@@ -1470,15 +1509,8 @@ export default function CounsellingTLPage() {
                         <td className="px-4 py-3 text-sm whitespace-nowrap max-w-[200px] truncate">{lead.course ?? '—'}</td>
                         <td className="px-4 py-3 text-sm whitespace-nowrap max-w-[220px] truncate" title={lead.college ?? undefined}>{lead.college ?? '—'}</td>
                         <td className="px-4 py-3 text-sm whitespace-nowrap max-w-[200px] truncate">{lead.campaign ?? '—'}</td>
-                        <td className="px-4 py-3">
-                          {lead.assignedTo ? (
-                            <Badge variant="info" className="text-xs">{lead.assignedTo.name}</Badge>
-                          ) : (
-                            <span className="inline-flex items-center gap-1 text-xs font-medium text-amber-600">
-                              <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />
-                              Unassigned
-                            </span>
-                          )}
+                        <td className="px-4 py-3 max-w-[210px]">
+                          <AssigneeCell name={lead.assignedTo?.name ?? null} />
                         </td>
                         <td className="px-4 py-3">
                           <div className="flex items-center gap-1">
