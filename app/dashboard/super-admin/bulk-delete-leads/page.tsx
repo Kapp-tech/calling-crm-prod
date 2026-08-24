@@ -1,9 +1,9 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
-  Trash2, AlertTriangle, Loader2, Search, RotateCcw, Database, ExternalLink,
+  Trash2, AlertTriangle, Loader2, Search, RotateCcw, Database, ExternalLink, CheckSquare,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -52,6 +52,7 @@ interface PreviewLead {
   status: 'PENDING' | 'APPROVED' | 'DISAPPROVED';
   createdAt: string;
   uploadedBy: { name: string } | null;
+  assignedTo: { name: string } | null;
   batch: { fileName: string } | null;
 }
 
@@ -62,6 +63,7 @@ interface PreviewResponse {
 }
 
 interface FilterState {
+  assignmentStatus: string;
   batchId: string;
   uploadedById: string;
   status: string;
@@ -79,7 +81,7 @@ interface FilterState {
 }
 
 const EMPTY_FILTERS: FilterState = {
-  batchId: '', uploadedById: '', status: '', campaign: [], city: [], state: [],
+  assignmentStatus: '', batchId: '', uploadedById: '', status: '', campaign: [], city: [], state: [],
   course: [], college: [], leadType: [], leadOrigin: [], zone: [], dateFrom: '', dateTo: '', search: '',
 };
 
@@ -110,6 +112,7 @@ function buildParams(f: FilterState): URLSearchParams {
   if (f.batchId) p.set('batchId', f.batchId);
   if (f.uploadedById) p.set('uploadedById', f.uploadedById);
   if (f.status) p.set('status', f.status);
+  if (f.assignmentStatus) p.set('assignmentStatus', f.assignmentStatus);
   // joinCsvFilterValues, not a plain .join(',') — a value here (college
   // names especially) can itself contain a literal comma. This is a
   // destructive bulk-delete filter, so a shredded value silently matching
@@ -191,29 +194,46 @@ function BulkDeleteLeadsContent() {
   });
 
   const deleteMutation = useMutation({
-    mutationFn: async () => {
+    /** `ids` deletes only those rows; omitted deletes every filter match. */
+    mutationFn: async (ids?: string[]) => {
       if (!appliedFilters || !previewMutation.data) throw new Error('Preview the results first');
       const params = buildParams(appliedFilters);
       const r = await fetch('/api/leads/bulk-delete', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...Object.fromEntries(params.entries()), expectedCount: previewMutation.data.total }),
+        // Two shapes, one endpoint: a hand-picked list of ids, or the filters
+        // plus the count that was previewed. Never both.
+        body: JSON.stringify(
+          ids
+            ? { ids }
+            : { ...Object.fromEntries(params.entries()), expectedCount: previewMutation.data.total },
+        ),
       });
       const json = await r.json();
       if (!r.ok) throw new Error(typeof json.error === 'string' ? json.error : 'Failed to delete leads');
       return json as { success: true; deleted: number };
     },
-    onSuccess: (data) => {
+    onSuccess: (data, ids) => {
       toast({
         title: `Deleted ${data.deleted} lead${data.deleted === 1 ? '' : 's'}`,
         description: 'Permanently removed, along with their feedback, receipts, and scheduled calls.',
       });
       setConfirmOpen(false);
       setConfirmText('');
+      setPendingIds(null);
+      setSelected(new Set());
+      qc.invalidateQueries({ queryKey: ['upload-batches-for-bulk-delete'] });
+
+      if (ids && appliedFilters) {
+        // Picking a few rows out of a result set is usually part of a longer
+        // clean-up, so the filters stay and the list refreshes to show what is
+        // left. Clearing everything would make the admin start over each time.
+        previewMutation.mutate(appliedFilters);
+        return;
+      }
       previewMutation.reset();
       setAppliedFilters(null);
       setFilters(EMPTY_FILTERS);
-      qc.invalidateQueries({ queryKey: ['upload-batches-for-bulk-delete'] });
     },
     onError: (err: Error) => {
       toast({ variant: 'destructive', title: 'Delete failed', description: err.message });
@@ -229,6 +249,25 @@ function BulkDeleteLeadsContent() {
   const filtersDirty = JSON.stringify(filters) !== JSON.stringify(appliedFilters);
   const preview = !filtersDirty ? previewMutation.data : undefined;
   const total = preview?.total ?? 0;
+
+  // Ticked rows, by lead id. Cleared whenever a new preview lands, so a
+  // selection can never outlive the rows it was made against — otherwise
+  // changing the filters and deleting would remove leads no longer on screen.
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  /** Which delete the confirm dialog is for: a picked list, or every match. */
+  const [pendingIds, setPendingIds] = useState<string[] | null>(null);
+  useEffect(() => { setSelected(new Set()); }, [preview]);
+
+  const shown = preview?.sample ?? [];
+  const allShownSelected = shown.length > 0 && shown.every((l) => selected.has(l.id));
+  const toggleOne = (id: string) =>
+    setSelected((cur) => {
+      const next = new Set(cur);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  const toggleAllShown = () =>
+    setSelected((cur) => (shown.every((l) => cur.has(l.id)) ? new Set() : new Set(shown.map((l) => l.id))));
 
   function handlePreview() {
     if (!hasAnyFilter(filters)) {
@@ -311,6 +350,21 @@ function BulkDeleteLeadsContent() {
                 <SelectItem value="PENDING">Pending</SelectItem>
                 <SelectItem value="APPROVED">Approved</SelectItem>
                 <SelectItem value="DISAPPROVED">Disapproved</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="space-y-1.5">
+            <Label className="text-xs">Assignment</Label>
+            <Select
+              value={filters.assignmentStatus || '__any__'}
+              onValueChange={(v) => set('assignmentStatus', v === '__any__' ? '' : v)}
+            >
+              <SelectTrigger><SelectValue placeholder="Any" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__any__">Assigned or not</SelectItem>
+                <SelectItem value="assigned">Assigned to an agent</SelectItem>
+                <SelectItem value="unassigned">Not assigned</SelectItem>
               </SelectContent>
             </Select>
           </div>
@@ -409,38 +463,89 @@ function BulkDeleteLeadsContent() {
             </div>
           ) : (
             <>
+              {/* Two different deletes, never side by side looking alike: once
+                  anything is ticked the bar switches to the selection, because
+                  "delete 2" and "delete 2,000" must not be one slip apart. */}
+              {selected.size > 0 ? (
+                <div className="flex flex-col gap-3 rounded-lg border border-primary/40 bg-primary/10 px-4 py-3.5 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="flex items-start gap-2 text-sm">
+                    <CheckSquare className="h-4 w-4 shrink-0 mt-0.5 text-primary" />
+                    <p>
+                      <strong className="font-bold">{selected.size}</strong> lead{selected.size === 1 ? '' : 's'} selected
+                      <span className="text-muted-foreground"> — only these will be deleted.</span>
+                    </p>
+                  </div>
+                  <div className="flex shrink-0 gap-2">
+                    <Button variant="outline" size="sm" onClick={() => setSelected(new Set())}>Clear selection</Button>
+                    <Button
+                      variant="destructive"
+                      size="sm"
+                      onClick={() => { setPendingIds(Array.from(selected)); setConfirmOpen(true); }}
+                    >
+                      <Trash2 className="mr-1.5 h-4 w-4" /> Delete {selected.size} selected
+                    </Button>
+                  </div>
+                </div>
+              ) : (
               <div className="flex flex-col gap-3 rounded-lg border border-red-300/50 bg-red-500/10 px-4 py-3.5 sm:flex-row sm:items-center sm:justify-between">
                 <div className="flex items-start gap-2 text-sm text-red-800 dark:text-red-300">
                   <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
                   <p>
-                    <strong className="font-bold">{total}</strong> lead{total === 1 ? '' : 's'} match{total === 1 ? 'es' : ''} these filters and will be{' '}
-                    <strong className="font-bold">permanently deleted</strong>. This cannot be undone.
+                    <strong className="font-bold">{total}</strong> lead{total === 1 ? '' : 's'} match{total === 1 ? 'es' : ''} these filters. Tick rows below to
+                    delete only some, or delete them all — <strong className="font-bold">permanently</strong>, with no undo.
                   </p>
                 </div>
-                <Button variant="destructive" className="shrink-0" onClick={() => setConfirmOpen(true)}>
-                  <Trash2 className="mr-1.5 h-4 w-4" /> Delete {total} Lead{total === 1 ? '' : 's'}
+                <Button variant="destructive" className="shrink-0" onClick={() => { setPendingIds(null); setConfirmOpen(true); }}>
+                  <Trash2 className="mr-1.5 h-4 w-4" /> Delete all {total}
                 </Button>
               </div>
+              )}
 
               <div className="overflow-auto rounded-lg border border-border/60">
                 <table className="w-full text-sm border-collapse">
                   <thead className="sticky top-0 z-20">
                     <tr className="border-b border-border/60 bg-muted">
-                      <th className="sticky left-0 z-30 bg-muted border-r border-border/60 whitespace-nowrap px-3 py-2.5 text-left text-[10px] font-bold uppercase tracking-wider text-muted-foreground min-w-[170px]">Name</th>
+                      <th className="sticky left-0 z-30 bg-muted border-r border-border/60 px-3 py-2.5 w-10">
+                        <input
+                          type="checkbox"
+                          checked={allShownSelected}
+                          onChange={toggleAllShown}
+                          aria-label="Select all rows shown"
+                          className="h-4 w-4 cursor-pointer align-middle"
+                        />
+                      </th>
+                      <th className="whitespace-nowrap px-3 py-2.5 text-left text-[10px] font-bold uppercase tracking-wider text-muted-foreground min-w-[170px]">Name</th>
                       <th className="whitespace-nowrap px-3 py-2.5 text-left text-[10px] font-bold uppercase tracking-wider text-muted-foreground min-w-[190px]">Email</th>
                       <th className="whitespace-nowrap px-3 py-2.5 text-left text-[10px] font-bold uppercase tracking-wider text-muted-foreground min-w-[120px]">Phone</th>
                       <th className="whitespace-nowrap px-3 py-2.5 text-left text-[10px] font-bold uppercase tracking-wider text-muted-foreground min-w-[110px]">City</th>
                       <th className="whitespace-nowrap px-3 py-2.5 text-left text-[10px] font-bold uppercase tracking-wider text-muted-foreground min-w-[160px]">College</th>
                       <th className="whitespace-nowrap px-3 py-2.5 text-center text-[10px] font-bold uppercase tracking-wider text-muted-foreground min-w-[110px]">Status</th>
+                      <th className="whitespace-nowrap px-3 py-2.5 text-left text-[10px] font-bold uppercase tracking-wider text-muted-foreground min-w-[140px]">Assigned To</th>
                       <th className="whitespace-nowrap px-3 py-2.5 text-left text-[10px] font-bold uppercase tracking-wider text-muted-foreground min-w-[150px]">Uploaded By</th>
                       <th className="whitespace-nowrap px-3 py-2.5 text-left text-[10px] font-bold uppercase tracking-wider text-muted-foreground min-w-[170px]">Batch File</th>
                       <th className="whitespace-nowrap px-3 py-2.5 text-left text-[10px] font-bold uppercase tracking-wider text-muted-foreground min-w-[110px]">Uploaded At</th>
+                      <th className="whitespace-nowrap px-3 py-2.5 text-center text-[10px] font-bold uppercase tracking-wider text-muted-foreground w-14">Delete</th>
                     </tr>
                   </thead>
                   <tbody>
                     {preview.sample.map((l) => (
-                      <tr key={l.id} className="border-b border-border/40 last:border-0 hover:bg-muted/20">
+                      <tr
+                        key={l.id}
+                        className={cn(
+                          'border-b border-border/40 last:border-0 hover:bg-muted/20',
+                          selected.has(l.id) && 'bg-primary/5',
+                        )}
+                      >
                         <td className="sticky left-0 z-10 border-r border-border/60 bg-card px-3 py-2.5">
+                          <input
+                            type="checkbox"
+                            checked={selected.has(l.id)}
+                            onChange={() => toggleOne(l.id)}
+                            aria-label={`Select ${l.name}`}
+                            className="h-4 w-4 cursor-pointer align-middle"
+                          />
+                        </td>
+                        <td className="px-3 py-2.5">
                           <a href={`/leads/${l.id}/profile`} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 text-sm font-semibold hover:text-primary hover:underline">
                             {l.name} <ExternalLink className="h-3 w-3 shrink-0" />
                           </a>
@@ -455,10 +560,25 @@ function BulkDeleteLeadsContent() {
                             {STATUS_LABEL[l.status]}
                           </span>
                         </td>
+                        <td className="px-3 py-2.5 whitespace-nowrap text-xs text-muted-foreground">{l.assignedTo?.name || 'Unassigned'}</td>
                         <td className="px-3 py-2.5 whitespace-nowrap text-xs text-muted-foreground">{l.uploadedBy?.name || '—'}</td>
                         <td className="px-3 py-2.5 whitespace-nowrap text-xs text-muted-foreground">{l.batch?.fileName || '—'}</td>
                         <td className="px-3 py-2.5 whitespace-nowrap text-xs text-muted-foreground">
                           {new Date(l.createdAt).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}
+                        </td>
+                        <td className="px-3 py-2.5 text-center">
+                          {/* Straight to the same confirm dialog — a one-click
+                              irreversible delete with no confirmation would be
+                              the easiest mistake on the page to make. */}
+                          <button
+                            type="button"
+                            onClick={() => { setPendingIds([l.id]); setConfirmOpen(true); }}
+                            aria-label={`Delete ${l.name}`}
+                            title={`Delete ${l.name}`}
+                            className="rounded p-1.5 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
                         </td>
                       </tr>
                     ))}
@@ -467,7 +587,8 @@ function BulkDeleteLeadsContent() {
               </div>
               {total > preview.sample.length && (
                 <p className="text-xs text-muted-foreground">
-                  Showing the {preview.sample.length} most recently uploaded of {total} matching leads. All {total} will be deleted, not just the ones shown here.
+                  Showing the {preview.sample.length} most recently uploaded of {total} matching leads.
+                  “Delete all {total}” removes every match, not just these; ticking rows deletes only what you tick.
                 </p>
               )}
             </>
@@ -476,14 +597,17 @@ function BulkDeleteLeadsContent() {
       )}
 
       {/* Confirm dialog */}
-      <Dialog open={confirmOpen} onOpenChange={(v) => { if (!v && !deleteMutation.isPending) { setConfirmOpen(false); setConfirmText(''); } }}>
+      <Dialog open={confirmOpen} onOpenChange={(v) => { if (!v && !deleteMutation.isPending) { setConfirmOpen(false); setConfirmText(''); setPendingIds(null); } }}>
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-destructive">
               <AlertTriangle className="h-5 w-5" /> Confirm permanent deletion
             </DialogTitle>
             <DialogDescription>
-              You are about to permanently delete <strong>{total}</strong> lead{total === 1 ? '' : 's'} and all of their
+              You are about to permanently delete{' '}
+              <strong>{pendingIds ? pendingIds.length : total}</strong> lead
+              {(pendingIds ? pendingIds.length : total) === 1 ? '' : 's'}
+              {pendingIds ? ' that you selected' : ' matching these filters'} and all of their
               feedback, receipts, and scheduled calls. This cannot be undone.
             </DialogDescription>
           </DialogHeader>
@@ -499,13 +623,13 @@ function BulkDeleteLeadsContent() {
             />
           </div>
           <DialogFooter>
-            <Button variant="outline" disabled={deleteMutation.isPending} onClick={() => { setConfirmOpen(false); setConfirmText(''); }}>
+            <Button variant="outline" disabled={deleteMutation.isPending} onClick={() => { setConfirmOpen(false); setConfirmText(''); setPendingIds(null); }}>
               Cancel
             </Button>
             <Button
               variant="destructive"
               disabled={confirmText.trim() !== 'DELETE' || deleteMutation.isPending}
-              onClick={() => deleteMutation.mutate()}
+              onClick={() => deleteMutation.mutate(pendingIds ?? undefined)}
             >
               {deleteMutation.isPending && <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />}
               Permanently Delete

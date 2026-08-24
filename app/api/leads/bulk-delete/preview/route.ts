@@ -58,6 +58,7 @@ export async function GET(req: NextRequest) {
           status: true,
           createdAt: true,
           uploadedBy: { select: { name: true } },
+          assignedTo: { select: { name: true } },
           batch: { select: { fileName: true } },
         },
       }),

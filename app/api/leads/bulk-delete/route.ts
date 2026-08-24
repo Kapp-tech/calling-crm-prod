@@ -20,7 +20,13 @@ const bodySchema = nonFeedbackQuerySchema.extend({
   // against a fresh live count right before deleting, so a filter that
   // quietly matched MORE leads than what was reviewed (e.g. a new upload
   // landing in between) can never slip through unnoticed.
-  expectedCount: z.number().int().min(0),
+  //
+  // Optional because there are two ways to delete: by filter (every match) or
+  // by explicit selection (only the rows ticked). The count guard belongs to
+  // the first — a hand-picked list is already exact.
+  expectedCount: z.number().int().min(0).optional(),
+  /** Explicitly chosen lead ids. When present, filters are ignored entirely. */
+  ids: z.array(z.string().min(1)).min(1).max(MAX_DELETE).optional(),
 });
 
 // Permanently deletes every lead matching the given filters — the execute
@@ -46,17 +52,34 @@ export async function POST(req: NextRequest) {
     if (!parsed.success) {
       return NextResponse.json({ success: false, error: parsed.error.flatten(), code: 'VALIDATION_ERROR' }, { status: 400 });
     }
-    const { expectedCount, ...query } = parsed.data;
+    const { expectedCount, ids: chosenIds, ...query } = parsed.data;
+    const bySelection = Array.isArray(chosenIds) && chosenIds.length > 0;
 
-    if (!hasAnyFilter(query)) {
+    // A filter-wide delete must be scoped by something; a hand-picked list is
+    // its own scope, so the "at least one filter" rule does not apply to it.
+    if (!bySelection && !hasAnyFilter(query)) {
       return NextResponse.json(
         { success: false, error: 'Apply at least one filter — this tool will not delete every lead unscoped', code: 'NO_FILTERS' },
         { status: 400 },
       );
     }
+    if (!bySelection && expectedCount === undefined) {
+      return NextResponse.json(
+        { success: false, error: 'A filter delete must confirm the count it previewed', code: 'VALIDATION_ERROR' },
+        { status: 400 },
+      );
+    }
 
-    const filters = buildNonFeedbackFilters(query, session.user);
-    const where: Prisma.LeadWhereInput = { AND: [getLeadWhereClause(session.user), ...filters] };
+    // Chosen ids are still passed through the caller's own access clause rather
+    // than trusted: an id arriving in a request body is user input, and this
+    // endpoint must never delete a lead the requester could not otherwise see.
+    const filters = bySelection ? [] : buildNonFeedbackFilters(query, session.user);
+    const where: Prisma.LeadWhereInput = {
+      AND: [
+        getLeadWhereClause(session.user),
+        ...(bySelection ? [{ id: { in: chosenIds! } } as Prisma.LeadWhereInput] : filters),
+      ],
+    };
 
     const ids = (await prisma.lead.findMany({ where, select: { id: true }, take: MAX_DELETE + 1 })).map((l) => l.id);
 
@@ -69,7 +92,10 @@ export async function POST(req: NextRequest) {
         { status: 400 },
       );
     }
-    if (ids.length !== expectedCount) {
+    // Only the filter path is guarded by the previewed count. A selection is
+    // exact by construction — and if one of the chosen rows was deleted by
+    // someone else in the meantime, removing the rest is still correct.
+    if (!bySelection && ids.length !== expectedCount) {
       return NextResponse.json(
         {
           success: false,
@@ -94,8 +120,14 @@ export async function POST(req: NextRequest) {
         action: 'LEAD_DELETED',
         targetId: 'bulk',
         targetType: 'Lead',
-        description: `Bulk-deleted ${result.count} leads by filter`,
-        metadata: { deletedCount: result.count, filters: query },
+        description: bySelection
+          ? `Deleted ${result.count} hand-picked lead${result.count === 1 ? '' : 's'}`
+          : `Bulk-deleted ${result.count} leads by filter`,
+        // The ids are recorded on a selection delete: with no trash to restore
+        // from, knowing exactly which rows went is the only trace left.
+        metadata: bySelection
+          ? { deletedCount: result.count, mode: 'selection', ids }
+          : { deletedCount: result.count, mode: 'filter', filters: query },
       });
 
       return result.count;

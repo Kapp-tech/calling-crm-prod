@@ -28,7 +28,14 @@ export const nonFeedbackQuerySchema = z.object({
   leadType:     z.string().optional(),   // comma-separated
   leadOrigin:   z.string().optional(),   // comma-separated
   tlId:             z.string().optional(),   // comma-separated TL IDs
-  assignmentStatus: z.enum(['all', 'unassigned', 'assigned']).optional(),
+  // 'all' imposes no constraint, so it is normalised away rather than kept.
+  // hasAnyFilter() treats any present value as "a filter is set", and the
+  // bulk-delete tool refuses to run unscoped — leaving 'all' in place would let
+  // `assignmentStatus=all` satisfy that guard while matching every lead.
+  assignmentStatus: z
+    .enum(['all', 'unassigned', 'assigned'])
+    .optional()
+    .transform((v) => (v === 'all' ? undefined : v)),
   dateFrom:    z.string().optional(),
   dateTo:      z.string().optional(),
   updatedFrom: z.string().optional(),
