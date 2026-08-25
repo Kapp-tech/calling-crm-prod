@@ -19,6 +19,7 @@ import { useClickToCall } from '@/lib/hooks/use-click-to-call';
 import { cn } from '@/lib/utils';
 import { triggerCelebration, isCelebrationFeedback } from '@/lib/celebrate';
 import { WhatsAppButton } from '@/components/shared/whatsapp-button';
+import { ApplicationFormButton } from '@/components/shared/application-form-button';
 import { computeProfilingScore, profilingScoreTone } from '@/lib/lead-profiling';
 import { istWallClockToInstant, instantToIstWallClock, formatIstDateTime, IST_TIMEZONE } from '@/lib/ist-time';
 
@@ -1250,6 +1251,7 @@ export function LeadDetailDrawer({ leadId, onClose, canSubmitFeedback = false }:
                         agentName={agentName}
                         course={lead.course}
                       />
+                      <ApplicationFormButton college={lead.college} />
                     </div>
                     <div className="flex flex-wrap gap-2">
                       <span className="inline-flex items-center gap-1 text-xs font-medium rounded-full border px-2.5 py-0.5 text-emerald-600 border-emerald-300/50 bg-emerald-500/10">

@@ -14,6 +14,7 @@ import { useToast } from '@/components/ui/use-toast';
 import { ReceiptUploadDialog, type ReceiptKind } from '@/components/leads/receipt-upload-dialog';
 import { computeProfilingScore, profilingScoreTone } from '@/lib/lead-profiling';
 import { WhatsAppButton } from '@/components/shared/whatsapp-button';
+import { ApplicationFormButton } from '@/components/shared/application-form-button';
 import { useClickToCall } from '@/lib/hooks/use-click-to-call';
 
 const STEP_BY_NAME: Record<string, number> = {
@@ -904,6 +905,7 @@ export function LeadProfilePage({ leadId, agentName }: { leadId: string; agentNa
                 </button>
               )}
               <WhatsAppButton phone={lead.phone} leadName={lead.name} course={lead.course} />
+              <ApplicationFormButton college={lead.college} />
             </div>
 
             <dl className="hidden sm:block space-y-1.5 border-t border-border/60 pt-3">
