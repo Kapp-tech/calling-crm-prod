@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { z } from 'zod';
+import { KPI_SOURCES } from '@/lib/kpi';
 import { KpiSource, ReceiptType } from '@prisma/client';
 import { authOptions } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
@@ -33,15 +34,20 @@ const bodySchema = z.object({
  * and liable to change the meaning of the KPI if the source were switched back.
  */
 function normalise(input: z.infer<typeof bodySchema>) {
-  const usesFeedback = input.source === 'FEEDBACK_COUNT' || input.source === 'FEEDBACK_LEADS';
+  // Read from KPI_SOURCES rather than listing the feedback sources here. A
+  // hardcoded list silently drops config when a new source is added: a Hot
+  // Leads KPI saved under an unlisted source would lose its "Hot" narrowing and
+  // quietly start counting every follow-up instead.
+  const needs = KPI_SOURCES.find((s) => s.key === input.source)?.needs ?? [];
+  const usesFeedback = needs.includes('feedback');
   return {
     name: input.name,
     unit: input.unit,
     source: input.source,
     feedbackOptionIds: usesFeedback ? input.feedbackOptionIds : [],
     feedbackCategoryIds: usesFeedback ? input.feedbackCategoryIds : [],
-    leadStages: input.source === 'LEAD_STAGE_LIVE' ? input.leadStages : [],
-    receiptType: input.source === 'RECEIPT_COUNT' ? input.receiptType : null,
+    leadStages: needs.includes('leadStages') ? input.leadStages : [],
+    receiptType: needs.includes('receiptType') ? input.receiptType : null,
     isActive: input.isActive,
     sortOrder: input.sortOrder,
   };

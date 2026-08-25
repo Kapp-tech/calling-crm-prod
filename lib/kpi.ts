@@ -1,5 +1,5 @@
 import { KpiPeriod, KpiSource, Prisma, PrismaClient, ReceiptType } from '@prisma/client';
-import { istStartOfDay, istEndOfDay, istDayKey, istShiftDays } from './ist-time';
+import { istStartOfDay, istEndOfDay, istDayKey, istShiftDays, toUtcSqlTimestamp } from './ist-time';
 
 /**
  * KPI evaluation.
@@ -30,8 +30,15 @@ export const KPI_SOURCES: {
   },
   {
     key: 'FEEDBACK_LEADS',
-    label: 'Leads with that feedback',
-    help: 'Like the above, but counts each lead once however many times it was followed up in the period.',
+    label: 'Leads given that feedback',
+    help: 'Counts each lead once however many times it was followed up, if it got that feedback at any point in the period. A later follow-up does not erase it — use this for milestones such as Admission Done.',
+    needs: ['feedback'],
+    measurable: true,
+  },
+  {
+    key: 'FEEDBACK_LEADS_LATEST',
+    label: 'Leads now at that feedback',
+    help: 'Counts each lead once, by its latest follow-up in the period. A lead marked Hot and later moved to Warm counts as Warm only, never as both — the same rule the All Leads pills use. Use this for states such as Hot and Warm.',
     needs: ['feedback'],
     measurable: true,
   },
@@ -224,6 +231,58 @@ export async function computeKpiActual(
         where: { agentId: userId, createdAt: inPeriod, ...feedbackWhere(def) },
       });
       return rows.length;
+    }
+
+    case 'FEEDBACK_LEADS_LATEST': {
+      /**
+       * Leads whose LAST follow-up in the period matches the definition.
+       *
+       * The difference from FEEDBACK_LEADS is what happens after a change of
+       * mind. An agent marks a lead Hot at 10:53 and downgrades it to Warm at
+       * 11:43: FEEDBACK_LEADS counts it under both Hot and Warm, this counts it
+       * under Warm alone. For a state like Hot or Warm the second reading is
+       * the one a manager means, and it is what the All Leads pills already
+       * show — they read Lead.currentFeedbackOptionId, the latest feedback.
+       *
+       * Raw SQL because this is a per-lead argmax, which Prisma cannot express.
+       * DISTINCT ON is the cheap way to do it in Postgres.
+       */
+      const optionIds = def.feedbackOptionIds;
+      const categoryIds = def.feedbackCategoryIds;
+
+      // Both empty means no narrowing, exactly as feedbackWhere() behaves —
+      // every lead the agent followed up counts, which is the same set
+      // FEEDBACK_LEADS would return.
+      const narrowing =
+        optionIds.length === 0 && categoryIds.length === 0
+          ? Prisma.sql`TRUE`
+          : Prisma.join(
+              [
+                ...(optionIds.length > 0
+                  ? [Prisma.sql`l."feedbackOptionId" IN (${Prisma.join(optionIds)})`]
+                  : []),
+                ...(categoryIds.length > 0
+                  ? [Prisma.sql`fo."categoryId" IN (${Prisma.join(categoryIds)})`]
+                  : []),
+              ],
+              ' OR ',
+            );
+
+      const rows = await db.$queryRaw<{ count: bigint }[]>(Prisma.sql`
+        WITH latest AS (
+          SELECT DISTINCT ON (f."leadId") f."leadId", f."feedbackOptionId"
+          FROM "LeadFeedback" f
+          WHERE f."agentId" = ${userId}
+            AND f."createdAt" >= ${toUtcSqlTimestamp(from)}::timestamp
+            AND f."createdAt" <= ${toUtcSqlTimestamp(to)}::timestamp
+          ORDER BY f."leadId", f."createdAt" DESC
+        )
+        SELECT count(*)::bigint AS count
+        FROM latest l
+        LEFT JOIN "FeedbackOption" fo ON fo.id = l."feedbackOptionId"
+        WHERE ${narrowing}
+      `);
+      return Number(rows[0]?.count ?? 0);
     }
 
     case 'LEAD_STAGE_LIVE':

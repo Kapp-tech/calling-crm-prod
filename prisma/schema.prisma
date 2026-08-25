@@ -159,9 +159,16 @@ enum KpiSource {
   /// Feedback the agent logged in the period, optionally narrowed to particular
   /// feedback options or whole categories. Leave both empty to count them all.
   FEEDBACK_COUNT
-  /// Distinct leads the agent gave that feedback to in the period — use this
-  /// when repeat follow-ups on one lead should count once.
+  /// Distinct leads the agent gave that feedback to at ANY point in the period
+  /// — use this when repeat follow-ups on one lead should count once, and when
+  /// a later follow-up should not erase the earlier one (milestones such as
+  /// Admission Done).
   FEEDBACK_LEADS
+  /// Distinct leads whose LATEST follow-up in the period matches — a lead
+  /// marked Hot and later moved to Warm counts as Warm only. This is the rule
+  /// the All Leads pills use, so it is the one for states rather than
+  /// milestones.
+  FEEDBACK_LEADS_LATEST
   /// A live count of the agent's assigned leads currently at the chosen Lead
   /// Stage(s). A snapshot: it ignores the period and the same lead keeps
   /// counting while it sits there.

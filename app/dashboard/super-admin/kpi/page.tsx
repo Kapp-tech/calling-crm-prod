@@ -292,8 +292,14 @@ export default function KpiPage() {
     const cats = d.feedbackCategoryIds.map((id) => data?.choices.categories.find((c) => c.id === id)?.name).filter(Boolean);
     const opts = d.feedbackOptionIds.map((id) => data?.choices.options.find((o) => o.id === id)?.label).filter(Boolean);
     const bits = [...cats.map((c) => `${c} category`), ...opts];
-    const unit = d.source === 'FEEDBACK_LEADS' ? 'Distinct leads with' : 'Follow-ups';
-    return bits.length === 0 ? `${unit} any feedback logged in the period.` : `${unit} ${bits.join(', ')}.`;
+    const scope = bits.length === 0 ? 'any feedback' : bits.join(', ');
+    if (d.source === 'FEEDBACK_LEADS') {
+      return `Distinct leads given ${scope} at any point in the period.`;
+    }
+    if (d.source === 'FEEDBACK_LEADS_LATEST') {
+      return `Leads whose latest follow-up in the period is ${scope}.`;
+    }
+    return `Follow-ups logged in the period with ${scope}.`;
   }
 
   return (
