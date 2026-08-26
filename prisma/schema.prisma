@@ -1146,6 +1146,12 @@ enum EmailReportType {
   /// Login details and getting-started links for a newly created user. Sent
   /// automatically when the account is made, and re-sendable from a rule.
   WELCOME
+  /// The Reports page's outcome table: leads worked in the period, counted once
+  /// under their latest follow-up, plus the university count and total.
+  FEEDBACK_SUMMARY
+  /// The same leads split by college — dialed, connected, connected %, and a
+  /// column per outcome.
+  COLLEGE_WISE
 }
 
 enum EmailFrequency {

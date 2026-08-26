@@ -21,7 +21,7 @@ interface Address { emailid: string; name?: string }
 interface Rule {
   id: string;
   name: string;
-  reportType: 'AGENT_PERFORMANCE' | 'TEAM_SUMMARY' | 'WELCOME';
+  reportType: 'AGENT_PERFORMANCE' | 'TEAM_SUMMARY' | 'WELCOME' | 'FEEDBACK_SUMMARY' | 'COLLEGE_WISE';
   frequency: 'DAILY' | 'WEEKLY' | 'MONTHLY' | 'QUARTERLY';
   sendHour: number;
   sendMinute: number;
@@ -58,7 +58,12 @@ const REPORT_LABEL: Record<Rule['reportType'], string> = {
   AGENT_PERFORMANCE: 'Agent performance — one email per agent',
   TEAM_SUMMARY: 'Team summary — one email listing everyone',
   WELCOME: 'Welcome email — login details and links',
+  FEEDBACK_SUMMARY: 'Feedback summary — leads by outcome, with the university count',
+  COLLEGE_WISE: 'University / College wise — the same leads split by college',
 };
+
+/** Reports that cover the whole floor rather than one person. */
+const MANAGEMENT_REPORTS: Rule['reportType'][] = ['TEAM_SUMMARY', 'FEEDBACK_SUMMARY', 'COLLEGE_WISE'];
 
 const ROLES = ['SUPER_ADMIN', 'REPORTS', 'OPERATIONS', 'COUNSELLING_TL'];
 const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
@@ -368,11 +373,13 @@ function EmailAutomationContent() {
                       // must go to each agent, a team summary must not.
                       set({
                         reportType,
-                        audience: reportType === 'TEAM_SUMMARY' ? 'FIXED' : 'EACH_AGENT',
+                        audience: MANAGEMENT_REPORTS.includes(reportType) ? 'FIXED' : 'EACH_AGENT',
                       });
                     }}>
                     <option value="TEAM_SUMMARY">{REPORT_LABEL.TEAM_SUMMARY}</option>
                     <option value="AGENT_PERFORMANCE">{REPORT_LABEL.AGENT_PERFORMANCE}</option>
+                    <option value="FEEDBACK_SUMMARY">{REPORT_LABEL.FEEDBACK_SUMMARY}</option>
+                    <option value="COLLEGE_WISE">{REPORT_LABEL.COLLEGE_WISE}</option>
                     <option value="WELCOME">{REPORT_LABEL.WELCOME}</option>
                   </select>
                 </div>

@@ -73,8 +73,13 @@ function validateAudience(d: z.infer<typeof ruleSchema>): string | null {
   if (d.reportType === 'WELCOME' && d.audience !== 'EACH_AGENT') {
     return 'A welcome email carries one person’s own login details, so it goes to each agent individually. Use Cc to copy a manager.';
   }
-  if (d.reportType === 'TEAM_SUMMARY' && d.audience === 'EACH_AGENT') {
-    return 'A team summary lists everyone, so it cannot be addressed to each agent individually.';
+  // Every management report is a whole-floor view, so none of them can be
+  // addressed to each agent individually. Listed rather than negated against
+  // the per-person types, so a future report type has to make its own choice
+  // instead of silently inheriting one.
+  const MANAGEMENT_REPORTS = ['TEAM_SUMMARY', 'FEEDBACK_SUMMARY', 'COLLEGE_WISE'];
+  if (MANAGEMENT_REPORTS.includes(d.reportType) && d.audience === 'EACH_AGENT') {
+    return 'This report covers the whole floor, so it cannot be addressed to each agent individually.';
   }
   if (d.audience === 'FIXED' && d.toEmails.length === 0) {
     return 'Add at least one recipient address.';

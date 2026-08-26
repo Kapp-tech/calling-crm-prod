@@ -1,8 +1,8 @@
 import { EmailFrequency, PrismaClient, Prisma, EmailReportType } from '@prisma/client';
-import { buildAgentReport, AgentReportRow } from './reports';
+import { buildAgentReport, buildFeedbackBreakdown, buildCollegeBreakdown, AgentReportRow } from './reports';
 import { kpiScoreboardFor } from './kpi';
 import { istDayKey, istShiftDays } from './ist-time';
-import { istParts } from './email-schedule';
+import { istParts, reportWindowFor } from './email-schedule';
 
 /**
  * The HTML the scheduled emails carry.
@@ -365,4 +365,128 @@ export const REPORT_TYPE_LABEL: Record<EmailReportType, string> = {
   AGENT_PERFORMANCE: 'Agent performance (one email per agent)',
   TEAM_SUMMARY: 'Team summary (one email listing every agent)',
   WELCOME: 'Welcome email (login details and links)',
+  FEEDBACK_SUMMARY: 'Feedback summary (leads by outcome)',
+  COLLEGE_WISE: 'University / College wise (leads by college)',
 };
+
+// ─── Feedback summary & College-wise ─────────────────────────────────────────
+
+/**
+ * The two Reports-page tables, as email.
+ *
+ * Both call the very same `buildFeedbackBreakdown` / `buildCollegeBreakdown`
+ * the page renders from, so a figure in an inbox and the same figure on screen
+ * cannot disagree — which is the whole reason these live here rather than being
+ * re-derived with their own queries.
+ *
+ * The rule's frequency picks the window (see reportWindowFor), because an email
+ * has no date pickers to read.
+ */
+
+/** Zebra + right-aligned numbers, the same treatment the agent tables get. */
+function cell(v: unknown, opts: { bold?: boolean; align?: string; bg?: string } = {}): string {
+  return `<td style="padding:7px 10px;border-bottom:1px solid ${BORDER};font-size:12px;` +
+    `text-align:${opts.align ?? 'left'};${opts.bold ? 'font-weight:bold;' : ''}` +
+    `${opts.bg ? `background:${opts.bg};` : ''}">${esc(v)}</td>`;
+}
+
+export async function buildFeedbackSummaryEmail(
+  db: PrismaClient,
+  scope: Prisma.UserWhereInput,
+  frequency: EmailFrequency,
+  now: Date,
+): Promise<BuiltReport> {
+  const w = reportWindowFor(frequency, now);
+  const fb = await buildFeedbackBreakdown(db, scope, 'DATEWISE', w.from, w.to, now);
+
+  const inner = fb.rows.length === 0
+    ? `<p style="font-size:13px;color:${MUTED}">No follow-ups were logged in this period.</p>`
+    : `<table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="border-collapse:collapse;max-width:420px">
+<tr>${cell('University/Institution Count', { bold: true, bg: '#fdf2e3' })}${cell(fb.universities, { bold: true, align: 'right', bg: '#fdf2e3' })}</tr>
+${fb.rows.map((r) => `<tr>${cell(r.feedback)}${cell(r.leads, { align: 'right' })}</tr>`).join('\n')}
+<tr>${cell('Total', { bold: true, bg: '#fdf2e3' })}${cell(fb.total, { bold: true, align: 'right', bg: '#fdf2e3' })}</tr>
+</table>`;
+
+  const csv = [
+    ['University/Institution Count', fb.universities],
+    ...fb.rows.map((r) => [r.feedback, r.leads]),
+    ['Total', fb.total],
+  ].map((cells) => cells.map(q).join(',')).join('\n');
+
+  return {
+    subject: `Feedback summary — ${w.label}`,
+    html: shell('Feedback summary', w.label, inner, FEEDBACK_FOOTER),
+    csv,
+    periodLabel: w.label,
+    rows: [],
+  };
+}
+
+const FEEDBACK_FOOTER =
+  'Sent automatically by the Counselling CRM. All dates are IST. Every lead is counted once, ' +
+  'under its latest follow-up in the period, so the Total is leads worked rather than ' +
+  'follow-ups logged. Outcomes nobody used are not listed.';
+
+/** The default outcome columns, matching the Reports page. */
+const EMAIL_OUTCOME_COLUMNS = ['Walk-In', 'Application Done', 'Admission Done', 'Cold', 'Interested'];
+
+export async function buildCollegeWiseEmail(
+  db: PrismaClient,
+  scope: Prisma.UserWhereInput,
+  frequency: EmailFrequency,
+  now: Date,
+): Promise<BuiltReport> {
+  const w = reportWindowFor(frequency, now);
+  const cb = await buildCollegeBreakdown(db, scope, 'DATEWISE', w.from, w.to, now);
+
+  // An email has no column picker, so the width is chosen here: the same five
+  // the page defaults to, minus any that stayed at zero everywhere. A column of
+  // zeros costs real width in Outlook and tells the reader nothing.
+  const preferred = EMAIL_OUTCOME_COLUMNS.filter((o) => (cb.totals.outcomes[o] ?? 0) > 0);
+  const outcomes = preferred.length > 0
+    ? preferred
+    : cb.availableOutcomes.filter((o) => (cb.totals.outcomes[o] ?? 0) > 0).slice(0, 5);
+  const showOther = cb.totals.other > 0;
+
+  const headers = ['University Name', 'Dialed', 'Connected', 'Connected %', 'Not Connected',
+    ...(showOther ? ['Other'] : []), ...outcomes];
+  const line = (name: string, r: typeof cb.totals) => [
+    name, r.dialed, r.connected, r.connectedPct === null ? '—' : `${r.connectedPct}%`, r.notConnected,
+    ...(showOther ? [r.other] : []), ...outcomes.map((o) => r.outcomes[o] ?? 0),
+  ];
+
+  const inner = cb.rows.length === 0
+    ? `<p style="font-size:13px;color:${MUTED}">No follow-ups were logged in this period.</p>`
+    : `<table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="border-collapse:collapse">
+<tr>${line(w.label, cb.totals).map((v, i) => cell(v, { bold: true, align: i === 0 ? 'left' : 'right', bg: '#fdf2e3' })).join('')}</tr>
+<tr>${headers.map((h, i) => cell(h, { bold: true, align: i === 0 ? 'left' : 'right', bg: HEAD_BG })).join('')}</tr>
+${cb.rows.map((r) => `<tr>${line(r.college, r).map((v, i) => cell(v, { align: i === 0 ? 'left' : 'right' })).join('')}</tr>`).join('\n')}
+</table>`;
+
+  // The attachment carries EVERY outcome, not just the columns that fit in the
+  // body — that is what the spreadsheet is for.
+  const allOutcomes = cb.availableOutcomes;
+  const csvLine = (name: string, r: typeof cb.totals) => [
+    name, r.dialed, r.connected, r.connectedPct === null ? '' : `${r.connectedPct}%`, r.notConnected,
+    ...(showOther ? [r.other] : []), ...allOutcomes.map((o) => r.outcomes[o] ?? 0),
+  ];
+  const csv = [
+    ['University Name', 'Dialed', 'Connected', 'Connected %', 'Not Connected',
+      ...(showOther ? ['Other'] : []), ...allOutcomes],
+    csvLine(w.label, cb.totals),
+    ...cb.rows.map((r) => csvLine(r.college, r)),
+  ].map((cells) => cells.map(q).join(',')).join('\n');
+
+  return {
+    subject: `University / College wise — ${w.label}`,
+    html: shell('University / College wise', w.label, inner, COLLEGE_FOOTER),
+    csv,
+    periodLabel: w.label,
+    rows: [],
+  };
+}
+
+const COLLEGE_FOOTER =
+  'Sent automatically by the Counselling CRM. All dates are IST. The same leads as the ' +
+  'feedback summary, counted the same way, so Dialed totals to the same number. The attached ' +
+  'CSV carries every outcome, not only the columns shown here.';

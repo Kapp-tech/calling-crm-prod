@@ -1,6 +1,9 @@
 import { EmailRule, Prisma, PrismaClient } from '@prisma/client';
 import { sendEmail, EmailAddress, isEmailConfigured } from './email';
-import { buildAgentEmail, buildTeamSummary, buildAgentBlocks, buildWelcomeEmail } from './email-reports';
+import {
+  buildAgentEmail, buildTeamSummary, buildAgentBlocks, buildWelcomeEmail,
+  buildFeedbackSummaryEmail, buildCollegeWiseEmail,
+} from './email-reports';
 import { isRuleDue, periodKeyFor, reportWindowFor } from './email-schedule';
 import { istDayKey } from './ist-time';
 
@@ -154,14 +157,39 @@ export async function runEmailRule(
       await new Promise((r) => setTimeout(r, 400));
     }
   } else {
-    const built = await buildTeamSummary(db, scopeFor(rule), rule.frequency, now);
+    /**
+     * The three management reports. They differ only in what they build and
+     * what the attachment is called, so they share one recipient-resolution and
+     * one send — three copies of this block would drift the first time one was
+     * fixed.
+     *
+     * Feedback summary and College-wise count every follow-up in the window
+     * whoever logged it when the rule is org-wide, exactly as the Reports page
+     * does; a TL-scoped rule narrows to that TL's agents. `scopeFor` returns the
+     * agent scope, so an unscoped rule passes `{}` to mean everyone.
+     */
+    const wholeOrg = !rule.scopeTlId;
+    const breakdownScope = wholeOrg ? {} : scopeFor(rule);
+
+    const built =
+      rule.reportType === 'FEEDBACK_SUMMARY'
+        ? await buildFeedbackSummaryEmail(db, breakdownScope, rule.frequency, now)
+        : rule.reportType === 'COLLEGE_WISE'
+          ? await buildCollegeWiseEmail(db, breakdownScope, rule.frequency, now)
+          : await buildTeamSummary(db, scopeFor(rule), rule.frequency, now);
+
+    const csvName =
+      rule.reportType === 'FEEDBACK_SUMMARY' ? 'feedback_summary'
+        : rule.reportType === 'COLLEGE_WISE' ? 'college_wise'
+          : 'team_performance';
+
     let to: EmailAddress[] = [];
     if (rule.audience === 'FIXED') to = addressesFrom(rule.toEmails);
     else if (rule.audience === 'BY_ROLE') to = await addressesForRoles(db, rule.toRoles);
     else {
-      // EACH_AGENT on a team summary would mail every agent the whole team's
-      // numbers, which is not what anyone means by it.
-      out.skipped = 'A team summary needs fixed addresses or roles, not "each agent"';
+      // EACH_AGENT on a management summary would mail every agent the whole
+      // team's numbers, which is not what anyone means by it.
+      out.skipped = 'This report needs fixed addresses or roles, not "each agent"';
       return out;
     }
 
@@ -178,7 +206,7 @@ export async function runEmailRule(
           ? [
               {
                 content: Buffer.from(built.csv, 'utf8').toString('base64'),
-                filename: `team_performance_${istDayKey(now)}.csv`,
+                filename: `${csvName}_${istDayKey(now)}.csv`,
                 type: 'text/csv',
               },
             ]
