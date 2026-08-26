@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useSession } from 'next-auth/react';
-import { BarChart3, Loader2, Download, Users, Info } from 'lucide-react';
+import { BarChart3, Loader2, Download, Users, Info, GraduationCap, Building2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { MultiSelectFilter } from '@/components/shared/multi-select-filter';
 import { cn } from '@/lib/utils';
@@ -27,12 +27,55 @@ interface ReportResponse {
     totalAgents: number; dialedCalls: number; connectedCalls: number; notConnectedCalls: number;
     applications: number; admissions: number;
   };
+  feedbackBreakdown: {
+    universities: number;
+    total: number;
+    rows: { feedback: string; category: string | null; leads: number }[];
+    label: string;
+  };
+  collegeBreakdown: {
+    label: string;
+    availableOutcomes: string[];
+    rows: {
+      college: string; dialed: number; connected: number; notConnected: number; other: number;
+      connectedPct: number | null; outcomes: Record<string, number>;
+    }[];
+    totals: {
+      dialed: number; connected: number; notConnected: number; other: number;
+      connectedPct: number | null; outcomes: Record<string, number>;
+    };
+  };
   benchmarking: { kpi: string; unit: string; period: string; target: number; actual: number | null; pct: number | null }[];
   choices: { agents: { id: string; name: string; employeeCode: string | null }[]; tls: { id: string; name: string }[] };
 }
 
 const SELECT =
   'h-9 rounded-md border border-input bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring';
+
+/**
+ * Rows are tinted by the admin-maintained feedback category, not by a hardcoded
+ * list of "good" outcomes — that way the colouring follows Manage Feedbacks and
+ * matches the pills on All Leads instead of drifting from them.
+ */
+function categoryTone(category: string | null): string {
+  const c = (category ?? '').toLowerCase();
+  // Stronger in dark: a /10 wash over a near-black surface is invisible, and the
+  // tint is the only at-a-glance signal of the category besides the tooltip.
+  if (c === 'connected') return 'bg-emerald-500/10 dark:bg-emerald-500/[0.16]';
+  if (c === 'not connected') return 'bg-red-500/[0.06] dark:bg-red-500/[0.13]';
+  if (c === 'warm') return 'bg-amber-500/10 dark:bg-amber-500/[0.16]';
+  if (c === 'cold') return 'bg-sky-500/10 dark:bg-sky-500/[0.16]';
+  return '';
+}
+
+/**
+ * Outcome columns shown by default — the ones the spreadsheet this replaces
+ * tracked. Matched by label and skipped when absent, so renaming or deleting a
+ * feedback option degrades to a missing column rather than a crash. If none of
+ * them exist the report falls back to the busiest outcomes, so it is never
+ * blank for an organisation using different labels.
+ */
+const DEFAULT_OUTCOME_COLUMNS = ['Walk-In', 'Application Done', 'Admission Done', 'Cold', 'Interested'];
 
 function pctTone(pct: number | null) {
   if (pct === null) return 'text-muted-foreground';
@@ -102,6 +145,75 @@ export default function ReportsPage() {
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
     a.download = `performance_${data.label.replace(/\W+/g, '_')}.csv`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  }
+
+  /**
+   * Two columns, in the same order as on screen, so it drops straight into the
+   * spreadsheet this table replaces: the university count on top, one row per
+   * outcome, the total at the foot.
+   */
+  function exportFeedbackCsv() {
+    const fb = data?.feedbackBreakdown;
+    if (!fb) return;
+    const esc = (v: unknown) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+    const lines = [
+      ['University/Institution Count', fb.universities],
+      ...fb.rows.map((r) => [r.feedback, r.leads]),
+      ['Total', fb.total],
+    ].map((cells) => cells.map(esc).join(','));
+    const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `feedback_summary_${fb.label.replace(/\W+/g, '_')}.csv`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  }
+
+  // Which outcome columns the college table shows. Held here rather than sent to
+  // the server: every outcome's per-college count is already in the response, so
+  // changing columns is instant and costs no query.
+  const [outcomeCols, setOutcomeCols] = useState<string[] | null>(null);
+  // Memoised so the `?? []` fallback does not mint a fresh array every render,
+  // which would make the memo below recompute each time for nothing.
+  const available = useMemo(
+    () => data?.collegeBreakdown.availableOutcomes ?? [],
+    [data?.collegeBreakdown.availableOutcomes],
+  );
+  const shownOutcomes = useMemo(() => {
+    if (outcomeCols) return outcomeCols.filter((o) => available.includes(o));
+    const preferred = DEFAULT_OUTCOME_COLUMNS.filter((o) => available.includes(o));
+    return preferred.length > 0 ? preferred : available.slice(0, 5);
+  }, [outcomeCols, available]);
+
+  // Only surfaced when some lead actually landed outside both categories, so a
+  // normal two-category setup never sees an always-zero column.
+  const showOther = (data?.collegeBreakdown.totals.other ?? 0) > 0;
+
+  function exportCollegeCsv() {
+    const cb = data?.collegeBreakdown;
+    if (!cb) return;
+    const esc = (v: unknown) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+    const head = [
+      'University Name', 'Dialed', 'Connected', 'Connected %', 'Not Connected',
+      ...(showOther ? ['Other'] : []), ...shownOutcomes,
+    ];
+    const line = (name: string, r: typeof cb.totals) => [
+      name, r.dialed, r.connected, r.connectedPct === null ? '' : `${r.connectedPct}%`, r.notConnected,
+      ...(showOther ? [r.other] : []),
+      ...shownOutcomes.map((o) => r.outcomes[o] ?? 0),
+    ];
+    const lines = [
+      head,
+      // Totals first, matching the layout on screen and in the sheet.
+      line(cb.label, cb.totals),
+      ...cb.rows.map((r) => line(r.college, r)),
+    ].map((cells) => cells.map(esc).join(','));
+    const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `college_wise_${cb.label.replace(/\W+/g, '_')}.csv`;
     a.click();
     URL.revokeObjectURL(a.href);
   }
@@ -253,6 +365,192 @@ export default function ReportsPage() {
               <Info className="mr-1 inline h-3 w-3" />
               Average Talktime needs the dialer’s call records, which are not yet integrated.
               Applications and Admissions are approved receipts, counted by date paid.
+            </p>
+          </section>
+
+          {/* ── Feedback summary ───────────────────────────────────────── */}
+          <section className="space-y-2">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h2 className="text-sm font-semibold">
+                Feedback summary{' '}
+                <span className="font-normal text-muted-foreground">
+                  — every lead worked in this window, counted once under its latest feedback
+                </span>
+              </h2>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={exportFeedbackCsv}
+                disabled={data.feedbackBreakdown.rows.length === 0}
+              >
+                <Download className="mr-2 h-3.5 w-3.5" /> Download
+              </Button>
+            </div>
+
+            <div className="max-w-xl overflow-hidden rounded-xl border border-border/60">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-border/60 bg-amber-500/15">
+                    <th className="px-4 py-2.5 text-left font-bold">
+                      <GraduationCap className="mr-1.5 inline h-4 w-4 align-text-bottom" />
+                      University/Institution Count
+                    </th>
+                    <th className="px-4 py-2.5 text-right font-bold tabular-nums">
+                      {data.feedbackBreakdown.universities.toLocaleString('en-IN')}
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.feedbackBreakdown.rows.length === 0 ? (
+                    <tr>
+                      <td colSpan={2} className="px-4 py-10 text-center text-muted-foreground">
+                        No follow-ups were logged in this window.
+                      </td>
+                    </tr>
+                  ) : (
+                    data.feedbackBreakdown.rows.map((r) => (
+                      <tr
+                        key={r.feedback}
+                        className={cn('border-b border-border/40 last:border-b-0', categoryTone(r.category))}
+                        title={r.category ? `${r.category} category` : 'No category set'}
+                      >
+                        <td className="px-4 py-2">{r.feedback}</td>
+                        <td className="px-4 py-2 text-right tabular-nums">{r.leads.toLocaleString('en-IN')}</td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+                {data.feedbackBreakdown.rows.length > 0 && (
+                  <tfoot>
+                    <tr className="border-t-2 border-border bg-amber-500/15">
+                      <td className="px-4 py-2.5 font-bold">Total</td>
+                      <td className="px-4 py-2.5 text-right font-bold tabular-nums">
+                        {data.feedbackBreakdown.total.toLocaleString('en-IN')}
+                      </td>
+                    </tr>
+                  </tfoot>
+                )}
+              </table>
+            </div>
+            <p className="text-[11px] text-muted-foreground">
+              <Info className="mr-1 inline h-3 w-3" />
+              Every follow-up in this window, whoever logged it — including agents who have since
+              left, so past periods do not shrink as people move on. Narrow it with the filters
+              above. A lead appears once, under its latest feedback, so the Total is leads worked,
+              not follow-ups logged. Outcomes nobody used do not appear. Row colour is the
+              feedback&rsquo;s category.
+              {' '}It will not always match Dialed Calls above: that strip counts active agents only,
+              and counts a lead once for each agent who worked it.
+            </p>
+          </section>
+
+          {/* ── College-wise ───────────────────────────────────────────── */}
+          <section className="space-y-2">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h2 className="text-sm font-semibold">
+                University / College wise{' '}
+                <span className="font-normal text-muted-foreground">
+                  — the same leads, split by college instead of by outcome
+                </span>
+              </h2>
+              <div className="flex items-center gap-2">
+                <MultiSelectFilter
+                  placeholder="Outcome columns"
+                  options={available.map((o) => ({ value: o, label: o }))}
+                  selected={shownOutcomes}
+                  onChange={setOutcomeCols}
+                  // Safe here: the list is one entry per feedback option that
+                  // occurred, so a couple of dozen at most, and it only adds
+                  // columns to a table rather than going into a query string.
+                  selectAll
+                  triggerClassName="h-8 w-full sm:w-auto sm:min-w-[170px] sm:max-w-[260px]"
+                />
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={exportCollegeCsv}
+                  disabled={data.collegeBreakdown.rows.length === 0}
+                >
+                  <Download className="mr-2 h-3.5 w-3.5" /> Download
+                </Button>
+              </div>
+            </div>
+
+            <div className="overflow-x-auto rounded-xl border border-border/60">
+              <table className="w-full min-w-[820px] text-xs">
+                <thead>
+                  {/* Totals sit above the rows, as they do in the sheet this replaces —
+                      the headline is read first and the detail is the evidence for it. */}
+                  <tr className="bg-amber-500/15 font-bold">
+                    <th className="px-3 py-2.5 text-left whitespace-nowrap">{data.collegeBreakdown.label}</th>
+                    <th className="px-3 py-2.5 text-center tabular-nums">{data.collegeBreakdown.totals.dialed.toLocaleString('en-IN')}</th>
+                    <th className="px-3 py-2.5 text-center tabular-nums">{data.collegeBreakdown.totals.connected.toLocaleString('en-IN')}</th>
+                    <th className="px-3 py-2.5 text-center tabular-nums">
+                      {data.collegeBreakdown.totals.connectedPct === null ? '—' : `${data.collegeBreakdown.totals.connectedPct}%`}
+                    </th>
+                    <th className="px-3 py-2.5 text-center tabular-nums">{data.collegeBreakdown.totals.notConnected.toLocaleString('en-IN')}</th>
+                    {showOther && (
+                      <th className="px-3 py-2.5 text-center tabular-nums">{data.collegeBreakdown.totals.other.toLocaleString('en-IN')}</th>
+                    )}
+                    {shownOutcomes.map((o) => (
+                      <th key={o} className="px-3 py-2.5 text-center tabular-nums">
+                        {(data.collegeBreakdown.totals.outcomes[o] ?? 0).toLocaleString('en-IN')}
+                      </th>
+                    ))}
+                  </tr>
+                  <tr className="border-y border-border/60 bg-emerald-500/10 text-muted-foreground">
+                    <th className="px-3 py-2 text-left font-semibold whitespace-nowrap">
+                      <Building2 className="mr-1.5 inline h-3.5 w-3.5 align-text-bottom" />University Name
+                    </th>
+                    {['Dialed', 'Connected', 'Connected %', 'Not Connected', ...(showOther ? ['Other'] : []), ...shownOutcomes].map((h) => (
+                      <th key={h} className="px-3 py-2 text-center font-semibold whitespace-nowrap">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.collegeBreakdown.rows.length === 0 ? (
+                    <tr>
+                      <td colSpan={5 + (showOther ? 1 : 0) + shownOutcomes.length} className="px-4 py-10 text-center text-muted-foreground">
+                        No follow-ups were logged in this window.
+                      </td>
+                    </tr>
+                  ) : (
+                    data.collegeBreakdown.rows.map((r) => (
+                      <tr key={r.college} className="border-b border-border/40 last:border-b-0 hover:bg-muted/30">
+                        <td className="px-3 py-2 font-medium">{r.college}</td>
+                        <td className="px-3 py-2 text-center tabular-nums">{r.dialed.toLocaleString('en-IN')}</td>
+                        <td className="px-3 py-2 text-center tabular-nums text-emerald-600 dark:text-emerald-400">{r.connected.toLocaleString('en-IN')}</td>
+                        {/* Deliberately not pctTone: that scale means "share of
+                            target achieved", where under 50 is a miss. A 40%
+                            connect rate is an ordinary day, and painting most of
+                            the report red would say something untrue. */}
+                        <td className="px-3 py-2 text-center font-medium tabular-nums">
+                          {r.connectedPct === null ? '—' : `${r.connectedPct}%`}
+                        </td>
+                        <td className="px-3 py-2 text-center tabular-nums text-red-500">{r.notConnected.toLocaleString('en-IN')}</td>
+                        {showOther && (
+                          <td className="px-3 py-2 text-center tabular-nums text-muted-foreground" title="Latest feedback is in neither the Connected nor the Not Connected category">
+                            {r.other}
+                          </td>
+                        )}
+                        {shownOutcomes.map((o) => (
+                          <td key={o} className={cn('px-3 py-2 text-center tabular-nums', !r.outcomes[o] && 'text-muted-foreground/40')}>
+                            {r.outcomes[o] ?? 0}
+                          </td>
+                        ))}
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+            <p className="text-[11px] text-muted-foreground">
+              <Info className="mr-1 inline h-3 w-3" />
+              The same leads as the summary above, counted the same way, so Dialed totals to the
+              same number. Connected and Not Connected add back to Dialed on every row; an{' '}
+              <strong>Other</strong> column appears if a feedback category beyond those two is in
+              use, so a row can never quietly fail to add up. Pick which outcome columns to show
+              with the selector — every outcome is already loaded, so changing them is instant.
             </p>
           </section>
 

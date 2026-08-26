@@ -20,12 +20,23 @@ export function MultiSelectFilter({
   onChange,
   loading,
   triggerClassName,
+  selectAll,
 }: {
   placeholder: string;
   options: MultiSelectOption[];
   selected: string[];
   onChange: (v: string[]) => void;
   loading?: boolean;
+  /**
+   * Adds a "Select all" row at the top of the list.
+   *
+   * Opt-in rather than always on, because several filters here are backed by
+   * lists that are long enough for it to be a trap: the All Leads city filter
+   * carries 946 values on production, and selecting them all would put roughly
+   * 20 KB of city names into the query string. Turn it on where the list is
+   * short and bounded.
+   */
+  selectAll?: boolean;
   /** Overrides the trigger button's sizing classes (defaults to the compact
    * inline-filter-bar look used on the All Leads page). */
   triggerClassName?: string;
@@ -55,6 +66,28 @@ export function MultiSelectFilter({
 
   function toggle(value: string) {
     onChange(selected.includes(value) ? selected.filter((v) => v !== value) : [...selected, value]);
+  }
+
+  /**
+   * What "Select all" acts on: the search results while a query is typed,
+   * everything otherwise. Acting on the whole list while the reader is looking
+   * at four matches would select things they cannot see.
+   */
+  const bulkTarget = query.trim() ? filtered : options;
+  const allBulkSelected =
+    bulkTarget.length > 0 && bulkTarget.every((o) => selected.includes(o.value));
+  const someBulkSelected = bulkTarget.some((o) => selected.includes(o.value));
+
+  function toggleAll() {
+    const values = bulkTarget.map((o) => o.value);
+    if (allBulkSelected) {
+      const drop = new Set(values);
+      // Only clears what is in view — a selection made under a different search
+      // survives, which is what the checkbox in front of them says it will do.
+      onChange(selected.filter((v) => !drop.has(v)));
+    } else {
+      onChange(Array.from(new Set([...selected, ...values])));
+    }
   }
 
   // Button label
@@ -115,6 +148,35 @@ export function MultiSelectFilter({
               </button>
             )}
           </div>
+
+          {/* Select all */}
+          {selectAll && !loading && bulkTarget.length > 0 && (
+            <button
+              type="button"
+              onClick={toggleAll}
+              className="flex w-full items-center gap-2 border-b border-border/60 px-2.5 py-1.5 text-xs font-medium hover:bg-muted/50"
+            >
+              <span
+                className={cn(
+                  'flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded border',
+                  allBulkSelected
+                    ? 'border-primary bg-primary'
+                    : someBulkSelected
+                      ? 'border-primary bg-primary/25'
+                      : 'border-input',
+                )}
+              >
+                {allBulkSelected && <Check className="h-2.5 w-2.5 text-primary-foreground" />}
+                {/* A dash, not a tick, when only some are on — a tick would claim
+                    the whole list is selected. */}
+                {!allBulkSelected && someBulkSelected && <span className="h-0.5 w-2 rounded-full bg-primary" />}
+              </span>
+              <span className="truncate">
+                {allBulkSelected ? 'Clear all' : 'Select all'}
+                {query.trim() && ` matching (${bulkTarget.length})`}
+              </span>
+            </button>
+          )}
 
           {/* Options list */}
           <ul className="max-h-56 overflow-y-auto py-0.5">

@@ -257,3 +257,231 @@ export function summariseAgentRows(rows: AgentReportRow[]) {
     admissions: sum((r) => r.admissions),
   };
 }
+
+// ─── Feedback summary ────────────────────────────────────────────────────────
+
+export interface FeedbackBreakdownRow {
+  feedback: string;
+  /** The admin-maintained category, for colouring. Null if the option has none. */
+  category: string | null;
+  leads: number;
+}
+
+export interface FeedbackBreakdown {
+  /** Distinct colleges among the leads counted below. */
+  universities: number;
+  total: number;
+  rows: FeedbackBreakdownRow[];
+  label: string;
+}
+
+/**
+ * How the leads worked in the window ended up — one row per outcome.
+ *
+ * Counts LEADS, not follow-ups, and places each lead under its **latest**
+ * follow-up in the window. That is the same latest-wins rule the All Leads
+ * pills and the Dialed/Connected columns use, and it is what makes the table
+ * add up: every lead appears exactly once, so the Total is the number of leads
+ * worked rather than a sum that overshoots it. Counting follow-ups instead
+ * would list a lead under both Hot and Warm if the agent changed their mind.
+ *
+ * Outcomes with no leads are simply absent — the grouping only returns what
+ * happened, so there is nothing to filter out.
+ */
+export async function buildFeedbackBreakdown(
+  db: PrismaClient,
+  agentWhere: Prisma.UserWhereInput,
+  range: ReportRange,
+  from?: string | null,
+  to?: string | null,
+  now = new Date(),
+): Promise<FeedbackBreakdown> {
+  const window = reportRange(range, from, to, now);
+  const agents = await db.user.findMany({ where: agentWhere, select: { id: true } });
+  const ids = agents.map((a) => a.id);
+  if (ids.length === 0) return { universities: 0, total: 0, rows: [], label: window.label };
+
+  // Shared by both queries below so the two can never drift apart on which
+  // leads they are talking about. Explicit UTC literals, never a JS Date — see
+  // toUtcSqlTimestamp; a Date would be read in the process timezone and shift
+  // the window by 5h30m on the UTC server.
+  const latest = Prisma.sql`
+    SELECT DISTINCT ON (f."leadId") f."leadId", f."feedbackOptionId"
+    FROM "LeadFeedback" f
+    WHERE f."agentId" IN (${Prisma.join(ids)})
+      ${window.from ? Prisma.sql`AND f."createdAt" >= ${toUtcSqlTimestamp(window.from)}::timestamp` : Prisma.empty}
+      ${window.to ? Prisma.sql`AND f."createdAt" <= ${toUtcSqlTimestamp(window.to)}::timestamp` : Prisma.empty}
+    ORDER BY f."leadId", f."createdAt" DESC
+  `;
+
+  const [breakdown, [totals]] = await Promise.all([
+    db.$queryRaw<{ feedback: string | null; category: string | null; leads: bigint }[]>(Prisma.sql`
+      WITH latest AS (${latest})
+      SELECT fo.label AS feedback, fc.name AS category, count(*)::bigint AS leads
+      FROM latest l
+      LEFT JOIN "FeedbackOption" fo ON fo.id = l."feedbackOptionId"
+      LEFT JOIN "FeedbackCategory" fc ON fc.id = fo."categoryId"
+      GROUP BY 1, 2
+      ORDER BY 3 DESC, 1 ASC
+    `),
+    // Blank college names are excluded rather than counted as one nameless
+    // university, which would quietly inflate the headline figure.
+    db.$queryRaw<{ universities: bigint }[]>(Prisma.sql`
+      WITH latest AS (${latest})
+      SELECT count(DISTINCT ld.college)::bigint AS universities
+      FROM latest l JOIN "Lead" ld ON ld.id = l."leadId"
+      WHERE ld.college IS NOT NULL AND btrim(ld.college) <> ''
+    `),
+  ]);
+
+  const rows = breakdown.map((r) => ({
+    feedback: r.feedback ?? '(feedback option removed)',
+    category: r.category,
+    leads: Number(r.leads),
+  }));
+
+  return {
+    universities: Number(totals?.universities ?? 0),
+    total: rows.reduce((sum, r) => sum + r.leads, 0),
+    rows,
+    label: window.label,
+  };
+}
+
+// ─── College-wise breakdown ──────────────────────────────────────────────────
+
+export interface CollegeBreakdownRow {
+  college: string;
+  dialed: number;
+  connected: number;
+  notConnected: number;
+  /**
+   * Leads whose latest feedback sits in neither the Connected nor the Not
+   * Connected category — an admin is free to add more categories in Manage
+   * Feedbacks, and without this column those leads would be counted in Dialed
+   * but appear in none of the splits, so the row would silently fail to add up.
+   * Zero on a two-category setup, which is how production is configured today.
+   */
+  other: number;
+  /** Connected as a share of Dialed, whole per cent. Null when nothing was worked. */
+  connectedPct: number | null;
+  /** Per feedback option, keyed by label. Absent keys are zero. */
+  outcomes: Record<string, number>;
+}
+
+export interface CollegeBreakdown {
+  label: string;
+  /** Every outcome that occurred, most common first — the columns on offer. */
+  availableOutcomes: string[];
+  rows: CollegeBreakdownRow[];
+  totals: Omit<CollegeBreakdownRow, 'college'>;
+}
+
+/** Leads carrying no college at all still have to appear, or this table's Dialed
+ *  column would not add up to the feedback summary's Total. */
+const NO_COLLEGE = '(No college set)';
+
+/**
+ * The same book of work as the feedback summary, split by college instead of by
+ * outcome.
+ *
+ * Identical counting rule — one lead, once, under its latest follow-up in the
+ * window — so the Dialed column totals to exactly the same number the feedback
+ * summary reports, and Connected + Not Connected adds back to Dialed on every
+ * row. Two tables from one definition rather than two definitions that drift.
+ */
+export async function buildCollegeBreakdown(
+  db: PrismaClient,
+  agentWhere: Prisma.UserWhereInput,
+  range: ReportRange,
+  from?: string | null,
+  to?: string | null,
+  now = new Date(),
+): Promise<CollegeBreakdown> {
+  const window = reportRange(range, from, to, now);
+  const empty: CollegeBreakdown = {
+    label: window.label,
+    availableOutcomes: [],
+    rows: [],
+    totals: { dialed: 0, connected: 0, notConnected: 0, other: 0, connectedPct: null, outcomes: {} },
+  };
+
+  const agents = await db.user.findMany({ where: agentWhere, select: { id: true } });
+  const ids = agents.map((a) => a.id);
+  if (ids.length === 0) return empty;
+
+  const raw = await db.$queryRaw<
+    { college: string | null; feedback: string | null; category: string | null; leads: bigint }[]
+  >(Prisma.sql`
+    WITH latest AS (
+      SELECT DISTINCT ON (f."leadId") f."leadId", f."feedbackOptionId"
+      FROM "LeadFeedback" f
+      WHERE f."agentId" IN (${Prisma.join(ids)})
+        ${window.from ? Prisma.sql`AND f."createdAt" >= ${toUtcSqlTimestamp(window.from)}::timestamp` : Prisma.empty}
+        ${window.to ? Prisma.sql`AND f."createdAt" <= ${toUtcSqlTimestamp(window.to)}::timestamp` : Prisma.empty}
+      ORDER BY f."leadId", f."createdAt" DESC
+    )
+    SELECT nullif(btrim(ld.college), '') AS college,
+           fo.label AS feedback,
+           fc.name  AS category,
+           count(*)::bigint AS leads
+    FROM latest l
+    JOIN "Lead" ld ON ld.id = l."leadId"
+    LEFT JOIN "FeedbackOption" fo ON fo.id = l."feedbackOptionId"
+    LEFT JOIN "FeedbackCategory" fc ON fc.id = fo."categoryId"
+    GROUP BY 1, 2, 3
+  `);
+  if (raw.length === 0) return empty;
+
+  const byCollege = new Map<string, CollegeBreakdownRow>();
+  const outcomeTotals = new Map<string, number>();
+
+  for (const r of raw) {
+    const college = r.college ?? NO_COLLEGE;
+    const label = r.feedback ?? '(feedback option removed)';
+    const n = Number(r.leads);
+
+    let row = byCollege.get(college);
+    if (!row) {
+      row = { college, dialed: 0, connected: 0, notConnected: 0, other: 0, connectedPct: null, outcomes: {} };
+      byCollege.set(college, row);
+    }
+    row.dialed += n;
+    // Matched case-insensitively so a category renamed "connected" still lands
+    // in the right column rather than silently falling out of both.
+    const cat = (r.category ?? '').toLowerCase();
+    if (cat === 'connected') row.connected += n;
+    else if (cat === 'not connected') row.notConnected += n;
+    else row.other += n;
+    row.outcomes[label] = (row.outcomes[label] ?? 0) + n;
+    outcomeTotals.set(label, (outcomeTotals.get(label) ?? 0) + n);
+  }
+
+  const pct = (part: number, whole: number) => (whole > 0 ? Math.round((part / whole) * 100) : null);
+
+  const rows = Array.from(byCollege.values())
+    .map((r) => ({ ...r, connectedPct: pct(r.connected, r.dialed) }))
+    .sort((a, b) => b.dialed - a.dialed || a.college.localeCompare(b.college));
+
+  const totals = rows.reduce(
+    (acc, r) => {
+      acc.dialed += r.dialed;
+      acc.connected += r.connected;
+      acc.notConnected += r.notConnected;
+      acc.other += r.other;
+      for (const [k, v] of Object.entries(r.outcomes)) acc.outcomes[k] = (acc.outcomes[k] ?? 0) + v;
+      return acc;
+    },
+    { dialed: 0, connected: 0, notConnected: 0, other: 0, connectedPct: null as number | null, outcomes: {} as Record<string, number> },
+  );
+  totals.connectedPct = pct(totals.connected, totals.dialed);
+
+  return {
+    label: window.label,
+    availableOutcomes: Array.from(outcomeTotals.entries())
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+      .map(([label]) => label),
+    rows,
+    totals,
+  };
+}

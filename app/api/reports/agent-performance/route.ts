@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { Prisma } from '@prisma/client';
 import { authOptions } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
-import { buildAgentReport, summariseAgentRows, ReportRange } from '@/lib/reports';
+import { buildAgentReport, buildFeedbackBreakdown, buildCollegeBreakdown, summariseAgentRows, ReportRange } from '@/lib/reports';
 import { KPI_PERIODS, computeKpiActual } from '@/lib/kpi';
 
 /**
@@ -96,6 +96,33 @@ export async function GET(req: NextRequest) {
         ? rows
         : (await buildAgentReport(prisma, summaryWhere, range as ReportRange, from, to, now)).rows;
 
+    /**
+     * The feedback summary is a book-of-work total, not an agent-performance
+     * table, so an unfiltered manager view counts every follow-up in the window
+     * whoever logged it — `{}` matches all users.
+     *
+     * The agent-performance scope above is deliberately
+     * `COUNSELLING_AGENT + isActive`, and inheriting it here was wrong twice
+     * over: a follow-up logged by a Super Admin or a TL vanished, and so did the
+     * entire history of any agent who has since been deactivated, which would
+     * quietly shrink an Overall report every time someone left. It also made the
+     * table disagree with the All Leads pills, which do not care who logged the
+     * follow-up.
+     *
+     * Narrowing still wins: pick a TL or an agent and the summary follows, so a
+     * filter never appears to do nothing. Permission is unaffected — only
+     * SUPER_ADMIN and REPORTS ever reach the manager view.
+     */
+    const unfilteredManagerView = view === 'manager' && !tlFilter && agentIds.length === 0;
+    const breakdownWhere: Prisma.UserWhereInput = unfilteredManagerView ? {} : agentWhere;
+
+    // Same scope and the same counting rule for both, so the college table's
+    // Dialed column totals to exactly the feedback summary's Total.
+    const [feedbackBreakdown, collegeBreakdown] = await Promise.all([
+      buildFeedbackBreakdown(prisma, breakdownWhere, range as ReportRange, from, to, now),
+      buildCollegeBreakdown(prisma, breakdownWhere, range as ReportRange, from, to, now),
+    ]);
+
     // Benchmarking: the KPI targets are organisation-wide, so each agent is
     // measured against the same numbers. Only shown for a single agent, where
     // "target vs achieved" is meaningful.
@@ -157,6 +184,8 @@ export async function GET(req: NextRequest) {
       label,
       rows,
       summary: summariseAgentRows(summarySource),
+      feedbackBreakdown,
+      collegeBreakdown,
       benchmarking,
       choices: { agents: agentChoices, tls: tlChoices },
     });
