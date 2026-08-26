@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useMemo, useCallback } from 'react';
+import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
 import {
   AreaChart, Area, BarChart, Bar,
@@ -12,6 +13,7 @@ import {
   Users, TrendingUp, PhoneCall, UserCheck, UserX, Clock,
   MessageSquare, Download, RefreshCw, BarChart3, Filter,
   ChevronUp, ChevronDown, ChevronsUpDown, ArrowUpRight,
+  Receipt, GraduationCap,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -25,16 +27,19 @@ interface KPIs {
   approved: number; assigned: number; unassigned: number;
   called: number; untouched: number; totalFeedbacks: number;
   interested: number; conversionRate: number;
+  applications: number; admissions: number;
+  connectedLeads: number; hotLeads: number; warmLeads: number;
+  talktimeMinutes: number;
 }
-interface FunnelStage  { stage: string; count: number; fill: string }
 interface FeedbackItem { label: string; count: number }
 interface TimelineItem { date: string; count: number }
 interface SummaryData  {
   kpis: KPIs;
-  funnel: FunnelStage[];
+  /** Ids the cards need to build an All Leads link that lands on the same rows. */
+  links: { connectedCategoryId: string | null; hotOptionId: string | null; warmOptionId: string | null };
   feedbackDistribution: FeedbackItem[];
   timeline: TimelineItem[];
-  teams: { id: string; name: string; leads: number }[];
+  teams: { id: string; name: string; teamLeadId: string | null; leads: number }[];
 }
 type GroupBy = 'city' | 'state' | 'counsellor' | 'team' | 'college' | 'course' | 'feedback';
 type SortKey = 'label' | 'total' | 'called' | 'untouched' | 'feedbacks' | 'convPct';
@@ -55,15 +60,6 @@ const PIVOT_DIMS: { key: GroupBy; label: string }[] = [
   { key: 'college',    label: 'College'    },
   { key: 'course',     label: 'Course'     },
   { key: 'feedback',   label: 'Feedback'   },
-];
-
-const STATUS_BARS = (k: KPIs) => [
-  { stage: 'Approved',   count: k.approved,        fill: '#10b981' },
-  { stage: 'Assigned',   count: k.assigned,        fill: '#6366f1' },
-  { stage: 'Called',     count: k.called,          fill: '#3b82f6' },
-  { stage: 'Untouched',  count: k.untouched,       fill: '#f59e0b' },
-  { stage: 'Interested', count: k.interested,      fill: '#8b5cf6' },
-  { stage: 'Pending',    count: k.pendingApproval, fill: '#ef4444' },
 ];
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -90,17 +86,26 @@ const Skel = ({ className }: { className?: string }) => (
 
 // ─── KPI Card ─────────────────────────────────────────────────────────────────
 
-function KpiCard({ label, value, sub, icon, color, loading, suffix }: {
+function KpiCard({ label, value, sub, icon, color, loading, suffix, href, title }: {
   label: string; value: number; sub?: string; suffix?: string;
   icon: React.ReactNode; color: string; loading?: boolean;
+  /** Where the card drills down to. Omitted makes the card a plain stat. */
+  href?: string;
+  title?: string;
 }) {
   if (loading) return (
     <Card className="p-4 space-y-2">
       <Skel className="h-3 w-20" /><Skel className="h-7 w-14" /><Skel className="h-3 w-28" />
     </Card>
   );
-  return (
-    <Card className="relative overflow-hidden hover:shadow-md transition-shadow">
+
+  const card = (
+    <Card
+      className={cn(
+        'relative h-full overflow-hidden transition-shadow hover:shadow-md',
+        href && 'transition-all hover:-translate-y-0.5 hover:border-primary/40 hover:shadow-lg hover:shadow-primary/5',
+      )}
+    >
       <CardContent className="p-4">
         <div className="flex items-start justify-between">
           <div className="space-y-0.5 flex-1 min-w-0">
@@ -112,8 +117,20 @@ function KpiCard({ label, value, sub, icon, color, loading, suffix }: {
           </div>
           <div className={cn('p-2 rounded-xl shrink-0 ml-2', color)}>{icon}</div>
         </div>
+        {href && (
+          <ArrowUpRight className="pointer-events-none absolute bottom-2 right-2 h-3.5 w-3.5 text-muted-foreground/30" />
+        )}
       </CardContent>
     </Card>
+  );
+
+  // A plain stat stays a plain stat — no pointer, no hover lift — so nothing
+  // invites a click that would go nowhere useful.
+  if (!href) return card;
+  return (
+    <Link href={href} title={title} className="block focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-xl">
+      {card}
+    </Link>
   );
 }
 
@@ -277,6 +294,7 @@ export default function PerformancePage() {
   const [teamId,   setTeamId]   = useState('');
   const [pivotDim, setPivotDim] = useState<GroupBy>('counsellor');
 
+
   const { data, isLoading, isFetching, refetch } = useQuery<SummaryData>({
     queryKey: ['analytics-summary', from, to, teamId],
     queryFn: () => {
@@ -289,22 +307,57 @@ export default function PerformancePage() {
   });
 
   const kpis     = data?.kpis;
-  const funnel   = data?.funnel            ?? [];
   const fbDist   = data?.feedbackDistribution ?? [];
   const timeline = data?.timeline          ?? [];
-  const teams    = data?.teams             ?? [];
+  // Memoised: the `?? []` fallback is a new array each render, which would
+  // rebuild leadsHref (and every card's href) on every render for nothing.
+  const teams = useMemo(() => data?.teams ?? [], [data?.teams]);
+  /**
+   * Builds the All Leads link behind a card: this page's own filters, plus
+   * whatever narrows it to that card's number.
+   *
+   * The date range carries over as the lead-created range, which is what it
+   * means here. The team becomes a TL filter because that is the control All
+   * Leads has — this page narrows on Lead.teamId, All Leads on the team's
+   * leader, and since no TL leads two teams the two select the same rows.
+   */
+  const leadsHref = useCallback(
+    (extra?: Record<string, string>) => {
+      const p = new URLSearchParams();
+      if (from) p.set('dateFrom', from);
+      if (to) p.set('dateTo', to);
+      const tl = teamId ? teams.find((t) => t.id === teamId)?.teamLeadId : null;
+      if (tl) p.set('tlId', tl);
+      for (const [k, v] of Object.entries(extra ?? {})) p.set(k, v);
+      const q = p.toString();
+      return q ? `/dashboard/leads?${q}` : '/dashboard/leads';
+    },
+    [from, to, teamId, teams],
+  );
 
-  const funnelBase = funnel[0]?.count ?? 1;
 
   const exportSummary = useCallback(() => {
     if (!kpis) return;
+    // The nine cards first, in the order they appear, so the file reads like
+    // the screen. The pipeline figures below them no longer appear anywhere on
+    // the page, but they stay in the export: they are the approval and
+    // conversion counts someone downloading a summary still needs.
     const rows = [
       ['Metric','Value'],
-      ['Total Leads', kpis.totalLeads], ['Pending', kpis.pendingApproval],
-      ['Approved', kpis.approved], ['Assigned', kpis.assigned],
+      ['Total Leads', kpis.totalLeads],
+      ['Assigned Leads', kpis.assigned],
+      ['Applications', kpis.applications],
+      ['Admissions', kpis.admissions],
+      ['Connected Leads', kpis.connectedLeads],
+      ['Untouched Leads', kpis.untouched],
+      ['Hot Leads', kpis.hotLeads],
+      ['Warm Leads', kpis.warmLeads],
+      ['Talktime (min)', kpis.talktimeMinutes],
+      ['—', ''],
+      ['Pending', kpis.pendingApproval], ['Approved', kpis.approved],
       ['Unassigned', kpis.unassigned], ['Called', kpis.called],
-      ['Untouched', kpis.untouched], ['Feedbacks', kpis.totalFeedbacks],
-      ['Interested', kpis.interested], ['Conversion Rate', kpis.conversionRate + '%'],
+      ['Feedbacks', kpis.totalFeedbacks], ['Interested', kpis.interested],
+      ['Conversion Rate', kpis.conversionRate + '%'],
     ];
     const blob = new Blob([rows.map((r) => r.join(',')).join('\n')], { type: 'text/csv' });
     const url  = URL.createObjectURL(blob);
@@ -322,7 +375,7 @@ export default function PerformancePage() {
         <div>
           <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
             <BarChart3 className="h-6 w-6 text-primary" />
-            Reports &amp; Performance
+            Performance Analysis
           </h1>
           <p className="text-sm text-muted-foreground mt-0.5">
             Full pipeline visibility — uploads, assignments, call activity &amp; conversion
@@ -357,73 +410,80 @@ export default function PerformancePage() {
       </div>
 
       {/* ── KPI Cards ──────────────────────────────────────────────────────── */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
-        <KpiCard loading={isLoading} label="Total Uploaded"    value={kpis?.totalLeads ?? 0}
-          icon={<Users         className="h-4 w-4 text-indigo-600 dark:text-indigo-400" />} color="bg-indigo-100 dark:bg-indigo-900/40" />
-        <KpiCard loading={isLoading} label="Pending Approval"  value={kpis?.pendingApproval ?? 0}
-          sub={kpis ? `${pct(kpis.pendingApproval, kpis.totalLeads)}% of total` : undefined}
-          icon={<Clock         className="h-4 w-4 text-amber-600  dark:text-amber-400"  />} color="bg-amber-100  dark:bg-amber-900/40"  />
-        <KpiCard loading={isLoading} label="Approved"          value={kpis?.approved ?? 0}
-          sub={kpis ? `${pct(kpis.approved, kpis.totalLeads)}% of total` : undefined}
-          icon={<UserCheck     className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />} color="bg-emerald-100 dark:bg-emerald-900/40" />
-        <KpiCard loading={isLoading} label="Assigned"          value={kpis?.assigned ?? 0}
+      {/*
+        Every card drills into the rows behind it. All Leads lists APPROVED and
+        ASSIGNED leads only, so Total Leads is the one figure whose linked page
+        shows fewer rows than the card — its sub-line names the gap rather than
+        letting it look like a miscount.
+      */}
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <KpiCard loading={isLoading} label="Total Leads" value={kpis?.totalLeads ?? 0}
+          sub={kpis && kpis.totalLeads > kpis.assigned
+            ? `${fmt(kpis.totalLeads - kpis.assigned)} not on All Leads yet`
+            : undefined}
+          href={leadsHref()}
+          title="Every lead in this period. All Leads lists the approved, assigned ones."
+          icon={<Users className="h-4 w-4 text-indigo-600 dark:text-indigo-400" />} color="bg-indigo-100 dark:bg-indigo-900/40" />
+
+        <KpiCard loading={isLoading} label="Assigned Leads" value={kpis?.assigned ?? 0}
           sub={kpis ? `${pct(kpis.assigned, kpis.approved)}% of approved` : undefined}
-          icon={<UserCheck     className="h-4 w-4 text-blue-600    dark:text-blue-400"    />} color="bg-blue-100    dark:bg-blue-900/40"    />
-        <KpiCard loading={isLoading} label="Unassigned"        value={kpis?.unassigned ?? 0}
-          sub={kpis ? `${pct(kpis.unassigned, kpis.approved)}% of approved` : undefined}
-          icon={<UserX         className="h-4 w-4 text-rose-600    dark:text-rose-400"    />} color="bg-rose-100    dark:bg-rose-900/40"    />
-        <KpiCard loading={isLoading} label="Called"            value={kpis?.called ?? 0}
-          sub={kpis ? `${pct(kpis.called, kpis.assigned)}% of assigned` : undefined}
-          icon={<PhoneCall     className="h-4 w-4 text-teal-600    dark:text-teal-400"    />} color="bg-teal-100    dark:bg-teal-900/40"    />
-        <KpiCard loading={isLoading} label="Untouched"         value={kpis?.untouched ?? 0}
-          sub={kpis ? `${pct(kpis.untouched, kpis.assigned)}% of assigned` : undefined}
-          icon={<UserX         className="h-4 w-4 text-orange-600  dark:text-orange-400"  />} color="bg-orange-100  dark:bg-orange-900/40"  />
-        <KpiCard loading={isLoading} label="Total Feedbacks"   value={kpis?.totalFeedbacks ?? 0}
-          icon={<MessageSquare className="h-4 w-4 text-violet-600  dark:text-violet-400"  />} color="bg-violet-100  dark:bg-violet-900/40"  />
-        <KpiCard loading={isLoading} label="Interested"        value={kpis?.interested ?? 0}
-          sub={kpis ? `${pct(kpis.interested, kpis.called)}% of called` : undefined}
-          icon={<TrendingUp    className="h-4 w-4 text-green-600   dark:text-green-400"   />} color="bg-green-100   dark:bg-green-900/40"   />
-        <KpiCard loading={isLoading} label="Conversion Rate"   value={kpis?.conversionRate ?? 0} suffix="%"
-          icon={<ArrowUpRight  className="h-4 w-4 text-sky-600     dark:text-sky-400"     />} color="bg-sky-100     dark:bg-sky-900/40"     />
+          href={leadsHref()}
+          title="Approved leads that sit with an agent — exactly what All Leads shows"
+          icon={<UserCheck className="h-4 w-4 text-blue-600 dark:text-blue-400" />} color="bg-blue-100 dark:bg-blue-900/40" />
+
+        <KpiCard loading={isLoading} label="Applications" value={kpis?.applications ?? 0}
+          sub="approved receipts"
+          href={leadsHref({ primaryAppConfirm: 'Yes' })}
+          title="Approved APPLICATION receipts for leads in this period"
+          icon={<Receipt className="h-4 w-4 text-violet-600 dark:text-violet-400" />} color="bg-violet-100 dark:bg-violet-900/40" />
+
+        <KpiCard loading={isLoading} label="Admissions" value={kpis?.admissions ?? 0}
+          sub="approved receipts"
+          href={leadsHref({ primaryAdmConfirm: 'Yes' })}
+          title="Approved ADMISSION receipts for leads in this period"
+          icon={<GraduationCap className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />} color="bg-emerald-100 dark:bg-emerald-900/40" />
       </div>
 
-      {/* ── Funnel + Timeline ──────────────────────────────────────────────── */}
-      <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+        <KpiCard loading={isLoading} label="Connected Leads" value={kpis?.connectedLeads ?? 0}
+          sub={kpis ? `${pct(kpis.connectedLeads, kpis.assigned)}% of assigned` : undefined}
+          href={data?.links.connectedCategoryId
+            ? leadsHref({ feedbackCategoryIds: data.links.connectedCategoryId })
+            : undefined}
+          title="Leads whose latest feedback is in the Connected category"
+          icon={<PhoneCall className="h-4 w-4 text-teal-600 dark:text-teal-400" />} color="bg-teal-100 dark:bg-teal-900/40" />
 
-        {/* Funnel */}
-        <Card className="lg:col-span-2">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-base">Lead Pipeline Funnel</CardTitle>
-            <CardDescription>Conversion at each stage</CardDescription>
-          </CardHeader>
-          <CardContent className="pt-1">
-            {isLoading ? <Skel className="h-64" /> : (
-              <div className="space-y-3">
-                {funnel.map((f, i) => {
-                  const barW = funnelBase > 0 ? (f.count / funnelBase) * 100 : 0;
-                  const p    = pct(f.count, funnelBase);
-                  return (
-                    <div key={i} className="space-y-1">
-                      <div className="flex justify-between text-sm">
-                        <span className="font-medium">{f.stage}</span>
-                        <span className="tabular-nums text-muted-foreground">
-                          {fmt(f.count)}&nbsp;<span className="text-xs">({p}%)</span>
-                        </span>
-                      </div>
-                      <div className="h-7 bg-muted rounded-md overflow-hidden">
-                        <div className="h-full rounded-md flex items-center justify-end pr-2 text-white text-xs font-semibold transition-all duration-500"
-                          style={{ width: `${Math.max(barW, 5)}%`, backgroundColor: f.fill }}>
-                          {barW > 18 && p + '%'}
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
-                {funnel.length === 0 && <p className="py-8 text-center text-sm text-muted-foreground">No data</p>}
-              </div>
-            )}
-          </CardContent>
-        </Card>
+        <KpiCard loading={isLoading} label="Untouched Leads" value={kpis?.untouched ?? 0}
+          sub={kpis ? `${pct(kpis.untouched, kpis.assigned)}% of assigned` : undefined}
+          href={leadsHref({ feedbackTab: 'fresh' })}
+          title="Assigned leads with no follow-up logged yet"
+          icon={<UserX className="h-4 w-4 text-orange-600 dark:text-orange-400" />} color="bg-orange-100 dark:bg-orange-900/40" />
+
+        <KpiCard loading={isLoading} label="Hot Leads" value={kpis?.hotLeads ?? 0}
+          href={data?.links.hotOptionId ? leadsHref({ feedbackOptionIds: data.links.hotOptionId }) : undefined}
+          title="Leads whose latest feedback is Hot"
+          icon={<TrendingUp className="h-4 w-4 text-rose-600 dark:text-rose-400" />} color="bg-rose-100 dark:bg-rose-900/40" />
+
+        <KpiCard loading={isLoading} label="Warm Leads" value={kpis?.warmLeads ?? 0}
+          href={data?.links.warmOptionId ? leadsHref({ feedbackOptionIds: data.links.warmOptionId }) : undefined}
+          title="Leads whose latest feedback is Warm"
+          icon={<TrendingUp className="h-4 w-4 text-amber-600 dark:text-amber-400" />} color="bg-amber-100 dark:bg-amber-900/40" />
+
+        {/* Minutes, not leads — and counted by when the CALL happened, not when
+            the lead was created, which is what every other card here means by
+            the date range. Drills into Reports, where talk time is per agent. */}
+        <KpiCard loading={isLoading} label="Talktime" value={kpis?.talktimeMinutes ?? 0} suffix=" min"
+          sub="calls placed in this range"
+          href="/dashboard/super-admin/reports"
+          title="Total talk time from the dialer. Opens Reports, which breaks it down per agent."
+          icon={<Clock className="h-4 w-4 text-sky-600 dark:text-sky-400" />} color="bg-sky-100 dark:bg-sky-900/40" />
+      </div>
+
+      {/* ── Uploads + Feedback mix ─────────────────────────────────────────── */}
+      {/* The funnel, the status bar chart and the four rate cards used to sit
+          here. They restated what the cards above already say, so they were
+          removed rather than kept in a second voice. */}
+      <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
 
         {/* Upload Timeline */}
         <Card className="lg:col-span-3">
@@ -456,10 +516,6 @@ export default function PerformancePage() {
               )}
           </CardContent>
         </Card>
-      </div>
-
-      {/* ── Feedback Donut + Status Bars ───────────────────────────────────── */}
-      <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
 
         {/* Feedback Donut */}
         <Card className="lg:col-span-2">
@@ -497,48 +553,7 @@ export default function PerformancePage() {
               )}
           </CardContent>
         </Card>
-
-        {/* Status bar chart */}
-        <Card className="lg:col-span-3">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-base">Lead Status Breakdown</CardTitle>
-            <CardDescription>Volume at each pipeline stage</CardDescription>
-          </CardHeader>
-          <CardContent className="pt-1">
-            {isLoading || !kpis ? <Skel className="h-64" /> : (
-              <ResponsiveContainer width="100%" height={240}>
-                <BarChart data={STATUS_BARS(kpis)} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
-                  <XAxis dataKey="stage" tick={{ fontSize: 10 }} />
-                  <YAxis tick={{ fontSize: 10 }} allowDecimals={false} />
-                  <Tooltip content={<ChartTip />} />
-                  <Bar dataKey="count" name="Leads" radius={[4,4,0,0]}>
-                    {STATUS_BARS(kpis).map((s, i) => <Cell key={i} fill={s.fill} />)}
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
-            )}
-          </CardContent>
-        </Card>
       </div>
-
-      {/* ── Rate Cards ─────────────────────────────────────────────────────── */}
-      {kpis && !isLoading && (
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-          {[
-            { label: 'Approval Rate',   value: pct(kpis.approved, kpis.totalLeads),  sub: `${fmt(kpis.approved)} / ${fmt(kpis.totalLeads)}`,   color: 'text-emerald-600 dark:text-emerald-400' },
-            { label: 'Assignment Rate', value: pct(kpis.assigned, kpis.approved),    sub: `${fmt(kpis.assigned)} / ${fmt(kpis.approved)}`,     color: 'text-blue-600    dark:text-blue-400'    },
-            { label: 'Call Rate',       value: pct(kpis.called, kpis.assigned),      sub: `${fmt(kpis.called)} / ${fmt(kpis.assigned)}`,       color: 'text-teal-600    dark:text-teal-400'    },
-            { label: 'Interest Rate',   value: pct(kpis.interested, kpis.called),    sub: `${fmt(kpis.interested)} / ${fmt(kpis.called)}`,     color: 'text-violet-600  dark:text-violet-400'  },
-          ].map((s, i) => (
-            <Card key={i} className="p-4 hover:shadow-md transition-shadow">
-              <p className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">{s.label}</p>
-              <p className={cn('text-4xl font-black mt-1 tabular-nums leading-none', s.color)}>{s.value}%</p>
-              <p className="text-xs text-muted-foreground mt-1.5">{s.sub} leads</p>
-            </Card>
-          ))}
-        </div>
-      )}
 
       {/* ── Pivot Breakdown ────────────────────────────────────────────────── */}
       <Card>

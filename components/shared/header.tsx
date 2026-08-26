@@ -14,8 +14,10 @@ const PAGE_TITLES: Record<string, string> = {
   '/dashboard/super-admin/teams': 'Team Management',
   '/dashboard/super-admin/org-tree': 'Organisation Hierarchy',
   '/dashboard/super-admin/permissions': 'Permission Matrix',
-  // Matches the sidebar label and the page's own heading — all three should agree.
-  '/dashboard/super-admin/performance': 'Reports & Performance',
+  // Matches the sidebar label and the page's own heading — all three should
+  // agree. "Reports & Performance" is the sidebar GROUP holding this page and
+  // Reports; this page itself is Performance Analysis.
+  '/dashboard/super-admin/performance': 'Performance Analysis',
   '/dashboard/super-admin/activity-logs': 'Activity Logs',
   '/dashboard/super-admin/feedback-options': 'Feedback Options',
   '/dashboard/operations': 'Upload Leads',

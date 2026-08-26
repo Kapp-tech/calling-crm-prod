@@ -69,6 +69,26 @@ export async function GET(req: NextRequest) {
     });
     const interestedOptionIds = allOptions.filter((o) => isInterestedLabel(o.label)).map((o) => o.id);
 
+    // Resolved here rather than hardcoded so the cards follow Manage Feedbacks.
+    // The ids are handed to the client as well, because the cards deep-link into
+    // All Leads and its feedback filter takes ids, not labels — building the
+    // link from a label there would break the moment one is renamed.
+    const exact = (label: string) =>
+      allOptions.find((o) => o.label.trim().toLowerCase() === label)?.id ?? null;
+    const hotOptionId = exact('hot');
+    const warmOptionId = exact('warm');
+    const connectedCategory = await prisma.feedbackCategory.findFirst({
+      where: { name: { equals: 'Connected', mode: 'insensitive' } },
+      select: { id: true },
+    });
+    const connectedCategoryId = connectedCategory?.id ?? null;
+    const connectedOptionIds = connectedCategoryId
+      ? (await prisma.feedbackOption.findMany({
+          where: { categoryId: connectedCategoryId },
+          select: { id: true },
+        })).map((o) => o.id)
+      : [];
+
     const [
       totalLeads,
       pendingApproval,
@@ -80,6 +100,13 @@ export async function GET(req: NextRequest) {
       feedbackDist,
       teamStats,
       interested,
+      untouched,
+      applications,
+      admissions,
+      connectedLeads,
+      hotLeads,
+      warmLeads,
+      talktimeSeconds,
     ] = await Promise.all([
       // These three carry teamFilter too. Without it a Team Lead saw org-wide
       // Uploaded/Pending/Disapproved next to their own team's Approved and
@@ -90,7 +117,13 @@ export async function GET(req: NextRequest) {
       prisma.lead.count({ where: { status: 'DISAPPROVED', ...teamFilter, ...dateFilter } }),
       prisma.lead.count({ where: approvedBase }),
       prisma.lead.count({ where: { ...approvedBase, assignedToId: { not: null } } }),
-      prisma.lead.count({ where: { ...approvedBase, feedbacks: { some: {} } } }),
+      // Assigned-scoped, unlike before. Called is a subset of Assigned, so
+      // counting approved-but-unassigned leads that carry feedback let it drift
+      // above Assigned and made Untouched (assigned - called) come out short —
+      // one lead short on local data.
+      prisma.lead.count({
+        where: { ...approvedBase, assignedToId: { not: null }, feedbacks: { some: {} } },
+      }),
       prisma.leadFeedback.count({
         where: {
           ...(effectiveTeamId ? { lead: { teamId: effectiveTeamId } } : {}),
@@ -114,25 +147,71 @@ export async function GET(req: NextRequest) {
       prisma.team.findMany({
         where: { isActive: true, ...(effectiveTeamId ? { id: effectiveTeamId } : {}) },
         select: {
-          id: true, name: true,
+          id: true, name: true, teamLeadId: true,
           _count: { select: { leads: { where: approvedBase } } },
         },
         orderBy: { name: 'asc' },
       }),
       // Distinct LEADS with at least one interested feedback — not a count of
-      // feedback rows. The funnel below reads Uploaded -> Approved -> Assigned
-      // -> Called -> Interested, and the KPI card is captioned "% of called",
-      // so this has to be the same unit as the stages above it. Counting rows
-      // let a lead marked Interested twice appear twice, which could push the
-      // final stage above "Called" and the conversion rate past 100%.
+      // feedback rows. It is reported as a share of Called, so it has to be the
+      // same unit; counting rows let a lead marked Interested twice appear
+      // twice and could push the conversion rate past 100%.
       //
-      // Scoped by approvedBase (lead creation date) like every other funnel
-      // stage, so all five share one definition of the selected period.
+      // Scoped by approvedBase (lead creation date) like every other figure
+      // here, so they all share one definition of the selected period.
       interestedOptionIds.length > 0
         ? prisma.lead.count({
             where: { ...approvedBase, currentFeedbackOptionId: { in: interestedOptionIds } },
           })
         : Promise.resolve(0),
+
+      // Counted directly rather than as `assigned - called`. Subtraction is
+      // only right while the two share a scope, and it silently absorbs any
+      // drift between them; this is the same predicate the All Leads "Fresh"
+      // tab uses (`feedbacks: none`), so the card and the page it links to
+      // cannot disagree.
+      prisma.lead.count({
+        where: { ...approvedBase, assignedToId: { not: null }, feedbacks: { none: {} } },
+      }),
+
+      // Applications and Admissions are APPROVED RECEIPTS — money confirmed,
+      // not a counsellor's claim. Scoped by the lead being in the selected
+      // window rather than by the date paid, so this card reads like every
+      // other one here: "of the leads in this period, how many converted".
+      // The Reports page scopes the same figure by paidDate because it answers
+      // a different question ("what did the agent land this week").
+      prisma.leadReceipt.count({
+        where: { status: 'APPROVED', type: 'APPLICATION', lead: approvedBase },
+      }),
+      prisma.leadReceipt.count({
+        where: { status: 'APPROVED', type: 'ADMISSION', lead: approvedBase },
+      }),
+
+      // Leads by their CURRENT feedback, the same rule the All Leads pills use,
+      // so clicking a card lands on the identical set.
+      connectedOptionIds.length > 0
+        ? prisma.lead.count({
+            where: { ...approvedBase, currentFeedbackOptionId: { in: connectedOptionIds } },
+          })
+        : Promise.resolve(0),
+      hotOptionId
+        ? prisma.lead.count({ where: { ...approvedBase, currentFeedbackOptionId: hotOptionId } })
+        : Promise.resolve(0),
+      warmOptionId
+        ? prisma.lead.count({ where: { ...approvedBase, currentFeedbackOptionId: warmOptionId } })
+        : Promise.resolve(0),
+
+      // Talk time is the one figure the window means something different for:
+      // every other card counts leads CREATED in the range, but a call has its
+      // own clock, so this is calls PLACED in the range. Labelled on the card.
+      prisma.callLog.aggregate({
+        where: {
+          talkTimeSeconds: { gt: 0 },
+          ...(effectiveTeamId ? { agent: { teamId: effectiveTeamId } } : {}),
+          ...(from && to ? { startedAt: { gte: istStartOfDay(from), lte: istEndOfDay(to) } } : {}),
+        },
+        _sum: { talkTimeSeconds: true },
+      }),
     ]);
 
     // Timeline: last 60 days (or within date range) — daily lead creation counts
@@ -166,7 +245,6 @@ export async function GET(req: NextRequest) {
     `;
 
     const unassigned = Math.max(0, approved - assigned);
-    const untouched  = Math.max(0, assigned - called);
 
 
     // groupBy returns ids; resolve labels (including any since-deactivated
@@ -195,14 +273,17 @@ export async function GET(req: NextRequest) {
         totalFeedbacks,
         interested,
         conversionRate: assigned > 0 ? Math.round((interested / assigned) * 100) : 0,
+        applications,
+        admissions,
+        connectedLeads,
+        hotLeads,
+        warmLeads,
+        // Whole minutes, floored: a card reading "60 min" should not be 59m31s.
+        talktimeMinutes: Math.floor((talktimeSeconds._sum.talkTimeSeconds ?? 0) / 60),
       },
-      funnel: [
-        { stage: 'Uploaded',  count: totalLeads, fill: '#6366f1' },
-        { stage: 'Approved',  count: approved,   fill: '#8b5cf6' },
-        { stage: 'Assigned',  count: assigned,   fill: '#a78bfa' },
-        { stage: 'Called',    count: called,     fill: '#c4b5fd' },
-        { stage: 'Interested', count: interested, fill: '#ddd6fe' },
-      ],
+      // Everything the cards need to build an All Leads link that lands on
+      // exactly the rows the number counted.
+      links: { connectedCategoryId, hotOptionId, warmOptionId },
       feedbackDistribution: feedbackDist
         .filter((f) => f._count.id > 0)
         .map((f) => ({
@@ -216,7 +297,12 @@ export async function GET(req: NextRequest) {
         date: r.date,
         count: Number(r.count),
       })),
-      teams: teamStats.map((t) => ({ id: t.id, name: t.name, leads: t._count.leads })),
+      // teamLeadId travels with the team so a card can hand All Leads a filter
+      // it actually has: this page narrows on Lead.teamId, All Leads narrows on
+      // the team's leader. No TL leads two teams, so the translation is exact.
+      teams: teamStats.map((t) => ({
+        id: t.id, name: t.name, teamLeadId: t.teamLeadId, leads: t._count.leads,
+      })),
     });
   } catch (err) {
     console.error('[analytics/summary]', err);

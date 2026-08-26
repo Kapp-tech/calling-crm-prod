@@ -4,6 +4,7 @@ import { useState, useMemo, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useQuery } from '@tanstack/react-query';
 import { useSession } from 'next-auth/react';
+import { useSearchParams } from 'next/navigation';
 import { usePermissions } from '@/lib/usePermissions';
 import { Search, SlidersHorizontal, X, ChevronDown, Check, Minus, Download, Loader2, ListFilter } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
@@ -11,7 +12,7 @@ import { LeadDetailDrawer } from '@/components/leads/lead-detail-drawer';
 import { PaginationBar } from '@/components/shared/pagination-bar';
 import { MultiSelectFilter, type MultiSelectOption } from '@/components/shared/multi-select-filter';
 import { cn } from '@/lib/utils';
-import { joinCsvFilterValues } from '@/lib/csv-filter-value';
+import { joinCsvFilterValues, parseCsvFilterValues } from '@/lib/csv-filter-value';
 import { computeProfilingScore, profilingScoreTone } from '@/lib/lead-profiling';
 import { feedbackCategoryTone } from '@/lib/feedback-category-colors';
 
@@ -156,13 +157,44 @@ export default function AllLeadsPage() {
   const role = session?.user?.role;
 
   // Basic filters — all multi-select
+  /**
+   * Filters carried in on the URL, read once when the page mounts.
+   *
+   * This is how the Performance Analysis cards deep-link here: a card that says
+   * "Hot Leads 7" links to the same 7 rows rather than making the reader rebuild
+   * the filter by hand. Read once into the initial state rather than tracked, so
+   * the reader can change anything afterwards without the URL fighting them
+   * back.
+   */
+  const searchParams = useSearchParams();
+  const [linked] = useState(() => {
+    const one = (k: string) => searchParams.get(k) ?? '';
+    const many = (k: string) => {
+      const v = one(k);
+      return v ? v.split(',').map((x) => x.trim()).filter(Boolean) : [];
+    };
+    // Values that may themselves contain a comma go through the CSV helper,
+    // the same way the outgoing request builds them.
+    const csv = (k: string) => parseCsvFilterValues(one(k) || undefined);
+    return {
+      dateFrom: one('dateFrom'),
+      dateTo: one('dateTo'),
+      tlIds: many('tlId'),
+      primaryAppConfirms: csv('primaryAppConfirm'),
+      primaryAdmConfirms: csv('primaryAdmConfirm'),
+      feedbackOptionIds: many('feedbackOptionIds'),
+      feedbackCategoryIds: many('feedbackCategoryIds'),
+      fresh: one('feedbackTab') === 'fresh',
+    };
+  });
+
   const [search,   setSearch]   = useState('');
   const [cities,   setCities]   = useState<string[]>([]);
   const [states,   setStates]   = useState<string[]>([]);
   const [courses,  setCourses]  = useState<string[]>([]);
   const [colleges, setColleges] = useState<string[]>([]);
-  const [dateFrom,        setDateFrom]        = useState('');
-  const [dateTo,          setDateTo]          = useState('');
+  const [dateFrom,        setDateFrom]        = useState(linked.dateFrom);
+  const [dateTo,          setDateTo]          = useState(linked.dateTo);
   const [updatedDateFrom, setUpdatedDateFrom] = useState('');
   const [updatedDateTo,   setUpdatedDateTo]   = useState('');
 
@@ -172,12 +204,12 @@ export default function AllLeadsPage() {
   const [leadOrigins,  setLeadOrigins]  = useState<string[]>([]);
   const [zones,        setZones]        = useState<string[]>([]);
   const [workType,     setWorkType]     = useState<string>('');
-  const [tlIds,        setTlIds]        = useState<string[]>([]);
+  const [tlIds,        setTlIds]        = useState<string[]>(linked.tlIds);
   const [agentIds,     setAgentIds]     = useState<string[]>([]);
 
   // New advanced filter states
-  const [primaryAppConfirms,   setPrimaryAppConfirms]   = useState<string[]>([]);
-  const [primaryAdmConfirms,   setPrimaryAdmConfirms]   = useState<string[]>([]);
+  const [primaryAppConfirms,   setPrimaryAppConfirms]   = useState<string[]>(linked.primaryAppConfirms);
+  const [primaryAdmConfirms,   setPrimaryAdmConfirms]   = useState<string[]>(linked.primaryAdmConfirms);
   const [leadConfirmations,    setLeadConfirmations]    = useState<string[]>([]);
   const [leadStages,           setLeadStages]           = useState<string[]>([]);
   const [leadVerifications,    setLeadVerifications]    = useState<string[]>([]);
@@ -185,14 +217,31 @@ export default function AllLeadsPage() {
   const [dealTypes,            setDealTypes]            = useState<string[]>([]);
 
   // Dialog state — which filter keys are "active" (shown below basic filters)
-  const [activeFilters,     setActiveFilters]     = useState<string[]>([]);
+  // Seeded so a filter arriving on the URL is visible in the Advanced panel.
+  // Applying one without showing its control would leave the reader looking at
+  // a narrowed list with no way to see why, or to clear it.
+  const [activeFilters,     setActiveFilters]     = useState<string[]>(() => {
+    const keys: string[] = [];
+    if (linked.dateFrom || linked.dateTo) keys.push('createdAt');
+    if (linked.tlIds.length) keys.push('tl');
+    if (linked.primaryAppConfirms.length) keys.push('primaryAppConfirm');
+    if (linked.primaryAdmConfirms.length) keys.push('primaryAdmConfirm');
+    if (linked.feedbackOptionIds.length || linked.feedbackCategoryIds.length) keys.push('lastFeedback');
+    return keys;
+  });
   const [dialogFilters,     setDialogFilters]     = useState<string[]>([]);
   const [filterDialogOpen,  setFilterDialogOpen]  = useState(false);
 
   // UI state
-  const [feedbackMode,   setFeedbackMode]   = useState<'all' | 'fresh' | 'options'>('all');
-  const [selectedOptIds, setSelectedOptIds] = useState<string[]>([]);
-  const [selectedCategoryIds, setSelectedCategoryIds] = useState<string[]>([]);
+  const [feedbackMode,   setFeedbackMode]   = useState<'all' | 'fresh' | 'options'>(
+    linked.fresh
+      ? 'fresh'
+      : linked.feedbackOptionIds.length || linked.feedbackCategoryIds.length
+        ? 'options'
+        : 'all',
+  );
+  const [selectedOptIds, setSelectedOptIds] = useState<string[]>(linked.feedbackOptionIds);
+  const [selectedCategoryIds, setSelectedCategoryIds] = useState<string[]>(linked.feedbackCategoryIds);
   const [page,           setPage]           = useState(1);
   const [limit,          setLimit]          = useState(25);
   const [selectedLeadId, setSelectedLeadId] = useState<string | null>(null);
