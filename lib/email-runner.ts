@@ -2,7 +2,7 @@ import { EmailRule, Prisma, PrismaClient } from '@prisma/client';
 import { sendEmail, EmailAddress, isEmailConfigured } from './email';
 import {
   buildAgentEmail, buildTeamSummary, buildAgentBlocks, buildWelcomeEmail,
-  buildFeedbackSummaryEmail, buildCollegeWiseEmail,
+  buildFeedbackSummaryEmail, buildCollegeWiseEmail, buildAgentWiseEmail,
 } from './email-reports';
 import { isRuleDue, periodKeyFor, reportWindowFor } from './email-schedule';
 import { subjectFor } from './email-subjects';
@@ -162,15 +162,18 @@ export async function runEmailRule(
     }
   } else {
     /**
-     * The three management reports. They differ only in what they build and
-     * what the attachment is called, so they share one recipient-resolution and
-     * one send — three copies of this block would drift the first time one was
-     * fixed.
+     * The four management reports. They differ only in what they build and what
+     * the attachment is called, so they share one recipient-resolution and one
+     * send — four copies of this block would drift the first time one was fixed.
      *
      * Feedback summary and College-wise count every follow-up in the window
      * whoever logged it when the rule is org-wide, exactly as the Reports page
      * does; a TL-scoped rule narrows to that TL's agents. `scopeFor` returns the
      * agent scope, so an unscoped rule passes `{}` to mean everyone.
+     *
+     * Agent wise and Team summary are per-agent tables, so they always take the
+     * agent scope — "everyone" there means every active agent, not every
+     * follow-up by anybody.
      */
     const wholeOrg = !rule.scopeTlId;
     const breakdownScope = wholeOrg ? {} : scopeFor(rule);
@@ -180,12 +183,15 @@ export async function runEmailRule(
         ? await buildFeedbackSummaryEmail(db, breakdownScope, rule.frequency, now)
         : rule.reportType === 'COLLEGE_WISE'
           ? await buildCollegeWiseEmail(db, breakdownScope, rule.frequency, now)
-          : await buildTeamSummary(db, scopeFor(rule), rule.frequency, now);
+          : rule.reportType === 'AGENT_WISE'
+            ? await buildAgentWiseEmail(db, scopeFor(rule), rule.frequency, now)
+            : await buildTeamSummary(db, scopeFor(rule), rule.frequency, now);
 
     const csvName =
       rule.reportType === 'FEEDBACK_SUMMARY' ? 'feedback_summary'
         : rule.reportType === 'COLLEGE_WISE' ? 'college_wise'
-          : 'team_performance';
+          : rule.reportType === 'AGENT_WISE' ? 'agent_wise_report'
+            : 'team_performance';
 
     let to: EmailAddress[] = [];
     if (rule.audience === 'FIXED') to = addressesFrom(rule.toEmails);

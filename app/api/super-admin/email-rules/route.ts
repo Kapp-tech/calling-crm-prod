@@ -81,7 +81,7 @@ function validateAudience(d: z.infer<typeof ruleSchema>): string | null {
   // addressed to each agent individually. Listed rather than negated against
   // the per-person types, so a future report type has to make its own choice
   // instead of silently inheriting one.
-  const MANAGEMENT_REPORTS = ['TEAM_SUMMARY', 'FEEDBACK_SUMMARY', 'COLLEGE_WISE'];
+  const MANAGEMENT_REPORTS = ['TEAM_SUMMARY', 'FEEDBACK_SUMMARY', 'COLLEGE_WISE', 'AGENT_WISE'];
   if (MANAGEMENT_REPORTS.includes(d.reportType) && d.audience === 'EACH_AGENT') {
     return 'This report covers the whole floor, so it cannot be addressed to each agent individually.';
   }

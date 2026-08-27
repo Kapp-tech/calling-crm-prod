@@ -107,11 +107,30 @@ export async function buildAgentReport(
   const ids = agents.map((a) => a.id);
   if (ids.length === 0) return { rows: [], label: window.label };
 
-  // "Connected" / "Not Connected" are categories an admin maintains, so the
-  // split follows their configuration rather than hardcoded option labels.
+  /**
+   * THE CONNECTED / NOT CONNECTED SPLIT — read this before changing it.
+   *
+   * A lead is Not Connected when its latest feedback sits in the "Not
+   * Connected" category, or when that feedback carries no category at all.
+   * Everything else is Connected. Those two are exhaustive, so
+   * Connected + Not Connected = Dialed on every row, always.
+   *
+   * It used to match the "Connected" category by id and count everything else
+   * as a third "Other" bucket. That was wrong twice over. Categories are not
+   * just a reachability flag — an admin has also made Hot, Warm and Cold — so
+   * outcomes like "Call Back" (Warm) and "Not Interested" (Cold) landed in
+   * Other despite obviously being conversations that happened. And it produced
+   * rows reading "Dialed 2, Connected 0, Not Connected 0, Other 2", which is
+   * not a defensible thing to put in front of management.
+   *
+   * Connected therefore requires positive evidence of contact: a category that
+   * is not "Not Connected". No category at all is not evidence, so it counts as
+   * Not Connected — the direction that never flatters the figure. Those
+   * outcomes are named in the report footnote so the gap gets fixed in Manage
+   * Feedbacks rather than quietly skewing a number.
+   */
   const categories = await db.feedbackCategory.findMany({ select: { id: true, name: true } });
   const catId = (n: string) => categories.find((c) => c.name.toLowerCase() === n.toLowerCase())?.id;
-  const connectedId = catId('Connected');
   const notConnectedId = catId('Not Connected');
 
   const [callCounts, receipts, talktime] = await Promise.all([
@@ -163,8 +182,14 @@ export async function buildAgentReport(
         )
         SELECT "agentId",
                count(*)                                                       AS "dialed",
-               count(*) FILTER (WHERE "categoryId" = ${connectedId ?? ''})     AS "connected",
-               count(*) FILTER (WHERE "categoryId" = ${notConnectedId ?? ''})  AS "notConnected"
+               count(*) FILTER (
+                 WHERE "categoryId" IS NOT NULL
+                   AND "categoryId" <> ${notConnectedId ?? ''}
+               )                                                              AS "connected",
+               count(*) FILTER (
+                 WHERE "categoryId" IS NULL
+                    OR "categoryId" = ${notConnectedId ?? ''}
+               )                                                              AS "notConnected"
         FROM latest
         GROUP BY 1
       `,
@@ -355,14 +380,6 @@ export interface CollegeBreakdownRow {
   dialed: number;
   connected: number;
   notConnected: number;
-  /**
-   * Leads whose latest feedback sits in neither the Connected nor the Not
-   * Connected category — an admin is free to add more categories in Manage
-   * Feedbacks, and without this column those leads would be counted in Dialed
-   * but appear in none of the splits, so the row would silently fail to add up.
-   * Zero on a two-category setup, which is how production is configured today.
-   */
-  other: number;
   /** Connected as a share of Dialed, whole per cent. Null when nothing was worked. */
   connectedPct: number | null;
   /** Per feedback option, keyed by label. Absent keys are zero. */
@@ -373,6 +390,13 @@ export interface CollegeBreakdown {
   label: string;
   /** Every outcome that occurred, most common first — the columns on offer. */
   availableOutcomes: string[];
+  /**
+   * Outcomes that occurred in this window with no feedback category set, so
+   * nothing says whether the call was answered. They are counted as Not
+   * Connected and named here so the report can say so rather than fold them in
+   * silently. Empty on a properly configured system.
+   */
+  uncategorisedOutcomes: string[];
   rows: CollegeBreakdownRow[];
   totals: Omit<CollegeBreakdownRow, 'college'>;
 }
@@ -387,8 +411,9 @@ const NO_COLLEGE = '(No college set)';
  *
  * Identical counting rule — one lead, once, under its latest follow-up in the
  * window — so the Dialed column totals to exactly the same number the feedback
- * summary reports, and Connected + Not Connected adds back to Dialed on every
- * row. Two tables from one definition rather than two definitions that drift.
+ * summary reports. Connected and Not Connected are exhaustive, so they add back
+ * to Dialed on every row; there is no third bucket and no way for a row to fail
+ * to add up. Two tables from one definition rather than two that drift.
  */
 export async function buildCollegeBreakdown(
   db: PrismaClient,
@@ -402,8 +427,9 @@ export async function buildCollegeBreakdown(
   const empty: CollegeBreakdown = {
     label: window.label,
     availableOutcomes: [],
+    uncategorisedOutcomes: [],
     rows: [],
-    totals: { dialed: 0, connected: 0, notConnected: 0, other: 0, connectedPct: null, outcomes: {} },
+    totals: { dialed: 0, connected: 0, notConnected: 0, connectedPct: null, outcomes: {} },
   };
 
   const agents = await db.user.findMany({ where: agentWhere, select: { id: true } });
@@ -435,6 +461,7 @@ export async function buildCollegeBreakdown(
 
   const byCollege = new Map<string, CollegeBreakdownRow>();
   const outcomeTotals = new Map<string, number>();
+  const uncategorised = new Set<string>();
 
   for (const r of raw) {
     const college = r.college ?? NO_COLLEGE;
@@ -443,16 +470,19 @@ export async function buildCollegeBreakdown(
 
     let row = byCollege.get(college);
     if (!row) {
-      row = { college, dialed: 0, connected: 0, notConnected: 0, other: 0, connectedPct: null, outcomes: {} };
+      row = { college, dialed: 0, connected: 0, notConnected: 0, connectedPct: null, outcomes: {} };
       byCollege.set(college, row);
     }
     row.dialed += n;
-    // Matched case-insensitively so a category renamed "connected" still lands
-    // in the right column rather than silently falling out of both.
-    const cat = (r.category ?? '').toLowerCase();
-    if (cat === 'connected') row.connected += n;
-    else if (cat === 'not connected') row.notConnected += n;
-    else row.other += n;
+    // The same rule buildAgentReport uses — see the long note there. Not
+    // Connected is the category, matched case-insensitively so a rename to
+    // "not connected" still lands right; no category at all is not evidence of
+    // contact, so it counts as not connected too. Exhaustive by construction,
+    // which is what makes the row add up.
+    const cat = (r.category ?? '').trim().toLowerCase();
+    if (cat === '') uncategorised.add(label);
+    if (cat === '' || cat === 'not connected') row.notConnected += n;
+    else row.connected += n;
     row.outcomes[label] = (row.outcomes[label] ?? 0) + n;
     outcomeTotals.set(label, (outcomeTotals.get(label) ?? 0) + n);
   }
@@ -468,11 +498,10 @@ export async function buildCollegeBreakdown(
       acc.dialed += r.dialed;
       acc.connected += r.connected;
       acc.notConnected += r.notConnected;
-      acc.other += r.other;
       for (const [k, v] of Object.entries(r.outcomes)) acc.outcomes[k] = (acc.outcomes[k] ?? 0) + v;
       return acc;
     },
-    { dialed: 0, connected: 0, notConnected: 0, other: 0, connectedPct: null as number | null, outcomes: {} as Record<string, number> },
+    { dialed: 0, connected: 0, notConnected: 0, connectedPct: null as number | null, outcomes: {} as Record<string, number> },
   );
   totals.connectedPct = pct(totals.connected, totals.dialed);
 
@@ -481,6 +510,7 @@ export async function buildCollegeBreakdown(
     availableOutcomes: Array.from(outcomeTotals.entries())
       .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
       .map(([label]) => label),
+    uncategorisedOutcomes: Array.from(uncategorised).sort((a, b) => a.localeCompare(b)),
     rows,
     totals,
   };

@@ -175,6 +175,59 @@ export function kpiPeriodRange(period: KpiPeriod, now = new Date()): { from: Dat
   };
 }
 
+/**
+ * A snapshot source answers "how many right now" and ignores the window
+ * entirely, so its target must NOT scale with the days a custom range covers —
+ * multiplying "2 hot leads on your desk" by a fortnight asks for 28 and can
+ * never be met.
+ */
+export function isSnapshotSource(source: KpiSource): boolean {
+  return KPI_SOURCES.find((s) => s.key === source)?.snapshot === true;
+}
+
+/**
+ * An explicit window, for when the four named periods are not what is being
+ * asked for. Anything that takes a `KpiPeriod` takes one of these instead.
+ */
+export interface KpiWindow {
+  from: Date;
+  to: Date;
+}
+
+/**
+ * A custom range guards against a query that scans years of follow-ups for
+ * every agent and every KPI at once. A year is well past any review anyone
+ * runs off this page.
+ */
+export const MAX_CUSTOM_RANGE_DAYS = 366;
+
+const IST_DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * A range between two IST calendar dates, inclusive of both ends.
+ *
+ * `days` is the count of IST calendar days it spans — 1 for a single date, not
+ * 0 — because it is what a per-day target gets multiplied by. It is derived
+ * from the two IST midnights rather than from `to - from`, so it stays a whole
+ * number instead of coming out as 6.9999 across a DST-free but float-divided
+ * span.
+ *
+ * The dates are swapped if they arrive backwards; a range is a range.
+ */
+export function kpiCustomRange(fromKey: string, toKey: string): KpiWindow & { label: string; days: number } {
+  const [a, b] = fromKey <= toKey ? [fromKey, toKey] : [toKey, fromKey];
+  const from = istStartOfDay(a);
+  const days = Math.round((istStartOfDay(b).getTime() - from.getTime()) / IST_DAY_MS) + 1;
+  return { from, to: istEndOfDay(b), days, label: a === b ? istDayLabel(a) : `${istDayLabel(a)} – ${istDayLabel(b)}` };
+}
+
+/** "14 Aug 2026" — the range label reads as a date, not as an ISO key. */
+function istDayLabel(dayKey: string): string {
+  return new Date(`${dayKey}T00:00:00.000Z`).toLocaleDateString('en-GB', {
+    day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC',
+  });
+}
+
 /** The subset of a definition this evaluator needs. */
 export interface KpiDefinitionLike {
   id: string;
@@ -211,10 +264,10 @@ export async function computeKpiActual(
   db: PrismaClient | Prisma.TransactionClient,
   def: KpiDefinitionLike,
   userId: string,
-  period: KpiPeriod,
+  period: KpiPeriod | KpiWindow,
   now = new Date(),
 ): Promise<number | null> {
-  const { from, to } = kpiPeriodRange(period, now);
+  const { from, to } = typeof period === 'string' ? kpiPeriodRange(period, now) : period;
   const inPeriod = { gte: from, lte: to };
 
   switch (def.source) {

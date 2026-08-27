@@ -22,7 +22,8 @@ interface Address { emailid: string; name?: string }
 interface Rule {
   id: string;
   name: string;
-  reportType: 'AGENT_PERFORMANCE' | 'TEAM_SUMMARY' | 'WELCOME' | 'FEEDBACK_SUMMARY' | 'COLLEGE_WISE';
+  reportType: 'AGENT_PERFORMANCE' | 'TEAM_SUMMARY' | 'WELCOME' | 'FEEDBACK_SUMMARY'
+    | 'COLLEGE_WISE' | 'AGENT_WISE';
   /** Blank uses the report's own subject — see DEFAULT_EMAIL_SUBJECTS. */
   subject: string | null;
   frequency: 'DAILY' | 'WEEKLY' | 'MONTHLY' | 'QUARTERLY';
@@ -62,11 +63,14 @@ const REPORT_LABEL: Record<Rule['reportType'], string> = {
   TEAM_SUMMARY: 'Team summary — one email listing everyone',
   WELCOME: 'Welcome email — login details and links',
   FEEDBACK_SUMMARY: 'Feedback summary — leads by outcome, with the university count',
+  AGENT_WISE: 'Agent wise report — the KPI scoreboard, every agent in one file',
   COLLEGE_WISE: 'University / College wise — the same leads split by college',
 };
 
 /** Reports that cover the whole floor rather than one person. */
-const MANAGEMENT_REPORTS: Rule['reportType'][] = ['TEAM_SUMMARY', 'FEEDBACK_SUMMARY', 'COLLEGE_WISE'];
+const MANAGEMENT_REPORTS: Rule['reportType'][] = [
+  'TEAM_SUMMARY', 'FEEDBACK_SUMMARY', 'COLLEGE_WISE', 'AGENT_WISE',
+];
 
 const ROLES = ['SUPER_ADMIN', 'REPORTS', 'OPERATIONS', 'COUNSELLING_TL'];
 const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
@@ -383,6 +387,7 @@ function EmailAutomationContent() {
                     <option value="AGENT_PERFORMANCE">{REPORT_LABEL.AGENT_PERFORMANCE}</option>
                     <option value="FEEDBACK_SUMMARY">{REPORT_LABEL.FEEDBACK_SUMMARY}</option>
                     <option value="COLLEGE_WISE">{REPORT_LABEL.COLLEGE_WISE}</option>
+                    <option value="AGENT_WISE">{REPORT_LABEL.AGENT_WISE}</option>
                     <option value="WELCOME">{REPORT_LABEL.WELCOME}</option>
                   </select>
                 </div>

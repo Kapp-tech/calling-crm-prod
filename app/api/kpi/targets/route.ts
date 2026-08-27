@@ -7,6 +7,7 @@ import { prisma } from '@/lib/prisma';
 import { logActivity } from '@/lib/permissions';
 import {
   KPI_SOURCES, KPI_PERIODS, computeKpiActual, kpiPeriodRange, seedDefaultKpisIfEmpty, kpiScore,
+  kpiCustomRange, MAX_CUSTOM_RANGE_DAYS, isSnapshotSource,
 } from '@/lib/kpi';
 
 /**
@@ -35,12 +36,28 @@ async function agentScope(viewer: { id: string; role: string }): Promise<Prisma.
 }
 
 const periodParam = z.nativeEnum(KpiPeriod).catch('DAILY' as KpiPeriod);
+/** An IST calendar date, the form both the date inputs and istDayKey use. */
+const dayKeyParam = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 
 export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions);
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-  const period = periodParam.parse(new URL(req.url).searchParams.get('period') ?? 'DAILY');
+  const params = new URL(req.url).searchParams;
+  const period = periodParam.parse(params.get('period') ?? 'DAILY');
+
+  // A custom range overrides the named period. Both dates must parse — half a
+  // range is treated as none rather than as "from here to whenever", which
+  // would quietly report a different window than the one on screen.
+  const fromKey = dayKeyParam.safeParse(params.get('from') ?? '');
+  const toKey = dayKeyParam.safeParse(params.get('to') ?? '');
+  const custom = fromKey.success && toKey.success ? kpiCustomRange(fromKey.data, toKey.data) : null;
+  if (custom && custom.days > MAX_CUSTOM_RANGE_DAYS) {
+    return NextResponse.json(
+      { error: `That range covers ${custom.days} days. Pick ${MAX_CUSTOM_RANGE_DAYS} days or fewer.` },
+      { status: 400 },
+    );
+  }
 
   try {
     // First visit by an admin populates the defaults so the page is never empty.
@@ -83,24 +100,43 @@ export async function GET(req: NextRequest) {
         })
       : [];
 
-    // The score a full house is worth in this period — the denominator every
-    // agent's total is read against. Only scored KPIs (points set) count.
+    // A custom range has no target of its own — targets are stored per named
+    // period — so it is measured against the DAILY target multiplied by the days
+    // it covers: 300 dialed calls a day over a week is a target of 2,100. Every
+    // calendar day counts, Sundays included, so a range spanning a week-off sets
+    // a higher bar than the days actually worked.
+    //
+    // Points are NOT scaled. They are the weight of the KPI, not a quantity of
+    // work, so the scoreboard stays out of the same 40 whatever window is shown
+    // and a week can be compared with a day.
+    const basePeriod: KpiPeriod = custom ? 'DAILY' : period;
     const pointsFor = (d: (typeof definitions)[number]) =>
-      d.targets.find((t) => t.period === period)?.points ?? null;
-    const targetFor = (d: (typeof definitions)[number]) =>
-      d.targets.find((t) => t.period === period)?.target ?? null;
+      d.targets.find((t) => t.period === basePeriod)?.points ?? null;
+    const baseTargetFor = (d: (typeof definitions)[number]) =>
+      d.targets.find((t) => t.period === basePeriod)?.target ?? null;
+    const targetFor = (d: (typeof definitions)[number]) => {
+      const base = baseTargetFor(d);
+      if (base == null) return null;
+      // A snapshot KPI is a live count, not an accumulation, so a longer range
+      // does not raise what is being asked for.
+      return custom && !isSnapshotSource(d.source) ? base * custom.days : base;
+    };
+
+    // The score a full house is worth in this window — the denominator every
+    // agent's total is read against. Only scored KPIs (points set) count.
     const maxScore = definitions.reduce((sum, d) => {
       const pts = pointsFor(d);
       return sum + (pts != null && targetFor(d) != null ? pts : 0);
     }, 0);
 
-    // Achievement for the selected period only — computing all four for every
-    // agent would be four times the queries for numbers that are not on screen.
+    // Achievement for the selected window only — computing all four periods for
+    // every agent would be four times the queries for numbers that are not on
+    // screen.
     const achievement = await Promise.all(
       agents.map(async (a) => {
         const pairs = await Promise.all(
           definitions.map(
-            async (d) => [d.id, await computeKpiActual(prisma, d, a.id, period, now)] as const,
+            async (d) => [d.id, await computeKpiActual(prisma, d, a.id, custom ?? period, now)] as const,
           ),
         );
         const actuals = Object.fromEntries(pairs);
@@ -148,6 +184,16 @@ export async function GET(req: NextRequest) {
       periods: KPI_PERIODS,
       ranges,
       period,
+      custom: custom ? { days: custom.days, label: custom.label } : null,
+      // The targets and points the table is actually measured against, resolved
+      // here rather than in the browser so the table, the header and the CSV
+      // cannot disagree about a scaled number. `base` is the per-day figure the
+      // scaling came from, so the page can show its working.
+      resolved: {
+        targets: Object.fromEntries(definitions.map((d) => [d.id, targetFor(d)])),
+        points: Object.fromEntries(definitions.map((d) => [d.id, pointsFor(d)])),
+        base: Object.fromEntries(definitions.map((d) => [d.id, baseTargetFor(d)])),
+      },
       achievement,
       maxScore,
       choices: { categories, options, leadStages: stages.map((s) => s.value) },

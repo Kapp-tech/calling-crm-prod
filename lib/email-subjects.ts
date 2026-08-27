@@ -14,6 +14,7 @@ export const DEFAULT_EMAIL_SUBJECTS: Record<string, string> = {
   AGENT_PERFORMANCE: 'Your performance',
   FEEDBACK_SUMMARY: 'Feedback summary',
   COLLEGE_WISE: 'University / College wise',
+  AGENT_WISE: 'Agent wise report',
   WELCOME: 'Welcome to the Counselling CRM',
 };
 

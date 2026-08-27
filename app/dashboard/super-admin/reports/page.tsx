@@ -3,11 +3,11 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useSession } from 'next-auth/react';
-import { BarChart3, Loader2, Download, Users, Info, GraduationCap, Building2 } from 'lucide-react';
+import { BarChart3, Loader2, Download, Users, Info, GraduationCap, Building2, AlertTriangle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { MultiSelectFilter } from '@/components/shared/multi-select-filter';
 import { cn } from '@/lib/utils';
-import { istDayKey } from '@/lib/ist-time';
+import { istDayKey, formatSheetDate } from '@/lib/ist-time';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -36,12 +36,14 @@ interface ReportResponse {
   collegeBreakdown: {
     label: string;
     availableOutcomes: string[];
+    /** Outcomes with no feedback category — counted as Not Connected, named so. */
+    uncategorisedOutcomes: string[];
     rows: {
-      college: string; dialed: number; connected: number; notConnected: number; other: number;
+      college: string; dialed: number; connected: number; notConnected: number;
       connectedPct: number | null; outcomes: Record<string, number>;
     }[];
     totals: {
-      dialed: number; connected: number; notConnected: number; other: number;
+      dialed: number; connected: number; notConnected: number;
       connectedPct: number | null; outcomes: Record<string, number>;
     };
   };
@@ -75,8 +77,6 @@ function categoryTone(category: string | null): string {
  * them exist the report falls back to the busiest outcomes, so it is never
  * blank for an organisation using different labels.
  */
-const DEFAULT_OUTCOME_COLUMNS = ['Walk-In', 'Application Done', 'Admission Done', 'Cold', 'Interested'];
-
 function pctTone(pct: number | null) {
   if (pct === null) return 'text-muted-foreground';
   if (pct >= 100) return 'text-emerald-600 dark:text-emerald-400';
@@ -181,15 +181,20 @@ export default function ReportsPage() {
     () => data?.collegeBreakdown.availableOutcomes ?? [],
     [data?.collegeBreakdown.availableOutcomes],
   );
+  /**
+   * Every outcome that occurred, ordered by how often it was a lead's *last*
+   * feedback — the biggest column first.
+   *
+   * This used to default to five hand-picked outcomes, which meant the table
+   * quietly omitted the rest and put the five in an order that had nothing to
+   * do with the data. Narrowing with the picker now keeps the by-count order
+   * rather than the order the boxes happened to be ticked in.
+   */
   const shownOutcomes = useMemo(() => {
-    if (outcomeCols) return outcomeCols.filter((o) => available.includes(o));
-    const preferred = DEFAULT_OUTCOME_COLUMNS.filter((o) => available.includes(o));
-    return preferred.length > 0 ? preferred : available.slice(0, 5);
+    if (!outcomeCols) return available;
+    const picked = new Set(outcomeCols);
+    return available.filter((o) => picked.has(o));
   }, [outcomeCols, available]);
-
-  // Only surfaced when some lead actually landed outside both categories, so a
-  // normal two-category setup never sees an always-zero column.
-  const showOther = (data?.collegeBreakdown.totals.other ?? 0) > 0;
 
   function exportCollegeCsv() {
     const cb = data?.collegeBreakdown;
@@ -197,17 +202,17 @@ export default function ReportsPage() {
     const esc = (v: unknown) => `"${String(v ?? '').replace(/"/g, '""')}"`;
     const head = [
       'University Name', 'Dialed', 'Connected', 'Connected %', 'Not Connected',
-      ...(showOther ? ['Other'] : []), ...shownOutcomes,
+      ...shownOutcomes,
     ];
     const line = (name: string, r: typeof cb.totals) => [
       name, r.dialed, r.connected, r.connectedPct === null ? '' : `${r.connectedPct}%`, r.notConnected,
-      ...(showOther ? [r.other] : []),
       ...shownOutcomes.map((o) => r.outcomes[o] ?? 0),
     ];
     const lines = [
+      // The date banner sits above the header row, matching both the layout on
+      // screen and the sheet this replaces.
+      line(formatSheetDate(cb.label), cb.totals),
       head,
-      // Totals first, matching the layout on screen and in the sheet.
-      line(cb.label, cb.totals),
       ...cb.rows.map((r) => line(r.college, r)),
     ].map((cells) => cells.map(esc).join(','));
     const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
@@ -508,16 +513,13 @@ export default function ReportsPage() {
                   {/* Totals sit above the rows, as they do in the sheet this replaces —
                       the headline is read first and the detail is the evidence for it. */}
                   <tr className="bg-amber-500/15 font-bold">
-                    <th className="px-3 py-2.5 text-left whitespace-nowrap">{data.collegeBreakdown.label}</th>
+                    <th className="px-3 py-2.5 text-left whitespace-nowrap">{formatSheetDate(data.collegeBreakdown.label)}</th>
                     <th className="px-3 py-2.5 text-center tabular-nums">{data.collegeBreakdown.totals.dialed.toLocaleString('en-IN')}</th>
                     <th className="px-3 py-2.5 text-center tabular-nums">{data.collegeBreakdown.totals.connected.toLocaleString('en-IN')}</th>
                     <th className="px-3 py-2.5 text-center tabular-nums">
                       {data.collegeBreakdown.totals.connectedPct === null ? '—' : `${data.collegeBreakdown.totals.connectedPct}%`}
                     </th>
                     <th className="px-3 py-2.5 text-center tabular-nums">{data.collegeBreakdown.totals.notConnected.toLocaleString('en-IN')}</th>
-                    {showOther && (
-                      <th className="px-3 py-2.5 text-center tabular-nums">{data.collegeBreakdown.totals.other.toLocaleString('en-IN')}</th>
-                    )}
                     {shownOutcomes.map((o) => (
                       <th key={o} className="px-3 py-2.5 text-center tabular-nums">
                         {(data.collegeBreakdown.totals.outcomes[o] ?? 0).toLocaleString('en-IN')}
@@ -528,7 +530,7 @@ export default function ReportsPage() {
                     <th className="px-3 py-2 text-left font-semibold whitespace-nowrap">
                       <Building2 className="mr-1.5 inline h-3.5 w-3.5 align-text-bottom" />University Name
                     </th>
-                    {['Dialed', 'Connected', 'Connected %', 'Not Connected', ...(showOther ? ['Other'] : []), ...shownOutcomes].map((h) => (
+                    {['Dialed', 'Connected', 'Connected %', 'Not Connected', ...shownOutcomes].map((h) => (
                       <th key={h} className="px-3 py-2 text-center font-semibold whitespace-nowrap">{h}</th>
                     ))}
                   </tr>
@@ -536,7 +538,7 @@ export default function ReportsPage() {
                 <tbody>
                   {data.collegeBreakdown.rows.length === 0 ? (
                     <tr>
-                      <td colSpan={5 + (showOther ? 1 : 0) + shownOutcomes.length} className="px-4 py-10 text-center text-muted-foreground">
+                      <td colSpan={5 + shownOutcomes.length} className="px-4 py-10 text-center text-muted-foreground">
                         No follow-ups were logged in this window.
                       </td>
                     </tr>
@@ -554,11 +556,6 @@ export default function ReportsPage() {
                           {r.connectedPct === null ? '—' : `${r.connectedPct}%`}
                         </td>
                         <td className="px-3 py-2 text-center tabular-nums text-red-500">{r.notConnected.toLocaleString('en-IN')}</td>
-                        {showOther && (
-                          <td className="px-3 py-2 text-center tabular-nums text-muted-foreground" title="Latest feedback is in neither the Connected nor the Not Connected category">
-                            {r.other}
-                          </td>
-                        )}
                         {shownOutcomes.map((o) => (
                           <td key={o} className={cn('px-3 py-2 text-center tabular-nums', !r.outcomes[o] && 'text-muted-foreground/40')}>
                             {r.outcomes[o] ?? 0}
@@ -573,11 +570,24 @@ export default function ReportsPage() {
             <p className="text-[11px] text-muted-foreground">
               <Info className="mr-1 inline h-3 w-3" />
               The same leads as the summary above, counted the same way, so Dialed totals to the
-              same number. Connected and Not Connected add back to Dialed on every row; an{' '}
-              <strong>Other</strong> column appears if a feedback category beyond those two is in
-              use, so a row can never quietly fail to add up. Pick which outcome columns to show
-              with the selector — every outcome is already loaded, so changing them is instant.
+              same number. A lead is <strong>Not Connected</strong> when its latest feedback is in
+              the Not Connected category, and <strong>Connected</strong> otherwise — the two are
+              exhaustive, so they always add back to Dialed. Outcome columns are ordered by how
+              often each was a lead&rsquo;s last feedback; narrow them with the selector, which is
+              instant because every outcome is already loaded.
             </p>
+            {/* A missing category is the one case the split cannot decide, so it
+                is said out loud rather than folded into a number. */}
+            {data.collegeBreakdown.uncategorisedOutcomes.length > 0 && (
+              <p className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-700 dark:text-amber-400">
+                <AlertTriangle className="mr-1 inline h-3 w-3" />
+                <strong>{data.collegeBreakdown.uncategorisedOutcomes.join(', ')}</strong>{' '}
+                {data.collegeBreakdown.uncategorisedOutcomes.length === 1 ? 'has' : 'have'} no
+                feedback category, so nothing says whether those calls were answered. They are
+                counted as Not Connected. Set a category in Manage Feedbacks to have them counted
+                properly.
+              </p>
+            )}
           </section>
 
           {/* ── Benchmarking: single agent only ────────────────────────── */}

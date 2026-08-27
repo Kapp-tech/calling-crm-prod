@@ -173,3 +173,19 @@ export function istShiftDays(value: string | Date, days: number): string {
 export function dayKeyAsUtcDate(dayKey: string): Date {
   return new Date(`${dayKey}T00:00:00.000Z`);
 }
+
+/**
+ * "2026-08-26" → "26/Aug/2026", the banner date the University/College sheet
+ * carries above its header row.
+ *
+ * Only a bare day key (optionally the "Today, " the email windows prefix) is
+ * rewritten. A range, "Week of …" or "Overall" is returned untouched, because
+ * there is no single date to render and mangling those into one would misstate
+ * the window the figures cover.
+ */
+export function formatSheetDate(label: string): string {
+  const m = /^(?:Today,\s*)?(\d{4})-(\d{2})-(\d{2})$/.exec(label.trim());
+  if (!m) return label;
+  const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  return `${m[3]}/${MONTHS[Number(m[2]) - 1]}/${m[1]}`;
+}

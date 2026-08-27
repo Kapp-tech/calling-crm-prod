@@ -3,7 +3,7 @@
 import { useState, useMemo, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useSession } from 'next-auth/react';
-import { Target, Save, Loader2, Info, Plus, Pencil, Trash2, Download } from 'lucide-react';
+import { Target, Save, Loader2, Info, Plus, Pencil, Trash2, Download, CalendarRange } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
@@ -12,6 +12,8 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useToast } from '@/components/ui/use-toast';
 import { cn } from '@/lib/utils';
+import { istDayKey } from '@/lib/ist-time';
+import { gradeFor } from '@/lib/kpi-grade';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -47,13 +49,22 @@ interface KpiResponse {
   periods: PeriodMeta[];
   ranges: Record<string, { label: string }>;
   period: string;
+  /** Set only when a custom range is applied; null on a named period. */
+  custom: { days: number; label: string } | null;
+  /** What the table is measured against, already scaled for a custom range. */
+  resolved: {
+    targets: Record<string, number | null>;
+    points: Record<string, number | null>;
+    /** The per-day figure a scaled target was derived from. */
+    base: Record<string, number | null>;
+  };
   achievement: {
     user: { id: string; name: string; employeeCode?: string | null };
     actuals: Record<string, number | null>;
     scores: Record<string, number | null>;
     totalScore: number;
   }[];
-  /** The score a full house is worth this period — every total's denominator. */
+  /** The score a full house is worth in this window — every total's denominator. */
   maxScore: number;
   choices: {
     categories: { id: string; name: string }[];
@@ -115,13 +126,38 @@ export default function KpiPage() {
   const { toast } = useToast();
 
   const [period, setPeriod] = useState('DAILY');
+  // The date boxes are held separately from what is applied, so typing a date
+  // does not refire the query on every keystroke.
+  const [customFrom, setCustomFrom] = useState('');
+  const [customTo, setCustomTo] = useState('');
+  const [appliedCustom, setAppliedCustom] = useState<{ from: string; to: string } | null>(null);
+  const [customOpen, setCustomOpen] = useState(false);
+
+  // Mirrors MAX_CUSTOM_RANGE_DAYS on the server. Checked here too so an
+  // over-long range is explained at the Apply button instead of coming back as
+  // a failed request.
+  const MAX_RANGE_DAYS = 366;
+  const customDays = customFrom && customTo
+    ? Math.round((Date.parse(`${customTo}T00:00:00Z`) - Date.parse(`${customFrom}T00:00:00Z`)) / 86_400_000) + 1
+    : 0;
+  const rangeTooLong = customDays > MAX_RANGE_DAYS;
   const [draft, setDraft] = useState<Record<string, string>>({});
   const [dirty, setDirty] = useState(false);
   const [editing, setEditing] = useState<typeof BLANK | null>(null);
 
-  const { data, isLoading } = useQuery<KpiResponse>({
-    queryKey: ['kpi', period],
-    queryFn: () => fetch(`/api/kpi/targets?period=${period}`).then((r) => r.json()),
+  const { data, isLoading, error } = useQuery<KpiResponse>({
+    queryKey: ['kpi', period, appliedCustom?.from ?? '', appliedCustom?.to ?? ''],
+    queryFn: async () => {
+      const qs = appliedCustom
+        ? `from=${appliedCustom.from}&to=${appliedCustom.to}`
+        : `period=${period}`;
+      const r = await fetch(`/api/kpi/targets?${qs}`);
+      const json = await r.json();
+      // A rejected range (too long) must surface, not leave the old numbers on
+      // screen under the new dates.
+      if (!r.ok) throw new Error(json?.error ?? 'Could not load KPI data.');
+      return json;
+    },
     enabled: !!session?.user?.id,
   });
 
@@ -215,8 +251,13 @@ export default function KpiPage() {
     [draft],
   );
 
-  const targetFor = (id: string) => defs.find((d) => d.id === id)?.targets[period] ?? null;
-  const pointsFor = (id: string) => defs.find((d) => d.id === id)?.points?.[period] ?? null;
+  // Resolved server-side: on a named period these are that period's stored
+  // figures, and on a custom range the target is already scaled by the days.
+  const targetFor = (id: string) => data?.resolved?.targets?.[id] ?? null;
+  const pointsFor = (id: string) => data?.resolved?.points?.[id] ?? null;
+  const baseTargetFor = (id: string) => data?.resolved?.base?.[id] ?? null;
+
+  const windowLabel = data?.custom?.label ?? data?.ranges[period]?.label ?? '';
 
   // Only these roles get the export. An agent sees their own row on this page
   // and has no reason to pull the whole team's scoreboard out of the CRM.
@@ -229,48 +270,100 @@ export default function KpiPage() {
   const showPoints = session?.user?.role !== 'COUNSELLING_AGENT';
 
   /**
-   * The scoreboard as CSV — every agent, every KPI, and how the score was
-   * reached rather than just the total. A manager questioning a number needs the
-   * actual, the target and the points to see where it came from, so each KPI
-   * contributes three columns instead of one.
+   * The Agent wise report — one row per agent, four columns per KPI
+   * (achieved / target / % / points earned) and a scoring block, under two
+   * banner rows: a Total across every agent, and a band naming each KPI's
+   * matrix.
    *
-   * Built client-side from what is already on screen, so the file always matches
-   * the period shown and cannot disagree with the table above it.
+   * Built client-side from what is already on screen, so the file always
+   * matches the window shown and cannot disagree with the table above it. That
+   * also means it follows the period toggle and the custom date range: export
+   * on Weekly and every target in the file is the weekly one.
+   *
+   * A KPI with no target contributes blanks rather than zeros — "no target set"
+   * and "achieved nothing" are different claims and a zero would make the
+   * second one on the agent's behalf.
    */
-  function exportScores() {
+  function exportAgentWise() {
     if (!data) return;
-    const head = [
-      'Agent', 'Employee Code', 'Period', 'Range',
-      ...defs.flatMap((d) => [
-        `${d.name} — achieved`,
-        `${d.name} — target`,
-        `${d.name} — points earned`,
-      ]),
-      'Total Score', 'Max Score', 'Score %',
-    ];
     const esc = (v: unknown) => `"${String(v ?? '').replace(/"/g, '""')}"`;
-    const periodLabel = periods.find((p) => p.key === period)?.label ?? period;
-    const rangeLabel = data.ranges[period]?.label ?? '';
-    const body = data.achievement.map((row) =>
-      [
-        row.user.name,
-        row.user.employeeCode ?? '',
-        periodLabel,
-        rangeLabel,
+    const periodLabel = data.custom
+      ? `Custom · ${data.custom.days} day${data.custom.days === 1 ? '' : 's'}`
+      : periods.find((p) => p.key === period)?.label ?? period;
+    const rangeLabel = windowLabel;
+    // dd/mm/yyyy, IST — the run date, which is what the sheet's Date column is.
+    const [yy, mm, dd] = istDayKey(new Date()).split('-');
+    const dateCell = `${dd}/${mm}/${yy}`;
+
+    const rows = data.achievement;
+    const pctCell = (a: number | null | undefined, t: number | null) => {
+      if (a === null || a === undefined || t === null) return '';
+      // A target of 0 is "none expected", which kpiScore already treats as met.
+      return t <= 0 ? '100%' : `${Math.round((a / t) * 100)}%`;
+    };
+    const sum = (ns: (number | null | undefined)[]) => {
+      const real = ns.filter((n): n is number => n !== null && n !== undefined);
+      return real.length === 0 ? null : Math.round(real.reduce((x, y) => x + y, 0) * 10) / 10;
+    };
+
+    // ── Row 1: the Total across every agent in scope ───────────────────────
+    const totalRow = [
+      'Total', '', '', '', '',
+      ...defs.flatMap((d) => {
+        const achieved = sum(rows.map((r) => r.actuals[d.id]));
+        const one = targetFor(d.id);
+        // Targets are per agent, so the team's is that times the headcount.
+        const target = one === null ? null : one * rows.length;
+        return [achieved ?? '', target ?? '', pctCell(achieved, target), sum(rows.map((r) => r.scores[d.id])) ?? ''];
+      }),
+      sum(rows.map((r) => r.totalScore)) ?? '',
+      data.maxScore > 0 ? data.maxScore * rows.length : '',
+      pctCell(sum(rows.map((r) => r.totalScore)), data.maxScore > 0 ? data.maxScore * rows.length : null),
+      '',
+    ];
+
+    // ── Row 2: the band naming each block ──────────────────────────────────
+    const bandRow = [
+      'Employee Details', '', '', '', '',
+      ...defs.flatMap((d) => [`${d.name} Matrix`, '', '', '']),
+      'Scoring', '', '', '',
+    ];
+
+    // ── Row 3: the column headers ──────────────────────────────────────────
+    const headRow = [
+      'Date', 'Agent', 'Employee Code', 'Period', 'Range',
+      ...defs.flatMap((d) => [
+        `${d.name} – Achieved`, `${d.name} – Target`, `${d.name} %`, `${d.name} – Points Earned`,
+      ]),
+      'Total Score', 'Max Score', 'Score %', 'Grade',
+    ];
+
+    const body = rows.map((r) => {
+      const scorePct = data.maxScore > 0 ? Math.round((r.totalScore / data.maxScore) * 100) : null;
+      return [
+        dateCell, r.user.name, r.user.employeeCode ?? '', periodLabel, rangeLabel,
         ...defs.flatMap((d) => [
-          row.actuals[d.id] ?? '',
-          targetFor(d.id) ?? '',
-          row.scores[d.id] ?? '',
+          r.actuals[d.id] ?? '', targetFor(d.id) ?? '',
+          pctCell(r.actuals[d.id], targetFor(d.id)), r.scores[d.id] ?? '',
         ]),
-        row.totalScore,
-        data.maxScore,
-        data.maxScore > 0 ? `${Math.round((row.totalScore / data.maxScore) * 100)}%` : '',
-      ].map(esc).join(','),
-    );
-    const blob = new Blob([[head.map(esc).join(','), ...body].join('\n')], { type: 'text/csv' });
+        r.totalScore,
+        data.maxScore > 0 ? data.maxScore : '',
+        scorePct === null ? '' : `${scorePct}%`,
+        gradeFor(scorePct),
+      ];
+    });
+
+    const csv = [totalRow, bandRow, headRow, ...body]
+      .map((cells) => cells.map(esc).join(','))
+      .join('\n');
+    // Leading BOM: without it Excel reads the file as Latin-1 and the en-dash in
+    // every header comes out as "â" — which is exactly what happened to the
+    // sheet this replaces.
+    const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = `kpi_scores_${periodLabel.toLowerCase()}_${(rangeLabel || 'export').replace(/\W+/g, '_')}.csv`;
+    const slug = (v: string) => v.toLowerCase().replace(/\W+/g, '_').replace(/^_|_$/g, '');
+    a.download = `agent_wise_report_${slug(periodLabel)}_${slug(rangeLabel) || 'export'}.csv`;
     a.click();
     URL.revokeObjectURL(a.href);
   }
@@ -327,7 +420,17 @@ export default function KpiPage() {
         )}
       </div>
 
-      {isLoading || !data ? (
+      {error ? (
+        <div className="rounded-xl border border-destructive/40 bg-destructive/5 px-4 py-10 text-center">
+          <p className="text-sm font-medium text-destructive">{(error as Error).message}</p>
+          {appliedCustom && (
+            <Button variant="outline" size="sm" className="mt-3 text-xs"
+              onClick={() => { setAppliedCustom(null); setCustomOpen(false); }}>
+              Back to {periods.find((p) => p.key === period)?.label ?? 'Daily'}
+            </Button>
+          )}
+        </div>
+      ) : isLoading || !data ? (
         <div className="flex justify-center py-16"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>
       ) : (
         <>
@@ -442,31 +545,70 @@ export default function KpiPage() {
           <section className="space-y-2">
             <div className="flex items-center justify-between gap-3 flex-wrap">
               <h2 className="text-sm font-semibold">
-                Agent achievement <span className="ml-1 font-normal text-muted-foreground">{data.ranges[period]?.label}</span>
+                Agent achievement <span className="ml-1 font-normal text-muted-foreground">{windowLabel}</span>
               </h2>
               <div className="flex items-center gap-2">
                 <div className="flex items-center gap-1 rounded-lg border border-border p-0.5">
                   {periods.map((p) => (
-                    <button key={p.key} onClick={() => setPeriod(p.key)}
+                    <button key={p.key}
+                      onClick={() => { setPeriod(p.key); setAppliedCustom(null); setCustomOpen(false); }}
                       className={cn('rounded-md px-3 py-1 text-xs font-medium transition-colors',
-                        period === p.key ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-muted')}>
+                        !customOpen && period === p.key ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-muted')}>
                       {p.label}
                     </button>
                   ))}
+                  <button onClick={() => setCustomOpen((v) => !v)}
+                    className={cn('flex items-center gap-1 rounded-md px-3 py-1 text-xs font-medium transition-colors',
+                      customOpen ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-muted')}>
+                    <CalendarRange className="h-3.5 w-3.5" /> Custom
+                  </button>
                 </div>
                 {canExport && (
                   <Button
                     variant="outline"
                     size="sm"
-                    onClick={exportScores}
+                    onClick={exportAgentWise}
                     disabled={data.achievement.length === 0}
                     className="gap-1.5 text-xs"
                   >
-                    <Download className="h-3.5 w-3.5" /> Export
+                    <Download className="h-3.5 w-3.5" /> Agent wise report
                   </Button>
                 )}
               </div>
             </div>
+            {customOpen && (
+              <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border/60 bg-muted/30 px-3 py-2">
+                <input
+                  type="date" value={customFrom} max={customTo || undefined}
+                  onChange={(e) => setCustomFrom(e.target.value)}
+                  className="h-8 rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
+                />
+                <span className="text-sm text-muted-foreground">to</span>
+                <input
+                  type="date" value={customTo} min={customFrom || undefined}
+                  onChange={(e) => setCustomTo(e.target.value)}
+                  className="h-8 rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
+                />
+                <Button size="sm" className="h-8 text-xs"
+                  disabled={!customFrom || !customTo || rangeTooLong}
+                  onClick={() => setAppliedCustom({ from: customFrom, to: customTo })}>
+                  Apply
+                </Button>
+                {appliedCustom && (
+                  <Button size="sm" variant="ghost" className="h-8 text-xs"
+                    onClick={() => { setAppliedCustom(null); setCustomFrom(''); setCustomTo(''); setCustomOpen(false); }}>
+                    Clear
+                  </Button>
+                )}
+                <p className={cn('text-[11px]', rangeTooLong ? 'text-destructive' : 'text-muted-foreground')}>
+                  {rangeTooLong
+                    ? `That is ${customDays.toLocaleString('en-IN')} days. Pick ${MAX_RANGE_DAYS} or fewer.`
+                    : data.custom
+                      ? `Targets are the daily target × ${data.custom.days} day${data.custom.days === 1 ? '' : 's'}, every calendar day counted, week-offs included. Live counts keep their daily target.`
+                      : 'Pick both dates, then Apply. Targets scale from the daily target.'}
+                </p>
+              </div>
+            )}
             <div className="overflow-x-auto rounded-xl border border-border/60">
               <table className="w-full min-w-[820px] text-sm">
                 <thead className="bg-muted/60">
@@ -476,11 +618,20 @@ export default function KpiPage() {
                       <th key={d.id} className="px-3 py-3 text-center font-semibold whitespace-nowrap">
                         {d.name}
                         <span className="block text-[10px] font-normal text-muted-foreground">
-                          {targetFor(d.id) === null ? 'no target' : `target ${targetFor(d.id)}`}
+                          {targetFor(d.id) === null ? 'no target' : `target ${targetFor(d.id)!.toLocaleString('en-IN')}`}
                           {/* Same weighting as the hidden config boxes — showing
                               it here would make hiding them pointless. */}
                           {showPoints && pointsFor(d.id) !== null && ` · ${pointsFor(d.id)} pts`}
                         </span>
+                        {/* A scaled target shows its working, so nobody has to
+                            guess why the number is not the one they configured. */}
+                        {data.custom && baseTargetFor(d.id) !== null && (
+                          <span className="block text-[10px] font-normal text-muted-foreground/70">
+                            {targetFor(d.id) === baseTargetFor(d.id)
+                              ? 'live count'
+                              : `${baseTargetFor(d.id)} × ${data.custom.days}d`}
+                          </span>
+                        )}
                       </th>
                     ))}
                     <th className="px-4 py-3 text-center font-semibold whitespace-nowrap">
@@ -510,7 +661,9 @@ export default function KpiPage() {
                             ) : target === null ? (
                               <span className="text-xs text-muted-foreground">{actual}</span>
                             ) : (
-                              <span className={cn('text-xs font-medium', toneFor(actual, target))}>{actual} / {target}</span>
+                              <span className={cn('text-xs font-medium', toneFor(actual, target))}>
+                                {actual.toLocaleString('en-IN')} / {target.toLocaleString('en-IN')}
+                              </span>
                             )}
                             {row.scores[d.id] !== null && row.scores[d.id] !== undefined && (
                               <span className="block text-[10px] text-muted-foreground">{row.scores[d.id]} pts</span>
