@@ -5,6 +5,7 @@ import { authOptions } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import { COLLEGE_ZONES, COLLEGE_DEAL_TYPES } from '@/lib/college-attributes';
 import { checkLandingPageUrl } from '@/lib/landing-page';
+import { applyLeadCodeMapping } from '@/lib/lead-code';
 import { DropdownType } from '@prisma/client';
 
 const VALID_TYPES = Object.values(DropdownType);
@@ -22,7 +23,28 @@ const createSchema = z.object({
   // COLLEGE only. Shape-checked below rather than here so the admin gets a
   // sentence explaining what is wrong instead of a zod field error.
   landingPageUrl:  z.string().max(1000).optional().nullable(),
+  // LEAD_CODE only. Checked against the live Data Calling Type list below
+  // rather than an enum here, because an admin maintains that list.
+  leadCodeCallingType: z.string().max(200).optional().nullable(),
 });
+
+/**
+ * A lead-code mapping may only point at a Data Calling Type that exists and is
+ * active. Without this an admin could map a code to a value CSV upload would
+ * then reject, and the two screens would quietly disagree about what is legal.
+ */
+async function checkCallingType(value: string | null | undefined): Promise<string | null> {
+  const v = value?.trim();
+  if (!v) return null;
+  const hit = await prisma.dropdownOption.findFirst({
+    where: { type: 'DATA_CALLING_TYPE', isActive: true, value: { equals: v, mode: 'insensitive' } },
+    select: { value: true },
+  });
+  if (!hit) throw new Error(`"${v}" is not an active Data Calling Type`);
+  // Stored exactly as the Data Calling Type list spells it, so the value written
+  // onto leads matches the filter list character for character.
+  return hit.value;
+}
 
 export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions);
@@ -43,7 +65,7 @@ export async function GET(req: NextRequest) {
         ...(showAll ? {} : { isActive: true }),
       },
       orderBy: [{ value: 'asc' }],
-  select: { id: true, type: true, value: true, kappCollegeId: true, collegeZone: true, collegeDealType: true, landingPageUrl: true, isActive: true, createdAt: true },
+  select: { id: true, type: true, value: true, kappCollegeId: true, collegeZone: true, collegeDealType: true, landingPageUrl: true, leadCodeCallingType: true, isActive: true, createdAt: true },
     });
     return NextResponse.json(options);
   } catch (err) {
@@ -74,6 +96,13 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: landingCheck.error }, { status: 400 });
   }
 
+  let callingType: string | null = null;
+  try {
+    callingType = await checkCallingType(parsed.data.leadCodeCallingType);
+  } catch (err) {
+    return NextResponse.json({ error: (err as Error).message }, { status: 400 });
+  }
+
   // Ensure kappCollegeId is unique within COLLEGE type
   if (parsed.data.type === 'COLLEGE' && parsed.data.kappCollegeId) {
     const existing = await prisma.dropdownOption.findFirst({
@@ -95,10 +124,17 @@ export async function POST(req: NextRequest) {
         collegeZone:     parsed.data.type === 'COLLEGE' ? (parsed.data.collegeZone || null) : null,
         collegeDealType: parsed.data.type === 'COLLEGE' ? (parsed.data.collegeDealType || null) : null,
         landingPageUrl:  parsed.data.type === 'COLLEGE' ? (parsed.data.landingPageUrl?.trim() || null) : null,
+        leadCodeCallingType: parsed.data.type === 'LEAD_CODE' ? callingType : null,
         createdBy:     session.user.id,
       },
     });
-    return NextResponse.json(option, { status: 201 });
+    // Push it onto the leads immediately: the admin's mental model is "this code
+    // is P1 now", not "new leads will be P1". The count goes back so the UI can
+    // say how many were actually changed.
+    const leadsUpdated = option.type === 'LEAD_CODE'
+      ? await applyLeadCodeMapping(prisma, option.value, callingType)
+      : 0;
+    return NextResponse.json({ ...option, leadsUpdated }, { status: 201 });
   } catch (err: unknown) {
     if ((err as { code?: string }).code === 'P2002') {
       return NextResponse.json({ error: 'This value already exists for this type' }, { status: 409 });

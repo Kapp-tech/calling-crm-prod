@@ -12,7 +12,7 @@ import {
   UserCircle, UserCheck, ClipboardList, LogOut, ChevronRight, ChevronDown,
   GitBranch, CalendarClock, X, ChevronsLeft, ChevronsRight,
   GraduationCap, Tag, Globe2, CheckSquare, ShieldCheck, Phone,
-  Megaphone, Gauge, Receipt, Layers, KeyRound, Settings, Trash2, Webhook, Search, Target, FileBarChart, Mail, Link2,} from 'lucide-react';
+  Megaphone, Gauge, Receipt, Layers, KeyRound, Settings, Trash2, Webhook, Search, Target, FileBarChart, Mail, Link2, Hash,} from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
@@ -192,6 +192,12 @@ const NAV: NavEntry[] = [
         href: '/dashboard/super-admin/manage-lead-verification',
         label: 'Lead Verification',
         icon: ShieldCheck,
+        roles: ['SUPER_ADMIN'],
+      },
+      {
+        href: '/dashboard/super-admin/manage-lead-codes',
+        label: 'LeadCode List',
+        icon: Hash,
         roles: ['SUPER_ADMIN'],
       },
       {

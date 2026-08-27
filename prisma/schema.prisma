@@ -37,6 +37,9 @@ enum LeadStatus {
 
 enum DropdownType {
   COLLEGE
+  /// A lead code (the `campaign` field on a Lead) mapped to the Data Calling
+  /// Type every lead carrying that code should show. See lib/lead-code.ts.
+  LEAD_CODE
   LEAD_TYPE
   LEAD_ORIGIN
   ZONE
@@ -639,26 +642,31 @@ model FeedbackOption {
 }
 
 model DropdownOption {
-  id              String       @id @default(cuid())
-  type            DropdownType
-  value           String
-  kappCollegeId   String? // only used when type = COLLEGE
+  id                  String       @id @default(cuid())
+  type                DropdownType
+  value               String
+  kappCollegeId       String? // only used when type = COLLEGE
   // Also COLLEGE-only, same pattern as kappCollegeId above. A lead's Zone and
   // Deal Type are properties of the college it belongs to, so they are
   // configured here once and copied onto every lead ingested for that college
   // (API and CSV) instead of being sent per lead.
-  collegeZone     String?
-  collegeDealType String?
+  collegeZone         String?
+  collegeDealType     String?
   // COLLEGE-only as well: the college's application landing page, handed to
   // students by counsellors. Stored as a template containing {{%agent%}}, which
   // is replaced with the reading agent's ID at display time so the click is
   // attributed to whoever shared it. See lib/landing-page.ts.
-  landingPageUrl  String?
-  isActive        Boolean      @default(true)
-  sortOrder       Int          @default(0)
-  createdBy       String
-  createdAt       DateTime     @default(now())
-  updatedAt       DateTime     @updatedAt
+  landingPageUrl      String?
+  /// LEAD_CODE-only: the Data Calling Type every lead with this code takes.
+  /// Holds one of the DATA_CALLING_TYPE option values rather than an id, so the
+  /// value written onto Lead.dataCallingType is the same string the filters and
+  /// the CSV export already work with.
+  leadCodeCallingType String?
+  isActive            Boolean      @default(true)
+  sortOrder           Int          @default(0)
+  createdBy           String
+  createdAt           DateTime     @default(now())
+  updatedAt           DateTime     @updatedAt
 
   creator User @relation("DropdownOptionCreator", fields: [createdBy], references: [id])
 
@@ -1057,7 +1065,6 @@ model LeadIntegrationLog {
   @@index([success])
 }
 
-
 /// One completed call, as reported by the DialShree dialer's post-call webhook.
 ///
 /// The dialer is the only source of talk time and recordings — the CRM's
@@ -1120,7 +1127,7 @@ model CallLog {
   termReason             String?
   dispositionDescription String?
   /// The dialer's own id for the lead, for cross-referencing in their system.
-  dialerLeadId String?
+  dialerLeadId           String?
 
   recordingUrl String?
 
@@ -1135,7 +1142,6 @@ model CallLog {
   @@index([startedAt])
   @@index([connected])
 }
-
 
 /// What a scheduled email contains.
 enum EmailReportType {
@@ -1184,25 +1190,29 @@ model EmailRule {
   /// would drift the moment anything about the box changed; an hour and minute
   /// in the timezone the business actually works in cannot.
   sendHour   Int
-  sendMinute Int @default(0)
+  sendMinute Int  @default(0)
   /// 1 = Monday … 7 = Sunday. Weekly rules only.
   weekday    Int?
   /// 1–28 only, so a monthly rule cannot silently skip February.
   dayOfMonth Int?
 
-  audience EmailAudience
+  audience  EmailAudience
   /// [{ emailid, name }] — used when the audience is FIXED.
-  toEmails  Json  @default("[]")
+  toEmails  Json          @default("[]")
   /// Role names, used when the audience is BY_ROLE.
   toRoles   String[]
-  ccEmails  Json  @default("[]")
+  ccEmails  Json          @default("[]")
   ccRoles   String[]
-  bccEmails Json  @default("[]")
+  bccEmails Json          @default("[]")
 
   /// Limit the report to one Team Leader's agents. Null covers everyone.
   scopeTlId String?
   scopeTl   User?   @relation("EmailRuleScopeTl", fields: [scopeTlId], references: [id], onDelete: SetNull)
 
+  /// Overrides the report's own subject line. Null means use the default from
+  /// lib/email-subjects.ts. Kept constant per rule so the mail threads — see
+  /// the THREADING note in lib/email-reports.ts.
+  subject   String?
   attachCsv Boolean @default(false)
   isActive  Boolean @default(true)
 
@@ -1216,8 +1226,8 @@ model EmailRule {
   createdBy   User   @relation("EmailRuleCreatedBy", fields: [createdById], references: [id])
 
   logs      EmailLog[]
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
 
   @@index([isActive])
 }
@@ -1238,7 +1248,7 @@ model EmailLog {
   ccEmails  String[]
   bccEmails String[]
 
-  success Boolean
+  success          Boolean
   /// The provider's own tracking id, for chasing a specific message with them.
   providerGuid     String?
   providerResponse Json?

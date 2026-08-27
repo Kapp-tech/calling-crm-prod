@@ -6,6 +6,7 @@ import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { COLLEGE_ZONES, COLLEGE_DEAL_TYPES } from '@/lib/college-attributes';
 import { checkLandingPageUrl } from '@/lib/landing-page';
+import { applyLeadCodeMapping } from '@/lib/lead-code';
 
 const updateSchema = z.object({
   value:         z.string().min(1).max(200).optional(),
@@ -15,6 +16,7 @@ const updateSchema = z.object({
   collegeZone:     z.enum(['', ...COLLEGE_ZONES]).optional().nullable(),
   collegeDealType: z.enum(['', ...COLLEGE_DEAL_TYPES]).optional().nullable(),
   landingPageUrl:  z.string().max(1000).optional().nullable(),
+  leadCodeCallingType: z.string().max(200).optional().nullable(),
   isActive:      z.boolean().optional(),
 });
 
@@ -34,7 +36,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   // "not configured" and should leave the lead's zone unset, whereas '' would be
   // copied onto every lead as a real (blank) value. No trimming needed — zod has
   // already restricted these to '' or an exact list member.
-  const { collegeZone, collegeDealType, landingPageUrl, ...rest } = parsed.data;
+  const { collegeZone, collegeDealType, landingPageUrl, leadCodeCallingType, ...rest } = parsed.data;
   const data: Prisma.DropdownOptionUpdateInput = { ...rest };
   if (collegeZone !== undefined) data.collegeZone = collegeZone || null;
   if (collegeDealType !== undefined) data.collegeDealType = collegeDealType || null;
@@ -44,12 +46,32 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     data.landingPageUrl = landingPageUrl?.trim() || null;
   }
 
+  // Same rule as on create: only an active Data Calling Type may be mapped.
+  if (leadCodeCallingType !== undefined) {
+    const v = leadCodeCallingType?.trim();
+    if (v) {
+      const hit = await prisma.dropdownOption.findFirst({
+        where: { type: 'DATA_CALLING_TYPE', isActive: true, value: { equals: v, mode: 'insensitive' } },
+        select: { value: true },
+      });
+      if (!hit) {
+        return NextResponse.json({ error: `"${v}" is not an active Data Calling Type` }, { status: 400 });
+      }
+      data.leadCodeCallingType = hit.value;
+    } else {
+      data.leadCodeCallingType = null;
+    }
+  }
+
   try {
     const option = await prisma.dropdownOption.update({
       where: { id: params.id },
       data,
     });
-    return NextResponse.json(option);
+    const leadsUpdated = option.type === 'LEAD_CODE'
+      ? await applyLeadCodeMapping(prisma, option.value, option.leadCodeCallingType)
+      : 0;
+    return NextResponse.json({ ...option, leadsUpdated });
   } catch (err: unknown) {
     if ((err as { code?: string }).code === 'P2002') {
       return NextResponse.json({ error: 'This value already exists for this type' }, { status: 409 });

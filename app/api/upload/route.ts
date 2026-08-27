@@ -3,6 +3,7 @@ import { getServerSession } from 'next-auth';
 import { z } from 'zod';
 import { authOptions } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
+import { callingTypeForIngest } from '@/lib/lead-code';
 import { hasPermission } from '@/lib/permissions';
 import { buildDropdownValidationSets, isAllowedDropdownValue } from '@/lib/dropdown-validation';
 import { Feature, DropdownType } from '@prisma/client';
@@ -70,9 +71,14 @@ export async function POST(req: NextRequest) {
     const incomingEmails = leads.map((l) => l.email.trim().toLowerCase());
 
     // ── Fetch all active dropdown options for validation ─────────────────────
-    const { sets: dropdownSets, collegeIdMap, collegeAttributeMap } = await buildDropdownValidationSets();
+    // leadCodeCallingTypeMap: lead code → Data Calling Type. A mapped code wins
+    // over whatever the CSV carried, exactly as it does when the mapping is
+    // saved. It comes off the same prebuilt object as the college attributes,
+    // so there is one loader rather than two that could drift.
+    const { sets: dropdownSets, collegeIdMap, collegeAttributeMap, leadCodeCallingTypeMap } =
+      await buildDropdownValidationSets();
     const allowed = (t: DropdownType, v: string | null | undefined) =>
-      isAllowedDropdownValue({ sets: dropdownSets, collegeIdMap, collegeAttributeMap }, t, v);
+      isAllowedDropdownValue({ sets: dropdownSets, collegeIdMap, collegeAttributeMap, leadCodeCallingTypeMap }, t, v);
 
     // ── Validate each lead against dropdown options ───────────────────────────
     type LeadInput = typeof leads[number];
@@ -110,7 +116,9 @@ export async function POST(req: NextRequest) {
       if (!allowed(DropdownType.LEAD_CONFIRMATION,  lead.lead_confirmation)) errs.push(`lead_confirmation "${lead.lead_confirmation}" is not in the allowed list`);
       if (!allowed(DropdownType.LEAD_STAGE,         lead.lead_stage))        errs.push(`lead_stage "${lead.lead_stage}" is not in the allowed list`);
       if (!allowed(DropdownType.LEAD_VERIFICATION,  lead.lead_verification)) errs.push(`lead_verification "${lead.lead_verification}" is not in the allowed list`);
-      if (!allowed(DropdownType.DATA_CALLING_TYPE,  lead.data_calling_type)) errs.push(`data_calling_type "${lead.data_calling_type}" is not in the allowed list`);
+      // data_calling_type is still accepted in the file but no longer checked or
+      // used: the lead code decides it. Rejecting a row over a column that has
+      // no effect would fail uploads for nothing.
 
 
       if (errs.length > 0) {
@@ -213,7 +221,9 @@ export async function POST(req: NextRequest) {
             leadConfirmation:          lead.lead_confirmation?.trim()           || null,
             leadStage:                 lead.lead_stage?.trim()                  || null,
             leadVerification:          lead.lead_verification?.trim()           || null,
-            dataCallingType:           lead.data_calling_type?.trim()           || null,
+            // Lead code decides this, not the CSV column: an unmapped code
+            // lands as "NA" so it is visibly waiting to be mapped.
+            dataCallingType: callingTypeForIngest(leadCodeCallingTypeMap, lead.campaign),
             dealType:   collegeAttributeMap.get((lead._kappCollegeId ?? '').toLowerCase())?.dealType ?? null,
             uploadedAt:                parseDate(lead.created_at),
             status:      'PENDING',

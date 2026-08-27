@@ -1,12 +1,14 @@
 'use client';
 
 import { useRef, useState } from 'react';
+import Papa from 'papaparse';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useSession } from 'next-auth/react';
 import {
   Plus, Pencil, Trash2, Loader2, ListChecks, Tag, ShieldCheck, Globe2,
-  GraduationCap, MapPin, PhoneCall, CheckCircle2, Layers, Inbox, Handshake, Link2,
+  GraduationCap, MapPin, PhoneCall, CheckCircle2, Layers, Inbox, Handshake, Link2, Hash,
+  Upload, FileDown, AlertTriangle,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -29,6 +31,7 @@ const TYPE_META: Record<string, { icon: React.ComponentType<{ className?: string
   LEAD_CONFIRMATION:  { icon: CheckCircle2,  color: 'text-emerald-600 dark:text-emerald-400', bg: 'bg-emerald-500/10', ring: 'from-emerald-500 to-emerald-600' },
   LEAD_STAGE:         { icon: Layers,        color: 'text-slate-600 dark:text-slate-400',    bg: 'bg-slate-500/10',   ring: 'from-slate-500 to-slate-600' },
   DEAL_TYPE:          { icon: Handshake,     color: 'text-pink-600 dark:text-pink-400',      bg: 'bg-pink-500/10',    ring: 'from-pink-500 to-pink-600' },
+  LEAD_CODE:          { icon: Hash,          color: 'text-teal-600 dark:text-teal-400',      bg: 'bg-teal-500/10',    ring: 'from-teal-500 to-teal-600' },
 };
 // Matches components/ui/input.tsx so a select sits flush with the text fields
 // above it in the same dialog.
@@ -51,8 +54,20 @@ interface DropdownOption {
   collegeZone?: string | null;
   collegeDealType?: string | null;
   landingPageUrl?: string | null;
+  leadCodeCallingType?: string | null;
   isActive: boolean;
   createdAt: string;
+}
+
+interface ImportResult {
+  created: number;
+  updated: number;
+  /** Leads whose Data Calling Type actually changed as a result. */
+  leadsUpdated: number;
+  /** A lead code listed more than once in the file; the last row won. */
+  duplicatesInFile: number;
+  rejected: number;
+  errors: { row: number; leadCode: string; reason: string }[];
 }
 
 interface IdField {
@@ -69,9 +84,13 @@ interface Props {
   // Colleges also carry the Zone and Deal Type that every lead ingested for
   // them inherits, so those are configured here rather than per lead.
   collegeAttributes?: boolean;
+  // Lead codes carry the Data Calling Type every lead with that code takes.
+  // The choices come from the Data Calling Type list, so the two can never
+  // disagree about what is a legal value.
+  leadCodeMapping?: boolean;
 }
 
-export function DropdownOptionsManager({ type, title, description, placeholder, idField, collegeAttributes }: Props) {
+export function DropdownOptionsManager({ type, title, description, placeholder, idField, collegeAttributes, leadCodeMapping }: Props) {
   const { toast } = useToast();
   const qc = useQueryClient();
   const { data: session } = useSession();
@@ -87,6 +106,11 @@ export function DropdownOptionsManager({ type, title, description, placeholder, 
   const [collegeZone, setCollegeZone]         = useState('');
   const [collegeDealType, setCollegeDealType] = useState('');
   const [landingPageUrl, setLandingPageUrl]   = useState('');
+  const [callingType, setCallingType]         = useState('');
+  const [importOpen, setImportOpen]           = useState(false);
+  const [importBusy, setImportBusy]           = useState(false);
+  const [importResult, setImportResult]       = useState<ImportResult | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
   const landingInputRef = useRef<HTMLInputElement>(null);
   // Where the {{%agent%}} chip inserts. Tracked rather than read on demand
   // because an input that has never been focused reports a caret at position 0,
@@ -107,7 +131,23 @@ export function DropdownOptionsManager({ type, title, description, placeholder, 
     enabled: !!session?.user?.id,
   });
 
-  const invalidate = () => qc.invalidateQueries({ queryKey });
+  // Only fetched for the lead-code screen; every other dropdown manager pays
+  // nothing for this.
+  const { data: callingTypes = [] } = useQuery<DropdownOption[]>({
+    queryKey: ['dropdown-options', 'DATA_CALLING_TYPE'],
+    queryFn: () =>
+      fetch('/api/dropdown-options?type=DATA_CALLING_TYPE').then(async (r) => {
+        const d = await r.json();
+        return Array.isArray(d) ? d : [];
+      }),
+    enabled: !!leadCodeMapping && !!session?.user?.id,
+  });
+
+  const invalidate = () => {
+    qc.invalidateQueries({ queryKey });
+    // A saved mapping rewrites leads, so anything showing them is now stale.
+    if (leadCodeMapping) qc.invalidateQueries({ queryKey: ['all-leads'] });
+  };
 
   const openCreate = () => {
     setEditOption(null);
@@ -116,6 +156,7 @@ export function DropdownOptionsManager({ type, title, description, placeholder, 
     setCollegeZone('');
     setCollegeDealType('');
     setLandingPageUrl('');
+    setCallingType('');
     landingCaretRef.current = null;
     setShowDialog(true);
   };
@@ -127,6 +168,7 @@ export function DropdownOptionsManager({ type, title, description, placeholder, 
     setCollegeZone(opt.collegeZone ?? '');
     setCollegeDealType(opt.collegeDealType ?? '');
     setLandingPageUrl(opt.landingPageUrl ?? '');
+    setCallingType(opt.leadCodeCallingType ?? '');
     landingCaretRef.current = null;
     setShowDialog(true);
   };
@@ -135,7 +177,9 @@ export function DropdownOptionsManager({ type, title, description, placeholder, 
   // using the same function the API validates with — the two cannot disagree.
   const landingCheck = collegeAttributes ? checkLandingPageUrl(landingPageUrl) : { ok: true as const };
   const canSave =
-    value.trim() !== '' && (!idField || kappCollegeId.trim() !== '') && landingCheck.ok;
+    value.trim() !== '' && (!idField || kappCollegeId.trim() !== '') && landingCheck.ok
+    // A lead code with no Data Calling Type would sit there doing nothing.
+    && (!leadCodeMapping || callingType !== '');
 
   /**
    * Drops the token in at the caret, or at the end if the admin has not put a
@@ -159,6 +203,49 @@ export function DropdownOptionsManager({ type, title, description, placeholder, 
     });
   };
 
+  /**
+   * Parses the file in the browser, the same way the leads upload does, and
+   * posts rows. Header spellings are normalised so "Lead Code" and "lead_code"
+   * both work — an admin should not have to guess the casing.
+   */
+  async function runImport(file: File) {
+    setImportBusy(true);
+    setImportResult(null);
+    try {
+      const rows = await new Promise<{ leadCode: string; dataCallingType: string }[]>((resolve, reject) => {
+        Papa.parse<Record<string, string>>(file, {
+          header: true,
+          skipEmptyLines: true,
+          transformHeader: (h) => h.trim().toLowerCase().replace(/\s+/g, '_'),
+          complete: (res) => {
+            if (res.errors.length > 0) return reject(new Error(res.errors[0].message));
+            resolve(res.data.map((r) => ({
+              leadCode: (r.lead_code ?? r.leadcode ?? r.code ?? '').trim(),
+              dataCallingType: (r.data_calling_type ?? r.datacallingtype ?? r.calling_type ?? '').trim(),
+            })).filter((r) => r.leadCode || r.dataCallingType));
+          },
+          error: (e) => reject(e),
+        });
+      });
+      if (rows.length === 0) throw new Error('No rows found. Expected columns: lead_code, data_calling_type');
+
+      const r = await fetch('/api/dropdown-options/lead-codes/import', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ rows }),
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error ?? 'Import failed');
+      setImportResult(d as ImportResult);
+      invalidate();
+    } catch (err) {
+      toast({ variant: 'destructive', title: 'Import failed', description: (err as Error).message });
+    } finally {
+      setImportBusy(false);
+      if (fileRef.current) fileRef.current.value = '';
+    }
+  }
+
   const saveMutation = useMutation({
     mutationFn: async () => {
       if (editOption) {
@@ -169,15 +256,15 @@ export function DropdownOptionsManager({ type, title, description, placeholder, 
           body.collegeDealType = collegeDealType.trim();
           body.landingPageUrl = landingPageUrl.trim();
         }
+        if (leadCodeMapping) body.leadCodeCallingType = callingType;
         const r = await fetch(`/api/dropdown-options/${editOption.id}`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(body),
         });
-        if (!r.ok) {
-          const d = await r.json();
-          throw new Error(d.error ?? 'Failed to update');
-        }
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.error ?? 'Failed to update');
+        return d as { leadsUpdated?: number };
       } else {
         const body: Record<string, unknown> = { type, value: value.trim() };
         if (idField) body.kappCollegeId = kappCollegeId.trim();
@@ -186,19 +273,27 @@ export function DropdownOptionsManager({ type, title, description, placeholder, 
           body.collegeDealType = collegeDealType.trim();
           body.landingPageUrl = landingPageUrl.trim();
         }
+        if (leadCodeMapping) body.leadCodeCallingType = callingType;
         const r = await fetch('/api/dropdown-options', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(body),
         });
-        if (!r.ok) {
-          const d = await r.json();
-          throw new Error(d.error ?? 'Failed to create');
-        }
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.error ?? 'Failed to create');
+        return d as { leadsUpdated?: number };
       }
     },
-    onSuccess: () => {
-      toast({ title: editOption ? 'Option updated' : 'Option added' });
+    onSuccess: (res) => {
+      const n = res?.leadsUpdated ?? 0;
+      toast({
+        title: editOption ? 'Option updated' : 'Option added',
+        // Saying nothing after rewriting thousands of leads is how a tool loses
+        // trust. Silent when it changed nothing, which is the common case.
+        description: n > 0
+          ? `${n.toLocaleString('en-IN')} lead${n === 1 ? '' : 's'} now show ${callingType}.`
+          : undefined,
+      });
       setShowDialog(false);
       invalidate();
     },
@@ -244,13 +339,21 @@ export function DropdownOptionsManager({ type, title, description, placeholder, 
             <p className="text-sm text-muted-foreground mt-1 max-w-xl">{description}</p>
           </div>
         </div>
-        <Button
-          onClick={openCreate}
-          className="shrink-0 shadow-md shadow-primary/20 transition-transform duration-200 ease-premium hover:-translate-y-0.5 hover:shadow-lg hover:shadow-primary/30"
-        >
-          <Plus className="mr-2 h-4 w-4" />
-          Add Value
-        </Button>
+        <div className="flex shrink-0 items-center gap-2">
+          {leadCodeMapping && (
+            <Button variant="outline" onClick={() => { setImportResult(null); setImportOpen(true); }}>
+              <Upload className="mr-2 h-4 w-4" />
+              Upload CSV
+            </Button>
+          )}
+          <Button
+            onClick={openCreate}
+            className="shadow-md shadow-primary/20 transition-transform duration-200 ease-premium hover:-translate-y-0.5 hover:shadow-lg hover:shadow-primary/30"
+          >
+            <Plus className="mr-2 h-4 w-4" />
+            Add Value
+          </Button>
+        </div>
       </div>
 
       {/* Stats strip */}
@@ -336,6 +439,12 @@ export function DropdownOptionsManager({ type, title, description, placeholder, 
                           Landing page
                         </span>
                       )}
+                      {opt.leadCodeCallingType && (
+                        <span className="inline-flex items-center gap-1 text-[11px] text-muted-foreground">
+                          Data Calling Type:{' '}
+                          <span className="font-semibold text-foreground">{opt.leadCodeCallingType}</span>
+                        </span>
+                      )}
                     </div>
                   </div>
 
@@ -390,6 +499,116 @@ export function DropdownOptionsManager({ type, title, description, placeholder, 
         )}
       </div>
 
+      {/* Bulk import — lead codes only */}
+      <Dialog open={importOpen} onOpenChange={setImportOpen}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Upload lead codes</DialogTitle>
+          </DialogHeader>
+
+          <div className="space-y-4 py-2">
+            {!importResult && (
+              <>
+                <div className="rounded-lg border border-border/60 bg-muted/40 p-3">
+                  <p className="text-xs font-semibold">Two columns, header row included</p>
+                  <pre className="mt-2 overflow-x-auto rounded bg-background p-2 font-mono text-[11px] leading-relaxed">{`lead_code,data_calling_type
+CKT200,${callingTypes[0]?.value ?? 'L1'}
+BM101,${callingTypes[1]?.value ?? callingTypes[0]?.value ?? 'L2'}`}</pre>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const sample = `lead_code,data_calling_type\nCKT200,${callingTypes[0]?.value ?? ''}\n`;
+                      const a = document.createElement('a');
+                      a.href = URL.createObjectURL(new Blob([sample], { type: 'text/csv' }));
+                      a.download = 'lead_codes_template.csv';
+                      a.click();
+                      URL.revokeObjectURL(a.href);
+                    }}
+                    className="mt-2 inline-flex items-center gap-1 text-[11px] font-medium text-primary hover:underline"
+                  >
+                    <FileDown className="h-3 w-3" /> Download template
+                  </button>
+                </div>
+
+                <p className="text-[11px] text-muted-foreground">
+                  Every <span className="font-semibold">data_calling_type</span> must be one of{' '}
+                  <span className="font-semibold text-foreground">
+                    {callingTypes.map((t) => t.value).join(', ') || '(none configured yet)'}
+                  </span>
+                  . Rows with anything else are listed back to you and skipped — nothing partial is
+                  written for them. Capitalisation does not matter, for the type or the lead code.
+                  A code already in the list is updated rather than duplicated.
+                </p>
+
+                <input
+                  ref={fileRef}
+                  type="file"
+                  accept=".csv,text/csv"
+                  disabled={importBusy}
+                  onChange={(e) => { const f = e.target.files?.[0]; if (f) runImport(f); }}
+                  className="block w-full text-xs file:mr-3 file:rounded-md file:border-0 file:bg-primary file:px-3 file:py-2 file:text-xs file:font-medium file:text-primary-foreground hover:file:bg-primary/90"
+                />
+                {importBusy && (
+                  <p className="flex items-center gap-2 text-xs text-muted-foreground">
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" /> Importing and updating leads…
+                  </p>
+                )}
+              </>
+            )}
+
+            {importResult && (
+              <div className="space-y-3">
+                <div className="grid grid-cols-3 gap-2">
+                  {[
+                    { label: 'Added', value: importResult.created },
+                    { label: 'Updated', value: importResult.updated },
+                    { label: 'Skipped', value: importResult.rejected },
+                  ].map((c) => (
+                    <div key={c.label} className="rounded-lg border border-border/60 bg-card px-3 py-2">
+                      <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{c.label}</p>
+                      <p className="mt-0.5 text-xl font-bold tabular-nums">{c.value}</p>
+                    </div>
+                  ))}
+                </div>
+                <p className="text-xs">
+                  <span className="font-semibold">{importResult.leadsUpdated.toLocaleString('en-IN')}</span>{' '}
+                  lead{importResult.leadsUpdated === 1 ? '' : 's'} now show their mapped Data Calling Type.
+                </p>
+                {importResult.duplicatesInFile > 0 && (
+                  <p className="text-[11px] text-muted-foreground">
+                    {importResult.duplicatesInFile} row{importResult.duplicatesInFile === 1 ? ' was' : 's were'} a
+                    repeat of a lead code earlier in the file — the last one won.
+                  </p>
+                )}
+                {importResult.errors.length > 0 && (
+                  <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-2.5">
+                    <p className="flex items-center gap-1.5 text-[11px] font-semibold text-amber-700 dark:text-amber-400">
+                      <AlertTriangle className="h-3.5 w-3.5" /> Skipped rows
+                    </p>
+                    <ul className="mt-1.5 max-h-40 space-y-1 overflow-y-auto">
+                      {importResult.errors.map((e, i) => (
+                        <li key={i} className="text-[11px] text-muted-foreground">
+                          Row {e.row} <span className="font-mono">{e.leadCode}</span> — {e.reason}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setImportOpen(false)}>
+              {importResult ? 'Done' : 'Cancel'}
+            </Button>
+            {importResult && (
+              <Button onClick={() => setImportResult(null)}>Upload another</Button>
+            )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {/* Create / Edit Dialog */}
       <Dialog open={showDialog} onOpenChange={setShowDialog}>
         <DialogContent className="sm:max-w-md">
@@ -422,6 +641,38 @@ export function DropdownOptionsManager({ type, title, description, placeholder, 
                 autoFocus={!idField}
               />
             </div>
+            {leadCodeMapping && (
+              <div className="space-y-1.5">
+                <Label htmlFor="opt-calling-type">
+                  Data Calling Type <span className="text-destructive">*</span>
+                </Label>
+                <select
+                  id="opt-calling-type"
+                  value={callingType}
+                  onChange={(e) => setCallingType(e.target.value)}
+                  className={SELECT_CLASS}
+                >
+                  <option value="">— Choose —</option>
+                  {callingTypes.map((t) => (
+                    <option key={t.id} value={t.value}>{t.value}</option>
+                  ))}
+                </select>
+                {callingTypes.length === 0 ? (
+                  <p className="text-[11px] font-medium text-amber-600 dark:text-amber-400">
+                    No active Data Calling Types exist yet — add one under Manage Dropdowns → Data
+                    Calling Type first.
+                  </p>
+                ) : (
+                  <p className="text-[11px] text-muted-foreground">
+                    Every lead carrying this lead code will show this Data Calling Type, replacing
+                    whatever it had. The change is applied as soon as you save, and matching ignores
+                    capitalisation — a mapping for <span className="font-mono">KCLL</span> also
+                    covers <span className="font-mono">Kcll</span>.
+                  </p>
+                )}
+              </div>
+            )}
+
             {collegeAttributes && (
               <>
                 {/* Fixed lists from lib/college-attributes.ts — the same source

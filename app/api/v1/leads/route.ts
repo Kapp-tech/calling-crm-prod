@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { DropdownType } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
+import { callingTypeForIngest } from '@/lib/lead-code';
 import { logActivity } from '@/lib/permissions';
 import { verifyApiKey } from '@/lib/api-key';
 import { fetchLmsCityNames, fetchLmsStateNames, fetchLmsCourseNames, toCanonicalMap } from '@/lib/lms-api';
@@ -53,7 +54,9 @@ import { buildDropdownValidationSets, isAllowedDropdownValue, type DropdownValid
 //     leadConfirmation: string;     // must match Manage Dropdowns → Lead Confirmation
 //     leadStage: string;            // must match Manage Dropdowns → Lead Stage
 //     leadVerification: string;     // must match Manage Dropdowns → Lead Verification
-//     dataCallingType: string;      // must match Manage Dropdowns → Data Calling Type
+//     dataCallingType: string;      // OPTIONAL and ignored — the Data Calling Type now
+//                                    // comes from the lead code via Manage Dropdowns →
+//                                    // LeadCode List. An unmapped code stores "NA".
 //     createdAt: string;            // format: "yyyy-mm-dd" — the lead's original creation
 //                                    // date on your side (stored separately from this CRM's
 //                                    // own audit timestamp, which always reflects when the
@@ -61,7 +64,7 @@ import { buildDropdownValidationSets, isAllowedDropdownValue, type DropdownValid
 //   }
 //
 //   Dropdown fields (leadType / leadOrigin / leadConfirmation / leadStage /
-//   leadVerification / dataCallingType) match case-sensitively
+//   leadVerification) match case-sensitively
 //   against the exact values configured in Manage Dropdowns. Exception: if a dropdown
 //   type has no values configured there AT ALL yet, that field is accepted
 //   as free text (there's nothing to validate against) — configure it in
@@ -138,7 +141,11 @@ const payloadSchema = z.object({
   leadConfirmation: req1('leadConfirmation'),
   leadStage: req1('leadStage'),
   leadVerification: req1('leadVerification'),
-  dataCallingType: req1('dataCallingType'),
+  // Still accepted so existing integrations keep working unchanged, but the
+  // value is no longer used: the lead code decides the Data Calling Type, and a
+  // code that is not in LeadCode List lands as "NA". Loosened from required to
+  // optional rather than removed, which cannot break a caller either way.
+  dataCallingType: z.string().trim().optional(),
   createdAt: z
     .string()
     .trim()
@@ -215,7 +222,6 @@ function resolveAndValidate(d: LeadPayload, maps: CrossRefMaps): { errors: Recor
   // add a new stage.
   checkDropdown(DropdownType.LEAD_STAGE, d.leadStage, 'leadStage', 'Lead Stage');
   checkDropdown(DropdownType.LEAD_VERIFICATION, d.leadVerification, 'leadVerification', 'Lead Verification');
-  checkDropdown(DropdownType.DATA_CALLING_TYPE, d.dataCallingType, 'dataCallingType', 'Data Calling Type');
 
   return { errors, resolved };
 }
@@ -389,7 +395,9 @@ export async function POST(req: NextRequest) {
           kappCollegeId: d.kappCollegeId, campaign: d.leadCode,
           leadType: d.leadType, leadOrigin: d.leadOrigin, leadConfirmation: d.leadConfirmation,
           leadStage, leadVerification: d.leadVerification,
-          dataCallingType: d.dataCallingType,
+          // Lead code decides this, not the payload: an unmapped code lands as
+          // "NA" so it is visibly waiting to be mapped.
+          dataCallingType: callingTypeForIngest(maps.dropdownData.leadCodeCallingTypeMap, d.leadCode),
           leadZone: collegeAttrs?.zone ?? null,
           dealType: collegeAttrs?.dealType ?? null,
           primaryApplicationConfirm: 'No', primaryAdmissionConfirm: 'No',
@@ -557,7 +565,9 @@ export async function POST(req: NextRequest) {
               kappCollegeId: d.kappCollegeId, campaign: d.leadCode,
               leadType: d.leadType, leadOrigin: d.leadOrigin, leadConfirmation: d.leadConfirmation,
               leadStage: canonicalStage(d.leadStage), leadVerification: d.leadVerification,
-              dataCallingType: d.dataCallingType,
+              // Same rule as the single-lead path, read from the prebuilt map so
+              // a bulk push does not fire one query per lead.
+              dataCallingType: callingTypeForIngest(maps.dropdownData.leadCodeCallingTypeMap, d.leadCode),
               // Same as the single-lead path: both come from the college.
               leadZone: maps.dropdownData.collegeAttributeMap.get(d.kappCollegeId.toLowerCase())?.zone ?? null,
               dealType: maps.dropdownData.collegeAttributeMap.get(d.kappCollegeId.toLowerCase())?.dealType ?? null,

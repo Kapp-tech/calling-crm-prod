@@ -12,6 +12,15 @@ export interface DropdownValidationSets {
    * upload and the API read them from here rather than from the payload.
    */
   collegeAttributeMap: Map<string, { zone: string | null; dealType: string | null }>;
+  /**
+   * lead code (lowercased) → the Data Calling Type mapped to it in LeadCode
+   * List. Lowercased because the same code arrives in several casings.
+   *
+   * Lives on the prebuilt maps rather than being queried per lead: the bulk
+   * ingest path creates leads inside a Promise.all, so a lookup per lead would
+   * be one extra query per lead in the batch.
+   */
+  leadCodeCallingTypeMap: Map<string, string>;
 }
 
 /**
@@ -22,12 +31,13 @@ export interface DropdownValidationSets {
 export async function buildDropdownValidationSets(): Promise<DropdownValidationSets> {
   const allOptions = await prisma.dropdownOption.findMany({
     where: { isActive: true },
-    select: { type: true, value: true, kappCollegeId: true, collegeZone: true, collegeDealType: true },
+    select: { type: true, value: true, kappCollegeId: true, collegeZone: true, collegeDealType: true, leadCodeCallingType: true },
   });
 
   const sets: Partial<Record<DropdownType, Set<string>>> = {};
   const collegeIdMap = new Map<string, string>();
   const collegeAttributeMap = new Map<string, { zone: string | null; dealType: string | null }>();
+  const leadCodeCallingTypeMap = new Map<string, string>();
 
   for (const opt of allOptions) {
     if (opt.type === DropdownType.COLLEGE) {
@@ -40,13 +50,19 @@ export async function buildDropdownValidationSets(): Promise<DropdownValidationS
           dealType: opt.collegeDealType?.trim() || null,
         });
       }
+    } else if (opt.type === DropdownType.LEAD_CODE) {
+      // Not added to `sets`: a lead code is a mapping key, not a value anything
+      // is validated against — a CSV may carry any code at all.
+      if (opt.leadCodeCallingType) {
+        leadCodeCallingTypeMap.set(opt.value.trim().toLowerCase(), opt.leadCodeCallingType);
+      }
     } else {
       if (!sets[opt.type]) sets[opt.type] = new Set();
       sets[opt.type]!.add(opt.value.trim()); // stored exactly as configured — matching is case-sensitive
     }
   }
 
-  return { sets, collegeIdMap, collegeAttributeMap };
+  return { sets, collegeIdMap, collegeAttributeMap, leadCodeCallingTypeMap };
 }
 
 /**
