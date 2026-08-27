@@ -20,7 +20,9 @@ const ROLES = [
 const FEATURES = [
   { key: 'VIEW_REPORTS', label: 'View Reports' },
   { key: 'DOWNLOAD_DATA', label: 'Download Data' },
-  { key: 'MASK_UNMASK_DATA', label: 'Mask/Unmask Data' },
+  // Enum name kept (renaming costs an ALTER TYPE plus a data migration for no
+  // gain); the label says what the switch actually does.
+  { key: 'MASK_UNMASK_DATA', label: 'Mask Data (hide email & phone)' },
   { key: 'UPLOAD_LEADS', label: 'Upload Leads' },
   { key: 'APPROVE_LEADS', label: 'Approve Leads' },
   { key: 'ASSIGN_LEADS', label: 'Assign Leads' },

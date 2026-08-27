@@ -55,6 +55,17 @@ export function WhatsAppButton({
   course?: string | null;
   className?: string;
 }) {
+  // A masked reader never receives the real number — the value here is
+  // literally "98****4460" — so there is no chat to open and the button hides
+  // itself. Call still works: the server dials from the lead id and never needs
+  // the number in the browser.
+  //
+  // buildWhatsAppUrl would also return null for this today, but only by
+  // accident: the asterisks strip to 8 digits and fail its length check. Change
+  // the mask to keep ten digits and that accident stops holding, so the intent
+  // is stated here rather than left to it.
+  if (phone.includes('*')) return null;
+
   const url = buildWhatsAppUrl(phone, leadWhatsAppMessage({ leadName, agentName, course }));
   if (!url) return null;
 

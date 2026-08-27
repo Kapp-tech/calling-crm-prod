@@ -15,11 +15,15 @@ const ALL_FEATURES: Feature[] = [
   Feature.VIEW_LEADS, Feature.SUBMIT_FEEDBACK,
 ];
 
+// Mirrors DEFAULT_PERMISSIONS in lib/permissions.ts. MASK_UNMASK_DATA now means
+// "this role SEES MASKED data", so it sits on the roles that should be masked —
+// not on REPORTS, who read real values. Seeding it the old way round would
+// bring a fresh environment up masking the wrong people.
 const DEFAULT_PERMISSIONS: Record<Role, Feature[]> = {
   SUPER_ADMIN: ALL_FEATURES,
-  REPORTS: [Feature.VIEW_REPORTS, Feature.APPROVE_LEADS, Feature.DOWNLOAD_DATA, Feature.MASK_UNMASK_DATA],
-  OPERATIONS: [Feature.UPLOAD_LEADS],
-  COUNSELLING_TL: [Feature.VIEW_LEADS, Feature.ASSIGN_LEADS],
+  REPORTS: [Feature.VIEW_REPORTS, Feature.APPROVE_LEADS, Feature.DOWNLOAD_DATA],
+  OPERATIONS: [Feature.UPLOAD_LEADS, Feature.MASK_UNMASK_DATA],
+  COUNSELLING_TL: [Feature.VIEW_LEADS, Feature.ASSIGN_LEADS, Feature.MASK_UNMASK_DATA],
   COUNSELLING_AGENT: [Feature.VIEW_LEADS, Feature.SUBMIT_FEEDBACK],
 };
 

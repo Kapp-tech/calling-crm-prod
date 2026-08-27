@@ -3,6 +3,8 @@ import { getServerSession } from 'next-auth';
 import type { Prisma } from '@prisma/client';
 import { authOptions } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
+import { isMaskedRole } from '@/lib/permissions';
+import { maskContact } from '@/lib/data-masking';
 import { getLeadWhereClause } from '@/lib/lead-access';
 
 // Global quick-search (Ctrl+K palette). Results are scoped through
@@ -66,7 +68,8 @@ export async function GET(req: NextRequest) {
       .slice(0, 10)
       .map(({ lead: { updatedAt: _updatedAt, ...lead } }) => lead);
 
-    return NextResponse.json(leads);
+    const masked = await isMaskedRole(session.user.role);
+    return NextResponse.json(masked ? leads.map((l) => maskContact(l, true)) : leads);
   } catch (error) {
     console.error('[leads/search GET]', error);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });

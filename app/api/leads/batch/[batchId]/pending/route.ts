@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
+import { isMaskedRole } from '@/lib/permissions';
+import { maskContact } from '@/lib/data-masking';
 import { hasPermission } from '@/lib/permissions';
 import { getLeadWhereClause } from '@/lib/lead-access';
 import { Feature } from '@prisma/client';
@@ -30,7 +32,12 @@ export async function GET(req: NextRequest, { params }: { params: { batchId: str
       orderBy: { createdAt: 'asc' },
     });
 
-    return NextResponse.json({ success: true, leads });
+    const masked = await isMaskedRole(session.user.role);
+    return NextResponse.json({
+      success: true,
+      leads: masked ? leads.map((l) => maskContact(l, true)) : leads,
+      masked,
+    });
   } catch (error) {
     console.error('[leads/batch/[batchId]/pending GET]', error);
     return NextResponse.json({ success: false, error: 'Internal server error' }, { status: 500 });

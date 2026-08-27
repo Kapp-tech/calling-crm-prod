@@ -1,5 +1,9 @@
 import Papa from 'papaparse';
 
+// Re-exported so existing importers keep working; the implementation and the
+// permission rule that drives it live in lib/data-masking.ts.
+export { maskEmail, maskPhone } from './data-masking';
+
 export interface LeadCSVRow {
   name: string;
   email: string;
@@ -245,13 +249,4 @@ export function validateLeadRow(row: LeadCSVRow): string | null {
 
 // ─── Masking helpers ──────────────────────────────────────────────────────────
 
-export function maskPhone(phone: string): string {
-  if (phone.length <= 4) return '****';
-  return `${phone.slice(0, 2)}${'*'.repeat(phone.length - 4)}${phone.slice(-2)}`;
-}
 
-export function maskEmail(email: string): string {
-  const [local, domain] = email.split('@');
-  if (!local || !domain) return email;
-  return `${local.slice(0, 2)}${'*'.repeat(Math.max(0, local.length - 2))}@${domain}`;
-}

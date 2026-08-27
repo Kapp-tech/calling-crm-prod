@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
+import { isMaskedRole } from '@/lib/permissions';
+import { maskContact } from '@/lib/data-masking';
 import { getLeadWhereClause } from '@/lib/lead-access';
 
 export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
@@ -53,7 +55,8 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
       });
     }
 
-    return NextResponse.json({ ...lead, archivedFeedbacks });
+    const masked = await isMaskedRole(session.user.role);
+    return NextResponse.json({ ...maskContact(lead, masked), archivedFeedbacks, masked });
   } catch (error) {
     console.error('[leads/[id] GET]', error);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });

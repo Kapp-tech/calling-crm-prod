@@ -3,6 +3,8 @@ import { getServerSession } from 'next-auth';
 import { z } from 'zod';
 import { authOptions } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
+import { isMaskedRole } from '@/lib/permissions';
+import { maskContact } from '@/lib/data-masking';
 import { hasPermission } from '@/lib/permissions';
 import { getLeadWhereClause } from '@/lib/lead-access';
 import { nonFeedbackQuerySchema, buildNonFeedbackFilters, buildFeedbackFilter } from '@/lib/lead-query-filters';
@@ -163,7 +165,17 @@ export async function GET(req: NextRequest) {
       prisma.lead.count({ where }),
     ]);
 
-    return NextResponse.json({ leads, total, page, limit, totalPages: Math.ceil(total / limit) });
+    // Masked on the server, so a role that may not see contact details never
+    // receives them — hiding them in the browser leaves the real values sitting
+    // in the JSON one devtools tab away.
+    const masked = await isMaskedRole(session.user.role);
+    return NextResponse.json({
+      leads: masked ? leads.map((l) => maskContact(l, true)) : leads,
+      // The UI needs to know, so it can drop the WhatsApp button — that link has
+      // to carry the real number, so it cannot work for a masked reader.
+      masked,
+      total, page, limit, totalPages: Math.ceil(total / limit),
+    });
   } catch (err) {
     console.error('[leads GET]', err);
     return NextResponse.json({ success: false, error: 'Internal server error' }, { status: 500 });

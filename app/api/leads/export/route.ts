@@ -3,7 +3,7 @@ import { getServerSession } from 'next-auth';
 import { z } from 'zod';
 import { authOptions } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
-import { hasPermission } from '@/lib/permissions';
+import { hasPermission, isMaskedRole } from '@/lib/permissions';
 import { getLeadWhereClause } from '@/lib/lead-access';
 import { istStartOfDay, istEndOfDay, IST_TIMEZONE } from '@/lib/ist-time';
 import { parseCsvFilterValues as split } from '@/lib/csv-filter-value';
@@ -56,9 +56,12 @@ export async function GET(req: NextRequest) {
     const session = await getServerSession(authOptions);
     if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-    const [canDownload, canUnmask] = await Promise.all([
+    const [canDownload, masked] = await Promise.all([
       hasPermission(session.user.role, Feature.DOWNLOAD_DATA),
-      hasPermission(session.user.role, Feature.MASK_UNMASK_DATA),
+      // Reads "does this role see masked data" — not hasPermission, which
+      // answers true for SUPER_ADMIN on every feature and would have masked
+      // their exports with no way to switch it off.
+      isMaskedRole(session.user.role),
     ]);
     if (!canDownload) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
 
@@ -224,7 +227,7 @@ export async function GET(req: NextRequest) {
     const allHeaders = [...fixedHeaders, ...feedbackHeaders];
 
     const mask = (val: string, type: 'email' | 'phone') => {
-      if (canUnmask) return val;
+      if (!masked) return val;
       if (type === 'email') {
         const at = val.indexOf('@');
         return at > 2

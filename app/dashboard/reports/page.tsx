@@ -352,7 +352,12 @@ export default function ReportsPage() {
 
   const canApproveleads = can('APPROVE_LEADS');
   const canDownload     = can('DOWNLOAD_DATA');
-  const canToggleMask   = can('MASK_UNMASK_DATA');
+  // "Mask Data" ON means this role always sees masked contact details, so there
+  // is nothing to toggle. The on-page toggle stays for readers who are NOT
+  // masked and simply want to blur the screen — the server has already masked
+  // the rest, so flipping it could not reveal anything either way.
+  const isMasked        = can('MASK_UNMASK_DATA');
+  const canToggleMask   = !isMasked;
 
   // Disapprove modal state
   const [disapproveTarget, setDisapproveTarget] = useState<
@@ -476,7 +481,7 @@ export default function ReportsPage() {
     approveMutation.isPending || batchApproveMutation.isPending || batchDisapproveMutation.isPending ||
     deleteMutation.isPending || approveAllMutation.isPending;
 
-  const canUnmask = !maskData && canToggleMask;
+  const canUnmask = !isMasked && !maskData;
 
   // Group leads by batch
   const leads = data?.leads ?? [];
