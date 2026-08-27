@@ -86,13 +86,15 @@ export async function POST(req: NextRequest) {
         ? await prisma.lead.findFirst({
             where: { phone: facts.phoneKey, assignedToId: agent.id },
             orderBy: { updatedAt: 'desc' },
-            select: { id: true },
+            // name is carried so a missed-call notification can say who rang
+            // rather than just quoting a phone number back at the agent.
+            select: { id: true, name: true },
           })
         : null) ??
       (await prisma.lead.findFirst({
         where: { phone: facts.phoneKey },
         orderBy: { updatedAt: 'desc' },
-        select: { id: true },
+        select: { id: true, name: true },
       }));
 
     const data = {
@@ -124,6 +126,13 @@ export async function POST(req: NextRequest) {
       payload: body as Prisma.InputJsonValue,
     };
 
+    // Whether this call is already on file, checked BEFORE the upsert. The
+    // upsert cannot tell us afterwards, and the dialer retries — without this a
+    // retry would ring the agent's browser a second time for the same call.
+    const alreadyStored = facts.uniqueId
+      ? (await prisma.callLog.findUnique({ where: { uniqueId: facts.uniqueId }, select: { id: true } })) !== null
+      : false;
+
     // Idempotent when the dialer supplies its own call id, so a retry updates
     // rather than duplicating. Without one there is nothing to key on, and an
     // insert is the honest choice — a lost call is worse than a repeated one.
@@ -134,6 +143,32 @@ export async function POST(req: NextRequest) {
           update: data,
         })
       : await prisma.callLog.create({ data });
+
+    /**
+     * Tell the agent, once, that somebody rang and got nothing.
+     *
+     * Only on a genuinely new call and only when the sticky tag resolved to a
+     * real CRM user — a call attributed to nobody has nobody to notify. Failure
+     * here must not fail the webhook: the call is already stored, and a 5xx
+     * would make the dialer resend a call we have.
+     */
+    if (facts.missed && agent && !alreadyStored) {
+      try {
+        await prisma.notification.create({
+          data: {
+            userId: agent.id,
+            type: 'MISSED_CALL',
+            title: 'Missed call',
+            body: lead
+              ? `${lead.name} tried to reach you.`
+              : `${facts.phoneNumber} rang and nobody picked up.`,
+            leadId: lead?.id ?? null,
+          },
+        });
+      } catch (err) {
+        console.error('[dialshree webhook] missed-call notification failed:', err);
+      }
+    }
 
     if (!lead || !agent) {
       // Not an error — but worth a log line, because a persistent gap means a

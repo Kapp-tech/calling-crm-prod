@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Bell, UserPlus, TrendingUp, CalendarClock, PhoneCall, CheckCheck, X, ArrowRight, Receipt, CheckCircle2, XCircle } from 'lucide-react';
+import { Bell, UserPlus, TrendingUp, CalendarClock, PhoneCall, PhoneMissed, CheckCheck, X, ArrowRight, Receipt, CheckCircle2, XCircle } from 'lucide-react';
 import { useSession } from 'next-auth/react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
@@ -12,7 +12,7 @@ import { ToastAction } from '@/components/ui/toast';
 
 type NotificationKind =
   | 'LEAD_ASSIGNED' | 'LEAD_STAGE_CHANGED' | 'CALL_REMINDER' | 'CALL_NOW'
-  | 'RECEIPT_SUBMITTED' | 'RECEIPT_APPROVED' | 'RECEIPT_DISAPPROVED';
+  | 'RECEIPT_SUBMITTED' | 'RECEIPT_APPROVED' | 'RECEIPT_DISAPPROVED' | 'MISSED_CALL';
 
 interface NotificationItem {
   id: string;
@@ -37,6 +37,10 @@ function notificationTarget(n: NotificationItem): { href: string; label: string 
       return n.leadId
         ? { href: `/leads/${n.leadId}/profile`, label: 'View lead' }
         : { href: `/dashboard/notifications/${n.id}/leads`, label: 'View leads' };
+    case 'MISSED_CALL':
+      // Straight to the Missed tab, not the lead: the agent usually wants the
+      // list of who rang, and the tab links on to each lead anyway.
+      return { href: '/dashboard/counselling-agent/scheduled-calls?tab=missed', label: 'See missed calls' };
     case 'RECEIPT_SUBMITTED':
       return { href: '/dashboard/super-admin/receipt-approvals', label: 'Review' };
     case 'RECEIPT_APPROVED':
@@ -69,11 +73,45 @@ function playChime() {
   } catch { /* AudioContext blocked by browser policy — silent */ }
 }
 
+/**
+ * A telephone ring, not the chime.
+ *
+ * A missed call is somebody waiting for a call back, so it gets its own sound —
+ * two bursts of the classic 440/480 Hz pair, which reads as "phone" rather than
+ * "something happened". Deliberately short: it plays while an agent is mid-call
+ * with somebody else.
+ */
+function playRing() {
+  try {
+    const ctx = new AudioContext();
+    const now = ctx.currentTime;
+    // Two bursts, 0.9s apart, each a 0.4s pair of tones.
+    [0, 0.9].forEach((offset) => {
+      [440, 480].forEach((freq) => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.type = 'sine';
+        osc.frequency.value = freq;
+        const t = now + offset;
+        gain.gain.setValueAtTime(0, t);
+        gain.gain.linearRampToValueAtTime(0.16, t + 0.02);
+        gain.gain.setValueAtTime(0.16, t + 0.36);
+        gain.gain.exponentialRampToValueAtTime(0.001, t + 0.42);
+        osc.start(t);
+        osc.stop(t + 0.45);
+      });
+    });
+  } catch { /* AudioContext blocked by browser policy — silent, see playChime */ }
+}
+
 const TYPE_META = {
   LEAD_ASSIGNED:       { Icon: UserPlus,      color: 'bg-blue-100 text-blue-600 dark:bg-blue-950 dark:text-blue-400' },
   LEAD_STAGE_CHANGED:  { Icon: TrendingUp,    color: 'bg-violet-100 text-violet-600 dark:bg-violet-950 dark:text-violet-400' },
   CALL_REMINDER:       { Icon: CalendarClock, color: 'bg-amber-100 text-amber-600 dark:bg-amber-950 dark:text-amber-400' },
   CALL_NOW:            { Icon: PhoneCall,     color: 'bg-green-100 text-green-600 dark:bg-green-950 dark:text-green-400' },
+  MISSED_CALL:         { Icon: PhoneMissed,   color: 'bg-red-100 text-red-600 dark:bg-red-950 dark:text-red-400' },
   RECEIPT_SUBMITTED:   { Icon: Receipt,       color: 'bg-indigo-100 text-indigo-600 dark:bg-indigo-950 dark:text-indigo-400' },
   RECEIPT_APPROVED:    { Icon: CheckCircle2,  color: 'bg-emerald-100 text-emerald-600 dark:bg-emerald-950 dark:text-emerald-400' },
   RECEIPT_DISAPPROVED: { Icon: XCircle,       color: 'bg-red-100 text-red-600 dark:bg-red-950 dark:text-red-400' },
@@ -103,6 +141,10 @@ export function NotificationBell() {
   const prevUnreadRef     = useRef(0);
   const hasSeededRef      = useRef(false);
   const seenIdsRef        = useRef<Set<string>>(new Set());
+  // Which notifications have already made a sound. Without it, any later unread
+  // bump would re-ring for a missed call still sitting unread in the list,
+  // rather than for the new arrival.
+  const soundedIdsRef     = useRef<Set<string>>(new Set());
   const dropdownRef       = useRef<HTMLDivElement>(null);
 
   // Poll every 10 s as fallback — also refetches on window focus.
@@ -122,6 +164,9 @@ export function NotificationBell() {
           if (!hasSeededRef.current) {
             hasSeededRef.current = true;
             seenIdsRef.current = new Set(list.map((n) => n.id));
+            // Seeded alongside seenIds: notifications already in the DB at page
+            // load must not ring, exactly as they must not re-toast.
+            soundedIdsRef.current = new Set(list.map((n) => n.id));
             prevUnreadRef.current = list.filter((n) => !n.read).length;
           }
           return list;
@@ -173,18 +218,25 @@ export function NotificationBell() {
     };
   }, [session, qc]);
 
-  // Play chime + shake bell when unread count goes up. Gated on hasSeededRef
-  // (set inside queryFn above) so stale unread notifications already sitting
-  // in the DB at page load don't falsely trigger the chime.
+  // Play a sound + shake the bell when the unread count goes up. Gated on
+  // hasSeededRef (set inside queryFn above) so stale unread notifications
+  // already sitting in the DB at page load don't falsely trigger it.
   useEffect(() => {
     if (!hasSeededRef.current) return;
     if (unread > prevUnreadRef.current) {
-      playChime();
+      // A missed call rings; everything else chimes. Only one sound plays even
+      // when a batch arrives together, and the ring wins — somebody is waiting
+      // for a call back, which outranks a lead being assigned.
+      const ringing = notifications.some(
+        (n) => !n.read && n.type === 'MISSED_CALL' && !soundedIdsRef.current.has(n.id),
+      );
+      for (const n of notifications) soundedIdsRef.current.add(n.id);
+      if (ringing) playRing(); else playChime();
       setShake(true);
       setTimeout(() => setShake(false), 800);
     }
     prevUnreadRef.current = unread;
-  }, [unread]);
+  }, [unread, notifications]);
 
   // Pop up a dismissable toast for every notification we haven't shown yet —
   // covers both SSE pushes and the 10s fallback poll. Gated on hasSeededRef so

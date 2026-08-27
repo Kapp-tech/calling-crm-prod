@@ -70,6 +70,9 @@ enum NotificationType {
   LEAD_STAGE_CHANGED
   CALL_REMINDER
   CALL_NOW
+  /// A lead rang in and nobody picked up. Raised from the dialer webhook when
+  /// it reports term_reason ABANDON and the sticky tag names a CRM agent.
+  MISSED_CALL
   RECEIPT_SUBMITTED
   RECEIPT_APPROVED
   RECEIPT_DISAPPROVED
@@ -1195,6 +1198,10 @@ enum EmailReportType {
   /// The same leads split by college — dialed, connected, connected %, and a
   /// column per outcome.
   COLLEGE_WISE
+  /// The KPI scoreboard in wide form: one row per agent, achieved / target / %
+  /// / points earned for every KPI, then Total Score, Max Score, Score % and a
+  /// grade. The emailed twin of the KPI Targets page's download.
+  AGENT_WISE
 }
 
 enum EmailFrequency {

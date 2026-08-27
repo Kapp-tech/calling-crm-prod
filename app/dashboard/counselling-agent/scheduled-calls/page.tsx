@@ -2,6 +2,7 @@
 
 import { useState, useMemo } from 'react';
 import { MissedCallsTable } from '@/components/calls/missed-calls-table';
+import { useSearchParams } from 'next/navigation';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useSession } from 'next-auth/react';
 import {
@@ -318,7 +319,12 @@ export default function ScheduledCallsPage() {
   const [viewMode, setViewMode] = useState<ViewMode>('list');
   const qc = useQueryClient();
   const { toast } = useToast();
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>('PENDING');
+  // ?tab=missed lets the missed-call notification land on the right tab rather
+  // than on Pending, leaving the reader to hunt for what they were told about.
+  const searchParams = useSearchParams();
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>(
+    searchParams.get('tab') === 'missed' ? 'MISSED' : 'PENDING',
+  );
   const [page, setPage] = useState(1);
   const [limit, setLimit] = useState(25);
   const [selectedLeadId, setSelectedLeadId] = useState<string | null>(null);
