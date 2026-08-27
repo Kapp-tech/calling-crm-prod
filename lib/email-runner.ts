@@ -5,6 +5,7 @@ import {
   buildFeedbackSummaryEmail, buildCollegeWiseEmail,
 } from './email-reports';
 import { isRuleDue, periodKeyFor, reportWindowFor } from './email-schedule';
+import { subjectFor } from './email-subjects';
 import { istDayKey } from './ist-time';
 
 /**
@@ -81,6 +82,9 @@ export async function runEmailRule(
   ];
   const bcc = addressesFrom(rule.bccEmails);
   const window = reportWindowFor(rule.frequency, now);
+  // The admin's subject if they set one, else the report's own. Resolved once
+  // here rather than inside each branch, so no report type can be left out.
+  const subject = (built: { subject: string }) => subjectFor(rule.reportType, rule.subject) || built.subject;
   const stamp = `${rule.id.slice(-8)}-${window.from}-${Date.now()}`;
 
   const record = async (
@@ -126,10 +130,10 @@ export async function runEmailRule(
       });
       const to: EmailAddress[] = [{ emailid: person.email, name: person.name }];
       const result = await sendEmail({
-        subject: built.subject, html: built.html, to, cc, bcc,
+        subject: subject(built), html: built.html, to, cc, bcc,
         messageId: `crm-${stamp}-w${person.id.slice(-6)}`,
       });
-      await record(built.subject, to, result);
+      await record(subject(built), to, result);
       await new Promise((r) => setTimeout(r, 400));
     }
   } else if (rule.reportType === 'AGENT_PERFORMANCE') {
@@ -150,10 +154,10 @@ export async function runEmailRule(
       const built = buildAgentEmail(block, today);
       const to: EmailAddress[] = [{ emailid: agent.email, name: agent.name }];
       const result = await sendEmail({
-        subject: built.subject, html: built.html, to, cc, bcc,
+        subject: subject(built), html: built.html, to, cc, bcc,
         messageId: `crm-${stamp}-${block.id.slice(-6)}`,
       });
-      await record(built.subject, to, result);
+      await record(subject(built), to, result);
       await new Promise((r) => setTimeout(r, 400));
     }
   } else {
@@ -199,7 +203,7 @@ export async function runEmailRule(
     }
 
     const result = await sendEmail({
-      subject: built.subject, html: built.html, to, cc, bcc,
+      subject: subject(built), html: built.html, to, cc, bcc,
       messageId: `crm-${stamp}`,
       attachments:
         rule.attachCsv && built.csv
@@ -212,7 +216,7 @@ export async function runEmailRule(
             ]
           : undefined,
     });
-    await record(built.subject, to, result);
+    await record(subject(built), to, result);
   }
 
   if (markPeriod) {

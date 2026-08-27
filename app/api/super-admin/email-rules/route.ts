@@ -23,6 +23,10 @@ const addressList = z
 const ruleSchema = z.object({
   name: z.string().trim().min(2).max(120),
   reportType: z.nativeEnum(EmailReportType),
+  // Blank means "use the report's own subject". Kept literal — no date tokens,
+  // because a subject that changes per send is exactly what stops the mail
+  // threading, which is the reason it is constant in the first place.
+  subject: z.string().trim().max(200).optional().nullable(),
   frequency: z.nativeEnum(EmailFrequency),
   sendHour: z.number().int().min(0).max(23),
   sendMinute: z.number().int().min(0).max(59),

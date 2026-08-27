@@ -13,6 +13,7 @@ import { useToast } from '@/components/ui/use-toast';
 import { PinGate } from '@/components/shared/pin-gate';
 import { PIN_GATED_ACTIONS } from '@/lib/pin-gated-actions';
 import { cn } from '@/lib/utils';
+import { DEFAULT_EMAIL_SUBJECTS } from '@/lib/email-subjects';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -22,6 +23,8 @@ interface Rule {
   id: string;
   name: string;
   reportType: 'AGENT_PERFORMANCE' | 'TEAM_SUMMARY' | 'WELCOME' | 'FEEDBACK_SUMMARY' | 'COLLEGE_WISE';
+  /** Blank uses the report's own subject — see DEFAULT_EMAIL_SUBJECTS. */
+  subject: string | null;
   frequency: 'DAILY' | 'WEEKLY' | 'MONTHLY' | 'QUARTERLY';
   sendHour: number;
   sendMinute: number;
@@ -69,7 +72,7 @@ const ROLES = ['SUPER_ADMIN', 'REPORTS', 'OPERATIONS', 'COUNSELLING_TL'];
 const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
 const BLANK: Omit<Rule, 'id' | 'scopeTl' | 'lastRunAt'> & { id?: string } = {
-  name: '', reportType: 'TEAM_SUMMARY', frequency: 'DAILY',
+  name: '', reportType: 'TEAM_SUMMARY', subject: null, frequency: 'DAILY',
   sendHour: 9, sendMinute: 0, weekday: 1, dayOfMonth: 1,
   audience: 'FIXED', toEmails: [], toRoles: [], ccEmails: [], ccRoles: [], bccEmails: [],
   scopeTlId: null, attachCsv: true, isActive: true,
@@ -382,6 +385,25 @@ function EmailAutomationContent() {
                     <option value="COLLEGE_WISE">{REPORT_LABEL.COLLEGE_WISE}</option>
                     <option value="WELCOME">{REPORT_LABEL.WELCOME}</option>
                   </select>
+                </div>
+
+                <div className="space-y-1.5">
+                  <Label htmlFor="er-subject">Subject line</Label>
+                  <Input
+                    id="er-subject"
+                    value={editing.subject ?? ''}
+                    onChange={(e) => set({ subject: e.target.value })}
+                    placeholder={DEFAULT_EMAIL_SUBJECTS[editing.reportType] ?? ''}
+                  />
+                  <p className="text-[11px] text-muted-foreground">
+                    Leave blank to use{' '}
+                    <span className="font-medium text-foreground">
+                      “{DEFAULT_EMAIL_SUBJECTS[editing.reportType] ?? ''}”
+                    </span>
+                    . Keep it the same on every send — Gmail and Outlook group mail into one
+                    conversation by subject, so a subject that changes (a date, for instance) starts
+                    a fresh thread each time.
+                  </p>
                 </div>
 
                 <div className="grid grid-cols-2 gap-3">

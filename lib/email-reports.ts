@@ -3,6 +3,7 @@ import { buildAgentReport, buildFeedbackBreakdown, buildCollegeBreakdown, AgentR
 import { kpiScoreboardFor } from './kpi';
 import { istDayKey, istShiftDays } from './ist-time';
 import { istParts, reportWindowFor } from './email-schedule';
+import { DEFAULT_EMAIL_SUBJECTS } from './email-subjects';
 
 /**
  * The HTML the scheduled emails carry.
@@ -32,13 +33,41 @@ const REPORT_FOOTER =
   'Sent automatically by the Counselling CRM. All dates are IST. Score comes from the ' +
   'targets set on KPI Targets; a dash means no target is set for that period.';
 
+/**
+ * THREADING — why every recurring report has a fixed subject.
+ *
+ * Gmail and Outlook group messages into one conversation by normalised subject
+ * plus participants. While the date sat in the subject ("Team performance —
+ * 2026-08-25") every send was a new subject, so every day started its own
+ * thread and an inbox filled with near-identical mail.
+ *
+ * The date has not been lost: it is the subtitle under the heading in every one
+ * of these, and it is on the EmailLog row, so nothing that identified a send is
+ * gone. Only the subject stopped changing.
+ *
+ * This is subject-based threading, which is what the provider lets us do today.
+ * The robust form is the RFC In-Reply-To / References headers pointing at the
+ * previous message — that needs GoInfinito to accept custom headers, which
+ * their Unified v2 payload we use gives no field for. Worth asking them; until
+ * then a fixed subject is what threads the mail.
+ */
+
 /** `footer` is a parameter because the report boilerplate about KPI targets is
  *  meaningless on a welcome email — and wrong-sounding to a brand new joiner. */
-function shell(title: string, subtitle: string, inner: string, footer = REPORT_FOOTER): string {
+function shell(
+  title: string,
+  subtitle: string,
+  inner: string,
+  footer = REPORT_FOOTER,
+  /** Lifts the 820px cap for a report that is a wide data table rather than a
+   *  letter — the college breakdown carries a column per outcome and would
+   *  otherwise burst out of the card. */
+  wide = false,
+): string {
   return `<!doctype html><html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"></head>
 <body style="margin:0;padding:24px;background:#f7f8fa;font-family:Arial,Helvetica,sans-serif;color:#1d2939">
-<table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="max-width:820px;margin:0 auto;background:#fff;border:1px solid ${BORDER};border-radius:10px">
+<table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="${wide ? '' : 'max-width:820px;'}margin:0 auto;background:#fff;border:1px solid ${BORDER};border-radius:10px">
 <tr><td style="padding:20px 24px;border-bottom:1px solid ${BORDER}">
 <div style="font-size:18px;font-weight:bold;color:${BRAND}">${esc(title)}</div>
 <div style="font-size:13px;color:${MUTED};margin-top:4px">${esc(subtitle)}</div>
@@ -262,7 +291,8 @@ ${blocks.map((b, i) => agentSection(b, i === 0)).join('')}
 </table>`;
 
   return {
-    subject: `Team performance — ${today}`,
+    // Constant on purpose — see THREADING above.
+    subject: DEFAULT_EMAIL_SUBJECTS.TEAM_SUMMARY,
     html: shell('Team performance', `As at ${today}`, inner),
     csv: toCsv(blocks),
     periodLabel: today,
@@ -277,7 +307,7 @@ ${agentSection(block, true)}
 </table>`;
 
   return {
-    subject: `Your performance — ${today}`,
+    subject: DEFAULT_EMAIL_SUBJECTS.AGENT_PERFORMANCE,
     html: shell(`Hello ${block.name}`, `Your activity as at ${today}`, inner),
     periodLabel: today,
     rows: block.periods.map((f) => f.row).filter(Boolean) as AgentReportRow[],
@@ -349,7 +379,7 @@ ${user.password
 </p>`;
 
   return {
-    subject: 'Welcome to the Counselling CRM',
+    subject: DEFAULT_EMAIL_SUBJECTS.WELCOME,
     html: shell(
       `Welcome, ${user.name}`,
       'Your account details and where to sign in',
@@ -383,10 +413,21 @@ export const REPORT_TYPE_LABEL: Record<EmailReportType, string> = {
  * has no date pickers to read.
  */
 
-/** Zebra + right-aligned numbers, the same treatment the agent tables get. */
-function cell(v: unknown, opts: { bold?: boolean; align?: string; bg?: string } = {}): string {
-  return `<td style="padding:7px 10px;border-bottom:1px solid ${BORDER};font-size:12px;` +
-    `text-align:${opts.align ?? 'left'};${opts.bold ? 'font-weight:bold;' : ''}` +
+/**
+ * Zebra + right-aligned numbers, the same treatment the agent tables get.
+ *
+ * `tight` trims the padding and type for the college table, which now carries a
+ * column per outcome and can run to twenty-odd of them. Inline styles only —
+ * Gmail and Outlook drop <style> blocks.
+ */
+function cell(
+  v: unknown,
+  opts: { bold?: boolean; align?: string; bg?: string; tight?: boolean } = {},
+): string {
+  const pad = opts.tight ? '5px 6px' : '7px 10px';
+  const size = opts.tight ? '11px' : '12px';
+  return `<td style="padding:${pad};border-bottom:1px solid ${BORDER};font-size:${size};` +
+    `white-space:nowrap;text-align:${opts.align ?? 'left'};${opts.bold ? 'font-weight:bold;' : ''}` +
     `${opts.bg ? `background:${opts.bg};` : ''}">${esc(v)}</td>`;
 }
 
@@ -414,7 +455,7 @@ ${fb.rows.map((r) => `<tr>${cell(r.feedback)}${cell(r.leads, { align: 'right' })
   ].map((cells) => cells.map(q).join(',')).join('\n');
 
   return {
-    subject: `Feedback summary — ${w.label}`,
+    subject: DEFAULT_EMAIL_SUBJECTS.FEEDBACK_SUMMARY,
     html: shell('Feedback summary', w.label, inner, FEEDBACK_FOOTER),
     csv,
     periodLabel: w.label,
@@ -427,9 +468,6 @@ const FEEDBACK_FOOTER =
   'under its latest follow-up in the period, so the Total is leads worked rather than ' +
   'follow-ups logged. Outcomes nobody used are not listed.';
 
-/** The default outcome columns, matching the Reports page. */
-const EMAIL_OUTCOME_COLUMNS = ['Walk-In', 'Application Done', 'Admission Done', 'Cold', 'Interested'];
-
 export async function buildCollegeWiseEmail(
   db: PrismaClient,
   scope: Prisma.UserWhereInput,
@@ -439,13 +477,19 @@ export async function buildCollegeWiseEmail(
   const w = reportWindowFor(frequency, now);
   const cb = await buildCollegeBreakdown(db, scope, 'DATEWISE', w.from, w.to, now);
 
-  // An email has no column picker, so the width is chosen here: the same five
-  // the page defaults to, minus any that stayed at zero everywhere. A column of
-  // zeros costs real width in Outlook and tells the reader nothing.
-  const preferred = EMAIL_OUTCOME_COLUMNS.filter((o) => (cb.totals.outcomes[o] ?? 0) > 0);
-  const outcomes = preferred.length > 0
-    ? preferred
-    : cb.availableOutcomes.filter((o) => (cb.totals.outcomes[o] ?? 0) > 0).slice(0, 5);
+  /**
+   * Every outcome that occurred, not a chosen few.
+   *
+   * This used to show only the five the page defaults to, on the reasoning that
+   * a wide table is painful in Outlook. That was the wrong trade: it meant the
+   * body and the attached CSV disagreed about what happened, and the reader had
+   * to open the spreadsheet to see the columns the email had quietly dropped.
+   * A wide table is a nuisance; a table that hides data is a wrong one.
+   *
+   * `availableOutcomes` is already ordered most-common first, so the columns
+   * that matter are the ones still on screen before any horizontal scrolling.
+   */
+  const outcomes = cb.availableOutcomes;
   const showOther = cb.totals.other > 0;
 
   const headers = ['University Name', 'Dialed', 'Connected', 'Connected %', 'Not Connected',
@@ -455,17 +499,24 @@ export async function buildCollegeWiseEmail(
     ...(showOther ? [r.other] : []), ...outcomes.map((o) => r.outcomes[o] ?? 0),
   ];
 
+  const t = (v: unknown, i: number, extra: { bold?: boolean; bg?: string } = {}) =>
+    cell(v, { ...extra, tight: true, align: i === 0 ? 'left' : 'right' });
+
+  // Wrapped in an overflow-x container: a client wide enough shows the lot, and
+  // a narrow one scrolls rather than squashing every column into unreadability.
   const inner = cb.rows.length === 0
     ? `<p style="font-size:13px;color:${MUTED}">No follow-ups were logged in this period.</p>`
-    : `<table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="border-collapse:collapse">
-<tr>${line(w.label, cb.totals).map((v, i) => cell(v, { bold: true, align: i === 0 ? 'left' : 'right', bg: '#fdf2e3' })).join('')}</tr>
-<tr>${headers.map((h, i) => cell(h, { bold: true, align: i === 0 ? 'left' : 'right', bg: HEAD_BG })).join('')}</tr>
-${cb.rows.map((r) => `<tr>${line(r.college, r).map((v, i) => cell(v, { align: i === 0 ? 'left' : 'right' })).join('')}</tr>`).join('\n')}
-</table>`;
+    : `<div style="overflow-x:auto;-webkit-overflow-scrolling:touch">
+<table role="presentation" cellpadding="0" cellspacing="0" style="border-collapse:collapse;min-width:100%">
+<tr>${line(w.label, cb.totals).map((v, i) => t(v, i, { bold: true, bg: '#fdf2e3' })).join('')}</tr>
+<tr>${headers.map((h, i) => t(h, i, { bold: true, bg: HEAD_BG })).join('')}</tr>
+${cb.rows.map((r) => `<tr>${line(r.college, r).map((v, i) => t(v, i)).join('')}</tr>`).join('\n')}
+</table>
+</div>`;
 
-  // The attachment carries EVERY outcome, not just the columns that fit in the
-  // body — that is what the spreadsheet is for.
-  const allOutcomes = cb.availableOutcomes;
+  // Body and attachment now carry the same columns, so the two can no longer
+  // disagree about what happened.
+  const allOutcomes = outcomes;
   const csvLine = (name: string, r: typeof cb.totals) => [
     name, r.dialed, r.connected, r.connectedPct === null ? '' : `${r.connectedPct}%`, r.notConnected,
     ...(showOther ? [r.other] : []), ...allOutcomes.map((o) => r.outcomes[o] ?? 0),
@@ -478,8 +529,8 @@ ${cb.rows.map((r) => `<tr>${line(r.college, r).map((v, i) => cell(v, { align: i 
   ].map((cells) => cells.map(q).join(',')).join('\n');
 
   return {
-    subject: `University / College wise — ${w.label}`,
-    html: shell('University / College wise', w.label, inner, COLLEGE_FOOTER),
+    subject: DEFAULT_EMAIL_SUBJECTS.COLLEGE_WISE,
+    html: shell('University / College wise', w.label, inner, COLLEGE_FOOTER, true),
     csv,
     periodLabel: w.label,
     rows: [],
@@ -488,5 +539,6 @@ ${cb.rows.map((r) => `<tr>${line(r.college, r).map((v, i) => cell(v, { align: i 
 
 const COLLEGE_FOOTER =
   'Sent automatically by the Counselling CRM. All dates are IST. The same leads as the ' +
-  'feedback summary, counted the same way, so Dialed totals to the same number. The attached ' +
-  'CSV carries every outcome, not only the columns shown here.';
+  'feedback summary, counted the same way, so Dialed totals to the same number. Every outcome ' +
+  'that occurred has a column here and in the attached CSV; scroll sideways if your mail app ' +
+  'cannot fit them all.';
