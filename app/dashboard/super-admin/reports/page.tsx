@@ -387,11 +387,11 @@ export default function ReportsPage() {
               </Button>
             </div>
 
-            <div className="max-w-xl overflow-hidden rounded-xl border border-border/60">
+            <div className="overflow-hidden rounded-xl border border-border/60">
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-border/60 bg-amber-500/15">
-                    <th className="px-4 py-2.5 text-left font-bold">
+                    <th className="px-4 py-2.5 text-left font-bold" colSpan={2}>
                       <GraduationCap className="mr-1.5 inline h-4 w-4 align-text-bottom" />
                       University/Institution Count
                     </th>
@@ -403,27 +403,53 @@ export default function ReportsPage() {
                 <tbody>
                   {data.feedbackBreakdown.rows.length === 0 ? (
                     <tr>
-                      <td colSpan={2} className="px-4 py-10 text-center text-muted-foreground">
+                      <td colSpan={3} className="px-4 py-10 text-center text-muted-foreground">
                         No follow-ups were logged in this window.
                       </td>
                     </tr>
                   ) : (
-                    data.feedbackBreakdown.rows.map((r) => (
-                      <tr
-                        key={r.feedback}
-                        className={cn('border-b border-border/40 last:border-b-0', categoryTone(r.category))}
-                        title={r.category ? `${r.category} category` : 'No category set'}
-                      >
-                        <td className="px-4 py-2">{r.feedback}</td>
-                        <td className="px-4 py-2 text-right tabular-nums">{r.leads.toLocaleString('en-IN')}</td>
-                      </tr>
-                    ))
+                    data.feedbackBreakdown.rows.map((r) => {
+                      const share = data.feedbackBreakdown.total > 0
+                        ? (r.leads / data.feedbackBreakdown.total) * 100
+                        : 0;
+                      return (
+                        <tr
+                          key={r.feedback}
+                          className={cn('border-b border-border/40 last:border-b-0', categoryTone(r.category))}
+                          title={r.category ? `${r.category} category` : 'No category set'}
+                        >
+                          <td className="whitespace-nowrap px-4 py-2">{r.feedback}</td>
+                          {/*
+                            One hue, not one per category: this column's job is
+                            magnitude, and a colour per row would be a 22-way
+                            rainbow encoding nothing. The category is already
+                            carried by the row tint. Square at the baseline,
+                            4px rounded at the data end.
+                          */}
+                          <td className="w-full px-4 py-2">
+                            <div className="flex items-center gap-2.5">
+                              <div className="h-2 min-w-[3rem] flex-1 overflow-hidden rounded-sm bg-primary/10">
+                                <div
+                                  className="h-full rounded-r-[4px] bg-primary/70"
+                                  style={{ width: `${share}%` }}
+                                />
+                              </div>
+                              <span className="w-9 shrink-0 text-right text-[11px] tabular-nums text-muted-foreground">
+                                {/* A row that exists is never "0%" — that reads as nothing happened. */}
+                                {share > 0 && share < 1 ? '<1%' : `${Math.round(share)}%`}
+                              </span>
+                            </div>
+                          </td>
+                          <td className="px-4 py-2 text-right tabular-nums">{r.leads.toLocaleString('en-IN')}</td>
+                        </tr>
+                      );
+                    })
                   )}
                 </tbody>
                 {data.feedbackBreakdown.rows.length > 0 && (
                   <tfoot>
                     <tr className="border-t-2 border-border bg-amber-500/15">
-                      <td className="px-4 py-2.5 font-bold">Total</td>
+                      <td className="px-4 py-2.5 font-bold" colSpan={2}>Total</td>
                       <td className="px-4 py-2.5 text-right font-bold tabular-nums">
                         {data.feedbackBreakdown.total.toLocaleString('en-IN')}
                       </td>
