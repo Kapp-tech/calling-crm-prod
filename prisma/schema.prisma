@@ -239,6 +239,7 @@ model User {
   securityPinFailedAttempts Int                 @default(0)
   securityPinLockedUntil    DateTime?
   adminActionUnlocks        AdminActionUnlock[]
+  priorityAssignmentEdits   PriorityAssignmentSetting[] @relation("PriorityAssignmentUpdatedBy")
 
   // KPIs and targets this user has authored. Both are organisation-wide rather
   // than per user, so there is no inverse "targets for me" relation.
@@ -979,6 +980,42 @@ model ApiKey {
 // global, so unlocking one PIN-gated tool never unlocks another. Checked
 // server-side by the protected routes themselves — the frontend PIN prompt
 // is UX, this row is the actual enforcement.
+/// Auto-assignment of incoming leads by Data Calling Type.
+///
+/// One row, id "singleton" — this is a setting, not a list. A lead arriving
+/// with one of `dataCallingTypes` is handed to the next agent in `agentIds`,
+/// round-robin. See lib/priority-assignment.ts.
+model PriorityAssignmentSetting {
+  id String @id @default("singleton")
+
+  /// Super Admin's master switch. Off means incoming leads are untouched.
+  isEnabled Boolean @default(false)
+
+  /// Which Data Calling Types trigger it. Empty means it never fires — a rule
+  /// that matched everything by default would be a nasty way to find out it
+  /// was left on.
+  dataCallingTypes String[]
+
+  /// Who leads go to, in order. Held as ids rather than a join table: the set
+  /// is small, edited wholesale, and always re-checked against live agents at
+  /// assign time, so a deactivated agent simply drops out.
+  agentIds String[]
+
+  /// Round-robin position. Incremented atomically by the size of each batch,
+  /// so two concurrent uploads take disjoint ranges instead of both starting
+  /// from the same agent.
+  cursor Int @default(0)
+
+  /// Running totals, so the page can show that it is actually doing something.
+  assignedCount Int       @default(0)
+  lastAssignedAt DateTime?
+
+  updatedById String?
+  updatedBy   User?   @relation("PriorityAssignmentUpdatedBy", fields: [updatedById], references: [id])
+  updatedAt   DateTime @updatedAt
+  createdAt   DateTime @default(now())
+}
+
 model AdminActionUnlock {
   id        String   @id @default(cuid())
   userId    String

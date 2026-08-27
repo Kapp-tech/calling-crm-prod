@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { DropdownType } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { callingTypeForIngest } from '@/lib/lead-code';
+import { planPriorityAssignments } from '@/lib/priority-assignment';
 import { logActivity } from '@/lib/permissions';
 import { verifyApiKey } from '@/lib/api-key';
 import { fetchLmsCityNames, fetchLmsStateNames, fetchLmsCourseNames, toCanonicalMap } from '@/lib/lms-api';
@@ -386,6 +387,11 @@ export async function POST(req: NextRequest) {
       }
 
       const now = new Date();
+      const callingType = callingTypeForIngest(maps.dropdownData.leadCodeCallingTypeMap, d.leadCode);
+      // Priority auto-assignment. These arrive APPROVED, so an auto-assigned
+      // lead is in its agent's queue immediately — which is the point.
+      const [priorityAgentId] = await planPriorityAssignments(prisma, [callingType]);
+
       const lead = await prisma.lead.create({
         data: {
           // Not @updatedAt any more (see schema.prisma).
@@ -397,7 +403,8 @@ export async function POST(req: NextRequest) {
           leadStage, leadVerification: d.leadVerification,
           // Lead code decides this, not the payload: an unmapped code lands as
           // "NA" so it is visibly waiting to be mapped.
-          dataCallingType: callingTypeForIngest(maps.dropdownData.leadCodeCallingTypeMap, d.leadCode),
+          dataCallingType: callingType,
+          ...(priorityAgentId ? { assignedToId: priorityAgentId, assignedAt: now } : {}),
           leadZone: collegeAttrs?.zone ?? null,
           dealType: collegeAttrs?.dealType ?? null,
           primaryApplicationConfirm: 'No', primaryAdmissionConfirm: 'No',
@@ -551,6 +558,15 @@ export async function POST(req: NextRequest) {
 
       // Phase 3 — create everything that's left, in parallel
       const now = new Date();
+      // Planned up front, not inside the loop: the creates run concurrently, so
+      // reserving a slot per lead in there would be one cursor write each and
+      // the rotation order would depend on which promise happened to win.
+      const bulkCallingTypes = toCreate.map((p) =>
+        callingTypeForIngest(maps.dropdownData.leadCodeCallingTypeMap, p.d.leadCode));
+      const bulkPriorityAgents = await planPriorityAssignments(prisma, bulkCallingTypes);
+      const priorityByIndex = new Map(toCreate.map((p, i) => [p.index, bulkPriorityAgents[i]]));
+      const callingTypeByIndex = new Map(toCreate.map((p, i) => [p.index, bulkCallingTypes[i]]));
+
       const createdIdByIndex = new Map<number, string>();
       await Promise.all(toCreate.map(async (p) => {
         try {
@@ -567,7 +583,8 @@ export async function POST(req: NextRequest) {
               leadStage: canonicalStage(d.leadStage), leadVerification: d.leadVerification,
               // Same rule as the single-lead path, read from the prebuilt map so
               // a bulk push does not fire one query per lead.
-              dataCallingType: callingTypeForIngest(maps.dropdownData.leadCodeCallingTypeMap, d.leadCode),
+              dataCallingType: callingTypeByIndex.get(index) ?? null,
+              ...(priorityByIndex.get(index) ? { assignedToId: priorityByIndex.get(index)!, assignedAt: now } : {}),
               // Same as the single-lead path: both come from the college.
               leadZone: maps.dropdownData.collegeAttributeMap.get(d.kappCollegeId.toLowerCase())?.zone ?? null,
               dealType: maps.dropdownData.collegeAttributeMap.get(d.kappCollegeId.toLowerCase())?.dealType ?? null,

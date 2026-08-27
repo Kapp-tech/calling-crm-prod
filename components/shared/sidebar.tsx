@@ -12,7 +12,7 @@ import {
   UserCircle, UserCheck, ClipboardList, LogOut, ChevronRight, ChevronDown,
   GitBranch, CalendarClock, X, ChevronsLeft, ChevronsRight,
   GraduationCap, Tag, Globe2, CheckSquare, ShieldCheck, Phone,
-  Megaphone, Gauge, Receipt, Layers, KeyRound, Settings, Trash2, Webhook, Search, Target, FileBarChart, Mail, Link2, Hash,} from 'lucide-react';
+  Megaphone, Gauge, Receipt, Layers, KeyRound, Settings, Trash2, Webhook, Search, Target, FileBarChart, Mail, Link2, Hash, Zap,} from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
@@ -78,7 +78,7 @@ const NAV: NavEntry[] = [
   {
     type: 'leaf',
     href: '/dashboard/counselling-agent/scheduled-calls',
-    label: 'Scheduled Calls',
+    label: 'Scheduled/Missed Calls',
     icon: CalendarClock,
     // REPORTS is read-only here (page has no mark-done/cancel actions) —
     // mirrors /api/leads/scheduled-calls, which already scopes REPORTS
@@ -378,6 +378,12 @@ const NAV: NavEntry[] = [
         href: '/dashboard/super-admin/configurations/lead-integrations',
         label: 'Lead Integrations',
         icon: Webhook,
+        roles: ['SUPER_ADMIN'],
+      },
+      {
+        href: '/dashboard/super-admin/configurations/priority-settings',
+        label: 'Priority Settings',
+        icon: Zap,
         roles: ['SUPER_ADMIN'],
       },
       {

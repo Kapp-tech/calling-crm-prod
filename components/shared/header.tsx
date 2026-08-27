@@ -19,6 +19,7 @@ const PAGE_TITLES: Record<string, string> = {
   // Reports; this page itself is Performance Analysis.
   '/dashboard/super-admin/performance': 'Performance Analysis',
   '/dashboard/super-admin/activity-logs': 'Activity Logs',
+  '/dashboard/super-admin/configurations/priority-settings': 'Priority Settings',
   '/dashboard/super-admin/feedback-options': 'Feedback Options',
   '/dashboard/operations': 'Upload Leads',
   '/dashboard/reports': 'Lead Approvals',
@@ -27,7 +28,7 @@ const PAGE_TITLES: Record<string, string> = {
   '/dashboard/counselling-tl/team': 'My Team',
   '/dashboard/counselling-agent': 'My Assigned Leads',
   '/dashboard/counselling-agent/due-today': 'Follow-ups Due Today',
-  '/dashboard/counselling-agent/scheduled-calls': 'Scheduled Calls',
+  '/dashboard/counselling-agent/scheduled-calls': 'Scheduled/Missed Calls',
   '/dashboard/super-admin/announcements': 'Announcements',
   '/dashboard/announcements': 'Announcements',
   '/dashboard/profile': 'My Profile',

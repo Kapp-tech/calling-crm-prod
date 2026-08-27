@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { authOptions } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import { callingTypeForIngest } from '@/lib/lead-code';
+import { planPriorityAssignments } from '@/lib/priority-assignment';
 import { hasPermission } from '@/lib/permissions';
 import { buildDropdownValidationSets, isAllowedDropdownValue } from '@/lib/dropdown-validation';
 import { Feature, DropdownType } from '@prisma/client';
@@ -196,8 +197,26 @@ export async function POST(req: NextRequest) {
       });
 
       if (toInsert.length > 0) {
+        /**
+         * Priority auto-assignment.
+         *
+         * Planned for the whole file in one go — one cursor write instead of
+         * one per lead — and worked out from the calling type the lead will
+         * actually be stored with, which for a mapped lead code is the mapping's
+         * value rather than anything the CSV said.
+         *
+         * These rows are created PENDING, so an auto-assigned lead is not
+         * visible to its agent until it is approved. That is deliberate: the
+         * assignment is decided now and simply waits, rather than putting
+         * unapproved leads in somebody's queue.
+         */
+        const callingTypes = toInsert.map((lead) =>
+          callingTypeForIngest(leadCodeCallingTypeMap, lead.campaign));
+        const priorityAgents = await planPriorityAssignments(tx, callingTypes);
+        const assignedAt = new Date();
+
         await tx.lead.createMany({
-          data: toInsert.map((lead) => ({
+          data: toInsert.map((lead, i) => ({
             // Not @updatedAt any more (see schema.prisma) — a new lead reads as
             // its creation time until the first feedback advances it.
             updatedAt:  new Date(),
@@ -223,7 +242,8 @@ export async function POST(req: NextRequest) {
             leadVerification:          lead.lead_verification?.trim()           || null,
             // Lead code decides this, not the CSV column: an unmapped code
             // lands as "NA" so it is visibly waiting to be mapped.
-            dataCallingType: callingTypeForIngest(leadCodeCallingTypeMap, lead.campaign),
+            dataCallingType: callingTypes[i],
+            ...(priorityAgents[i] ? { assignedToId: priorityAgents[i]!, assignedAt } : {}),
             dealType:   collegeAttributeMap.get((lead._kappCollegeId ?? '').toLowerCase())?.dealType ?? null,
             uploadedAt:                parseDate(lead.created_at),
             status:      'PENDING',
