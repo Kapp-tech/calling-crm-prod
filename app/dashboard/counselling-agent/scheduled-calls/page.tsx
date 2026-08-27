@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useMemo } from 'react';
+import { MissedCallsTable } from '@/components/calls/missed-calls-table';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useSession } from 'next-auth/react';
 import {
@@ -49,7 +50,10 @@ interface ApiResponse {
 // 'OVERDUE' is not a ScheduledCallStatus — it is PENDING whose slot has passed.
 // Kept as a tab value here and translated to status=PENDING&timing=overdue when
 // querying, so the tab strip can present it alongside the real statuses.
-type StatusFilter = 'PENDING' | 'OVERDUE' | 'DONE' | 'CANCELLED' | 'all';
+// 'MISSED' is not a ScheduledCallStatus either — it is a dialer record, not
+// something the CRM scheduled. It rides on the same tab strip because a missed
+// call is the same job as a scheduled one: somebody to ring back.
+type StatusFilter = 'PENDING' | 'OVERDUE' | 'DONE' | 'CANCELLED' | 'all' | 'MISSED';
 type ViewMode = 'list' | 'calendar';
 
 const WEEK_DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -329,6 +333,7 @@ export default function ScheduledCallsPage() {
     { label: 'Done',      value: 'DONE' },
     { label: 'Cancelled', value: 'CANCELLED' },
     { label: 'All',       value: 'all' },
+    { label: 'Missed',    value: 'MISSED' },
   ];
 
   // Calendar fetches the whole month with status=all, no pagination
@@ -497,6 +502,20 @@ export default function ScheduledCallsPage() {
             )}
           </div>
 
+          {/* Missed calls come from the dialer, not from ScheduledCall, so the
+              tab swaps the whole table rather than re-filtering this one. */}
+          {statusFilter === 'MISSED' ? (
+            <div className="flex-1 overflow-auto">
+              <MissedCallsTable
+                page={page}
+                limit={limit}
+                onPageChange={setPage}
+                onLimitChange={(l) => { setLimit(l); setPage(1); }}
+                onLeadClick={setSelectedLeadId}
+              />
+            </div>
+          ) : (
+          <>
           {/* Table */}
           <div className="flex-1 overflow-auto rounded-lg border border-border/60">
             <table className="w-full min-w-[900px] text-xs">
@@ -656,6 +675,8 @@ export default function ScheduledCallsPage() {
               disabled={isFetching}
               className="shrink-0"
             />
+          )}
+          </>
           )}
         </>
       )}

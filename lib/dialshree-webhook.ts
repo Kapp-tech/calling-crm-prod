@@ -24,6 +24,13 @@ export interface DialerCallFacts {
   /** Last 10 digits — what Lead.phone stores. */
   phoneKey: string;
   agentSeat: string | null;
+  /** `security_phrase` verbatim — the dialer's own tag on the call. */
+  securityPhrase: string | null;
+  /**
+   * True when the dialer says the caller hung up before an agent picked up:
+   * a missed call. DialShree signals it with `term_reason: "ABANDON"`.
+   */
+  missed: boolean;
   agentFullName: string | null;
   agentEmail: string | null;
   callType: string | null;
@@ -102,6 +109,26 @@ export function parseDialerTimestamp(value: unknown): Date | null {
  * so both forms have to collapse to the same key or a real call would look like
  * it belonged to no lead.
  */
+/**
+ * The agent seat inside a `sticky<dialshreeId>` tag — "sticky100098" -> "100098".
+ *
+ * Read from `security_phrase` first and `campaign` second. On production
+ * `security_phrase` is usually empty and `campaign` carries it, so taking
+ * whichever is present is what makes the attribution work at all.
+ *
+ * Anything not matching `sticky<digits>` is ignored rather than guessed at:
+ * outbound calls carry a real campaign name here ("INDO INTERNET PR…"), and
+ * some inbound ones carry "INDO_INTERNET_IN". Neither is a seat id.
+ */
+export function stickySeat(d: Record<string, unknown>): string | null {
+  for (const key of ['security_phrase', 'campaign']) {
+    const raw = typeof d[key] === 'string' ? (d[key] as string).trim() : '';
+    const m = /^sticky(\d+)$/i.exec(raw);
+    if (m) return m[1];
+  }
+  return null;
+}
+
 export function phoneKeyOf(value: unknown): string {
   const digits = (str(value) ?? '').replace(/\D+/g, '');
   return digits.length > 10 ? digits.slice(-10) : digits;
@@ -182,7 +209,22 @@ export function parseDialerCall(body: unknown): DialerCallFacts {
     phoneCode: str((str(d.phone_code) ?? '').replace(/\D+/g, '')),
     phoneNumber,
     phoneKey,
-    agentSeat: str(fromEitherLevel(d, 'user')),
+    /**
+     * Sticky FIRST, `user` second — not the other way round.
+     *
+     * On an outbound call `user` is the real seat ("100098") and the campaign is
+     * the dialing campaign ("INDO INTERNET PR…"), which never matches the sticky
+     * pattern, so `user` is used. On an inbound call the lead abandoned, `user`
+     * is the trunk — literally "VDCL" on production, not an agent at all — and
+     * the seat the lead was sticky to is in the campaign as `sticky100096`.
+     *
+     * Treating sticky as a mere fallback attributed nothing: `user` was present
+     * on every one of those rows, just useless. Sticky only ever appears where
+     * it is the right answer, so it leads.
+     */
+    agentSeat: stickySeat(d) ?? str(fromEitherLevel(d, 'user')),
+    securityPhrase: str(d.security_phrase),
+    missed: (str(d.term_reason) ?? '').toUpperCase() === 'ABANDON',
     agentFullName: str(d.agent_full_name),
     agentEmail: str(d.agent_email),
     callType: str(d.call_type),
