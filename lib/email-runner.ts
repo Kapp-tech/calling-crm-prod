@@ -3,6 +3,7 @@ import { sendEmail, EmailAddress, isEmailConfigured } from './email';
 import {
   buildAgentEmail, buildTeamSummary, buildAgentBlocks, buildWelcomeEmail,
   buildFeedbackSummaryEmail, buildCollegeWiseEmail, buildAgentWiseEmail,
+  buildOverallCallingEmail, buildAllReportsEmail,
 } from './email-reports';
 import { isRuleDue, periodKeyFor, reportWindowFor } from './email-schedule';
 import { subjectFor } from './email-subjects';
@@ -84,7 +85,9 @@ export async function runEmailRule(
   const window = reportWindowFor(rule.frequency, now);
   // The admin's subject if they set one, else the report's own. Resolved once
   // here rather than inside each branch, so no report type can be left out.
-  const subject = (built: { subject: string }) => subjectFor(rule.reportType, rule.subject) || built.subject;
+  // `now` is passed so the All-reports subject names the month being reported.
+  const subject = (built: { subject: string }) =>
+    subjectFor(rule.reportType, rule.subject, now) || built.subject;
   const stamp = `${rule.id.slice(-8)}-${window.from}-${Date.now()}`;
 
   const record = async (
@@ -185,13 +188,19 @@ export async function runEmailRule(
           ? await buildCollegeWiseEmail(db, breakdownScope, rule.frequency, now)
           : rule.reportType === 'AGENT_WISE'
             ? await buildAgentWiseEmail(db, scopeFor(rule), rule.frequency, now)
-            : await buildTeamSummary(db, scopeFor(rule), rule.frequency, now);
+            : rule.reportType === 'OVERALL_CALLING'
+              ? await buildOverallCallingEmail(db, scopeFor(rule), rule.frequency, now)
+              : rule.reportType === 'ALL_REPORTS'
+                ? await buildAllReportsEmail(db, scopeFor(rule), breakdownScope, rule.frequency, now)
+                : await buildTeamSummary(db, scopeFor(rule), rule.frequency, now);
 
     const csvName =
       rule.reportType === 'FEEDBACK_SUMMARY' ? 'feedback_summary'
         : rule.reportType === 'COLLEGE_WISE' ? 'college_wise'
           : rule.reportType === 'AGENT_WISE' ? 'agent_wise_report'
-            : 'team_performance';
+            : rule.reportType === 'OVERALL_CALLING' ? 'overall_calling_report'
+            : rule.reportType === 'ALL_REPORTS' ? 'all_reports'
+              : 'team_performance';
 
     let to: EmailAddress[] = [];
     if (rule.audience === 'FIXED') to = addressesFrom(rule.toEmails);

@@ -1202,6 +1202,12 @@ enum EmailReportType {
   /// / points earned for every KPI, then Total Score, Max Score, Score % and a
   /// grade. The emailed twin of the KPI Targets page's download.
   AGENT_WISE
+  /// Dialled, connected and talktime for every agent across four windows —
+  /// today, this week, this month and all time — against the daily mandate.
+  OVERALL_CALLING
+  /// Every table in one email, in a fixed order, under a subject that names the
+  /// month. The only recurring report whose subject changes.
+  ALL_REPORTS
 }
 
 enum EmailFrequency {

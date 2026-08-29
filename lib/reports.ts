@@ -515,3 +515,174 @@ export async function buildCollegeBreakdown(
     totals,
   };
 }
+
+// ─── Overall Calling Report ──────────────────────────────────────────────────
+
+export interface CallingRow {
+  name: string;
+  employeeCode: string | null;
+  dialed: number;
+  connected: number;
+  /** Total dialer minutes, the same figure the Talktime KPI reports. */
+  talktimeMin: number;
+}
+
+export interface CallingBlock {
+  key: 'DAILY' | 'WEEKLY' | 'MONTHLY' | 'OVERALL';
+  label: string;
+  /** Letter used by the block's total row; Overall has none. */
+  letter: string | null;
+  from: string | null;
+  to: string | null;
+  /**
+   * IST days the window covers so far — 1 for today, Monday-to-today for the
+   * week, the 1st-to-today for the month. Counting elapsed days rather than
+   * whole ones is what stops a Wednesday being measured against a full week.
+   * Null for Overall, which has no meaningful mandate.
+   */
+  days: number | null;
+  rows: CallingRow[];
+  /** Every agent in scope, whether or not they worked in this window. */
+  employees: number;
+  /**
+   * Agents who dialled at least one lead in this window.
+   *
+   * This is the denominator basis for the floor-level percentages: a mandate is
+   * per agent per day, so the floor's target is mandate x days x people. Using
+   * the people who actually worked is what stops a day when half the team is on
+   * leave from reading as a collapse — and it is why the summary puts this
+   * column immediately before the figures it explains.
+   */
+  activeEmployees: number;
+  totals: { dialed: number; connected: number; talktimeMin: number };
+}
+
+export interface OverallCallingReport {
+  dateLabel: string;
+  /** Per-day expectations, read from the KPI Targets page's daily targets. */
+  mandates: { dialed: number | null; connected: number | null; talktime: number | null };
+  blocks: CallingBlock[];
+  /**
+   * Daily + Weekly + Monthly, as the sheet defines it. These windows overlap —
+   * today sits inside this week, which sits inside this month — so it is the
+   * sum the sheet asks for, not a count of distinct work. `days` is the same
+   * sum of the three windows' days, so the percentage is at least measured
+   * against the same thing the numerator adds up.
+   */
+  grandTotal: {
+    dialed: number; connected: number; talktimeMin: number; days: number; activeEmployees: number;
+  };
+}
+
+/**
+ * The Overall Calling Report: the same agents in four windows — today, this
+ * week so far, this month so far, and all time — against the daily mandate.
+ *
+ * Dialled and Connected come from `buildAgentReport`, so they carry the same
+ * leads-not-follow-ups counting and the same exhaustive Connected split as
+ * every other report here. Talktime is the dialer's own total, matching the
+ * Talktime KPI's `CALL_TALKTIME_MINUTES` rather than the *average* per call
+ * that the agent tables show — a mandate of "180 mins" is plainly a daily
+ * total, and a second definition of talktime is how two reports start
+ * disagreeing.
+ *
+ * The mandates are read from KPI Targets rather than stored again here. One
+ * place to change an expectation; change it there and this report follows.
+ */
+export async function buildOverallCallingReport(
+  db: PrismaClient,
+  agentWhere: Prisma.UserWhereInput,
+  now = new Date(),
+): Promise<OverallCallingReport> {
+  const todayKey = istDayKey(now);
+  const dow = new Date(`${todayKey}T00:00:00.000Z`).getUTCDay(); // 0 = Sun
+  const monday = istShiftDays(todayKey, -(dow === 0 ? 6 : dow - 1));
+  const monthFirst = `${todayKey.slice(0, 8)}01`;
+  const dayOfMonth = Number(todayKey.slice(8, 10));
+  const daysInclusive = (from: string, to: string) =>
+    Math.round(
+      (Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000,
+    ) + 1;
+
+  const defs = await db.kpiDefinition.findMany({
+    select: { name: true, source: true, targets: { where: { period: 'DAILY' }, select: { target: true } } },
+  });
+  const byName = (re: RegExp) => defs.find((d) => re.test(d.name))?.targets[0]?.target ?? null;
+  const mandates = {
+    dialed: byName(/dial+ed/i) ?? byName(/dial/i),
+    connected: byName(/connect/i),
+    // Matched by source first: it is unambiguous where a name is not.
+    talktime:
+      defs.find((d) => d.source === 'CALL_TALKTIME_MINUTES')?.targets[0]?.target ?? byName(/talk/i),
+  };
+
+  const spec: Omit<CallingBlock, 'rows' | 'totals' | 'employees' | 'activeEmployees'>[] = [
+    { key: 'DAILY', label: 'Daily', letter: 'A', from: todayKey, to: todayKey, days: 1 },
+    { key: 'WEEKLY', label: 'Weekly', letter: 'B', from: monday, to: todayKey, days: daysInclusive(monday, todayKey) },
+    { key: 'MONTHLY', label: 'Monthly', letter: 'C', from: monthFirst, to: todayKey, days: dayOfMonth },
+    { key: 'OVERALL', label: 'Overall', letter: null, from: null, to: null, days: null },
+  ];
+
+  const agents = await db.user.findMany({ where: agentWhere, select: { id: true } });
+  const ids = agents.map((a) => a.id);
+
+  const blocks: CallingBlock[] = [];
+  for (const s of spec) {
+    const { rows: agentRows } = await buildAgentReport(
+      db, agentWhere, s.from ? 'DATEWISE' : 'OVERALL', s.from, s.to, now,
+    );
+    const window = reportRange(s.from ? 'DATEWISE' : 'OVERALL', s.from, s.to, now);
+    const talk =
+      ids.length === 0
+        ? []
+        : await db.callLog.groupBy({
+            by: ['agentId'],
+            where: { agentId: { in: ids }, ...(within(window.from, window.to) ? { startedAt: within(window.from, window.to) } : {}) },
+            _sum: { talkTimeSeconds: true },
+          });
+    const talkBy = new Map<string, number>();
+    for (const t of talk as { agentId: string | null; _sum: { talkTimeSeconds: number | null } }[]) {
+      // Floored, exactly as the Talktime KPI does it: a 180-minute mandate
+      // should not be met by 179m40s.
+      if (t.agentId) talkBy.set(t.agentId, Math.floor((t._sum.talkTimeSeconds ?? 0) / 60));
+    }
+
+    const rows: CallingRow[] = agentRows.map((r) => ({
+      name: r.name,
+      employeeCode: r.employeeCode,
+      dialed: r.dialedCalls,
+      connected: r.connectedCalls,
+      talktimeMin: talkBy.get(r.id) ?? 0,
+    }));
+    blocks.push({
+      ...s,
+      rows,
+      employees: rows.length,
+      activeEmployees: rows.filter((r) => r.dialed > 0).length,
+      totals: rows.reduce(
+        (acc, r) => ({
+          dialed: acc.dialed + r.dialed,
+          connected: acc.connected + r.connected,
+          talktimeMin: acc.talktimeMin + r.talktimeMin,
+        }),
+        { dialed: 0, connected: 0, talktimeMin: 0 },
+      ),
+    });
+  }
+
+  // A + B + C, as the sheet defines it. Deliberately NOT including Overall.
+  const abc = blocks.filter((b) => b.letter !== null);
+  const grandTotal = abc.reduce(
+    (acc, b) => ({
+      dialed: acc.dialed + b.totals.dialed,
+      connected: acc.connected + b.totals.connected,
+      talktimeMin: acc.talktimeMin + b.totals.talktimeMin,
+      days: acc.days + (b.days ?? 0),
+      activeEmployees: acc.activeEmployees + b.activeEmployees,
+    }),
+    { dialed: 0, connected: 0, talktimeMin: 0, days: 0, activeEmployees: 0 },
+  );
+
+  const [yy, mm, dd] = todayKey.split('-');
+  return { dateLabel: `${dd}/${mm}/${yy}`, mandates, blocks, grandTotal };
+}

@@ -1,10 +1,13 @@
 import { EmailFrequency, PrismaClient, Prisma, EmailReportType, KpiPeriod } from '@prisma/client';
-import { buildAgentReport, buildFeedbackBreakdown, buildCollegeBreakdown, AgentReportRow } from './reports';
+import {
+  buildAgentReport, buildFeedbackBreakdown, buildCollegeBreakdown, AgentReportRow,
+  buildOverallCallingReport,
+} from './reports';
 import { kpiScoreboardFor, computeKpiActual, kpiScore, kpiPeriodRange, KPI_PERIODS } from './kpi';
 import { gradeFor } from './kpi-grade';
 import { istDayKey, istShiftDays, formatSheetDate } from './ist-time';
 import { istParts, reportWindowFor } from './email-schedule';
-import { DEFAULT_EMAIL_SUBJECTS } from './email-subjects';
+import { DEFAULT_EMAIL_SUBJECTS, allReportsSubject } from './email-subjects';
 
 /**
  * The HTML the scheduled emails carry.
@@ -29,6 +32,12 @@ const HEAD_BG = '#e9c46a';  // header row
 const STRIPE = '#fdf4e3';   // every other body row
 const MUTED = '#555555';    // subtitles and footers only, never table data
 const LINK = '#0b4a8f';     // links stay link-coloured; that is usability, not theme
+// The Overall Calling Report's own bands, from the sheet it replaces.
+const MANDATE_BG = '#ffff66';  // the date / mandate strip
+const MATRIX_BG = '#f0a23c';   // the column headers
+const TOTAL_BG = '#000000';    // per-block totals, white on black
+const GRAND_BG = '#0000ff';    // the grand total, white on blue
+const ON_DARK = '#ffffff';
 
 function esc(v: unknown): string {
   return String(v ?? '')
@@ -106,7 +115,10 @@ ${inner}
  */
 function cellBox(
   html: string,
-  o: { head?: boolean; align?: string; bold?: boolean; bg?: string; tight?: boolean; span?: number } = {},
+  o: {
+    head?: boolean; align?: string; bold?: boolean; bg?: string; tight?: boolean;
+    span?: number; rowSpan?: number; fg?: string;
+  } = {},
 ): string {
   // Centred unless a caller says otherwise — the welcome email's label/value
   // list is the only thing here that reads better left-aligned.
@@ -114,8 +126,9 @@ function cellBox(
   const size = o.tight ? '11px' : '12px';
   const bg = o.head ? HEAD_BG : o.bg;
   const tag = o.head ? 'th' : 'td';
-  return `<${tag}${o.span ? ` colspan="${o.span}"` : ''} style="border:1px solid ${LINE};padding:${pad};` +
-    `font-size:${size};color:${INK};text-align:${o.align ?? 'center'};` +
+  return `<${tag}${o.span ? ` colspan="${o.span}"` : ''}${o.rowSpan ? ` rowspan="${o.rowSpan}"` : ''}` +
+    ` style="border:1px solid ${LINE};padding:${pad};` +
+    `font-size:${size};color:${o.fg ?? INK};text-align:${o.align ?? 'center'};` +
     `${o.bold || o.head ? 'font-weight:bold;' : 'font-weight:normal;'}` +
     `${bg ? `background:${bg};` : ''}">${html}</${tag}>`;
 }
@@ -291,6 +304,17 @@ ${headerRow()}${rows}
 export interface BuiltReport {
   subject: string;
   html: string;
+  /**
+   * The report's table without the surrounding shell. Present on the reports
+   * the "All reports" mail stitches together, so that mail reuses the very same
+   * markup rather than a second rendering that could drift from it.
+   */
+  inner?: string;
+  /**
+   * The Overall Calling Report's two tables separately, because the combined
+   * mail interleaves another report between them.
+   */
+  parts?: { summary: string; detail: string; summaryCsv: string; detailCsv: string };
   csv?: string;
   periodLabel: string;
   rows: AgentReportRow[];
@@ -440,6 +464,8 @@ export const REPORT_TYPE_LABEL: Record<EmailReportType, string> = {
   FEEDBACK_SUMMARY: 'Feedback summary (leads by outcome)',
   COLLEGE_WISE: 'University / College wise (leads by college)',
   AGENT_WISE: 'Agent wise (KPI scoreboard, every agent in one file)',
+  OVERALL_CALLING: 'Overall calling (dialled, connected and talktime vs the daily mandate)',
+  ALL_REPORTS: 'All reports (every table above, in one email)',
 };
 
 // ─── Feedback summary & College-wise ─────────────────────────────────────────
@@ -482,6 +508,7 @@ ${fb.rows.map((r, i) => `<tr>${cell(r.feedback, { bg: stripe(i) })}${cell(r.lead
   return {
     subject: DEFAULT_EMAIL_SUBJECTS.FEEDBACK_SUMMARY,
     html: shell('Feedback summary', w.label, inner, { footer: FEEDBACK_FOOTER, greeting: 'Hi Team,' }),
+    inner,
     csv,
     periodLabel: w.label,
     rows: [],
@@ -556,6 +583,7 @@ ${cb.rows.map((r, ri) => `<tr>${line(r.college, r).map((v, i) => t(v, i, { bg: s
     html: shell('University / College wise', w.label, inner, {
       footer: collegeFooter(cb.uncategorisedOutcomes), wide: true, greeting: 'Hi Team,',
     }),
+    inner,
     csv,
     periodLabel: w.label,
     rows: [],
@@ -717,6 +745,7 @@ ${bodyRows.map((r, ri) => `<tr>${r.map((v, i) => t(v, i, { bg: stripe(ri) })).jo
     html: shell('Agent wise report', `${periodLabel} · ${rangeLabel}`, inner, {
       footer: AGENT_WISE_FOOTER, wide: true, greeting: 'Hi Team,',
     }),
+    inner,
     csv,
     periodLabel: rangeLabel,
     rows: [],
@@ -729,3 +758,239 @@ const AGENT_WISE_FOOTER =
   'rule reports against the weekly targets. The Total row multiplies each per-agent target by ' +
   'the headcount. A blank means no target is set for that KPI in this period, which is not the ' +
   'same as achieving nothing. Grade is a band on Score %: A+ 90, A 80, B 70, C 60, D 50.';
+
+// ─── Overall Calling Report ──────────────────────────────────────────────────
+
+/**
+ * Dialled, Connected and Talktime for every agent across four windows — today,
+ * this week so far, this month so far, and all time — each against the daily
+ * mandate scaled by the days the window covers.
+ *
+ * A Wednesday's week-to-date is measured against three days of mandate, not
+ * seven. Measuring a partial window against a whole one would report the whole
+ * floor as failing every Monday.
+ *
+ * Overall has no mandate: an unbounded window has no number of days to scale
+ * by, so its percentage columns are a dash rather than an invented figure.
+ */
+export async function buildOverallCallingEmail(
+  db: PrismaClient,
+  scope: Prisma.UserWhereInput,
+  _frequency: EmailFrequency,
+  now: Date,
+): Promise<BuiltReport> {
+  const r = await buildOverallCallingReport(db, scope, now);
+  const M = r.mandates;
+
+  /**
+   * Achieved against the daily mandate x the days the window covers x the
+   * people it covers.
+   *
+   * The headcount matters and was missing at first: a mandate is per agent per
+   * day, so an agent row divides by one person, but a floor total of eleven
+   * agents divides by eleven. Without it a full day's work for the whole team
+   * read as 1,100% of target.
+   *
+   * Active people rather than the whole roster, so a day when half the team is
+   * on leave is not reported as a collapse — and it is why the summary puts the
+   * active count immediately before the figures it explains.
+   */
+  const pct = (achieved: number, mandate: number | null, days: number | null, people = 1) => {
+    if (mandate === null || days === null) return '—';
+    if (mandate === 0) return '100%';   // none expected, so none is success
+    if (people === 0) return '—';       // nobody worked; there is no target to miss
+    return `${Math.round((achieved / (mandate * days * people)) * 100)}%`;
+  };
+  const line = (
+    v: { dialed: number; connected: number; talktimeMin: number },
+    days: number | null,
+    people = 1,
+  ) => [
+    v.dialed, pct(v.dialed, M.dialed, days, people),
+    v.connected, pct(v.connected, M.connected, days, people),
+    v.talktimeMin, pct(v.talktimeMin, M.talktime, days, people),
+  ];
+  const mandateText = (label: string, v: number | null, unit = '') =>
+    v === null ? `${label} — not set` : `${label} - ${v}${unit}`;
+
+  const t = (v: unknown, o: Parameters<typeof cellBox>[1] = {}) => cell(v, { ...o, tight: true });
+
+  const blockRows = r.blocks.map((b) => {
+    const body = b.rows.length === 0
+      ? `<tr>${cellBox('No agents in scope', { tight: true, span: 8 })}</tr>`
+      : b.rows.map((row, i) => {
+          const cells = [
+            // The Matrix label spans the whole block, as in the sheet.
+            ...(i === 0 ? [cellBox(esc(b.label), { tight: true, bold: true, rowSpan: b.rows.length })] : []),
+            t(row.name, { align: 'left', bg: stripe(i) }),
+            ...line(row, b.days).map((v) => t(v, { bg: stripe(i) })),
+          ];
+          return `<tr>${cells.join('')}</tr>`;
+        }).join('');
+    const label = b.letter ? `${b.label} Total ${b.letter}` : `${b.label} Total`;
+    const totals = `<tr>${cellBox(esc(label), { tight: true, bold: true, bg: TOTAL_BG, fg: ON_DARK, span: 2 })}${
+      line(b.totals, b.days, b.activeEmployees).map((v) => t(v, { bold: true, bg: TOTAL_BG, fg: ON_DARK })).join('')
+    }</tr>`;
+    return body + totals;
+  }).join('');
+
+  const SUMMARY_COLS = ['Matrix', 'No of Active Employee', 'Dialled Calls', 'Achieved %',
+    'Connected Calls', 'Achieved %', 'Talktime', 'Achieved %'];
+
+  // The roll-up management reads first: one row per window, with the active
+  // headcount next to the figures so the percentage explains itself.
+  const summary = `<table role="presentation" cellpadding="0" cellspacing="0" style="border-collapse:collapse;min-width:100%;margin-bottom:22px">
+<tr>${cellBox('OVERALL CALLING REPORT SUMMARY', { tight: true, bold: true, bg: STRIPE, span: 8 })}</tr>
+<tr>${SUMMARY_COLS.map((h) => cellBox(esc(h), { tight: true, bold: true, bg: MATRIX_BG })).join('')}</tr>
+<tr>${cellBox('TOTAL', { tight: true, bold: true, bg: TOTAL_BG, fg: ON_DARK })}${
+    cellBox('', { tight: true, bg: TOTAL_BG, fg: ON_DARK, span: 7 })}</tr>
+${r.blocks.map((b, i) => `<tr>${[
+    t(b.label, { bold: true, bg: stripe(i) }),
+    t(b.activeEmployees, { bg: stripe(i) }),
+    ...line(b.totals, b.days, b.activeEmployees).map((v) => t(v, { bg: stripe(i) })),
+  ].join('')}</tr>`).join('')}
+</table>`;
+
+  const detail = `<div style="overflow-x:auto;-webkit-overflow-scrolling:touch">
+<table role="presentation" cellpadding="0" cellspacing="0" style="border-collapse:collapse;min-width:100%">
+<tr>${cellBox('Overall Calling Report', { tight: true, bold: true, bg: STRIPE, span: 8 })}</tr>
+<tr>${cellBox('Date', { tight: true, bold: true, bg: MANDATE_BG })}${
+    cellBox(esc(r.dateLabel), { tight: true, bold: true, bg: MANDATE_BG })}${
+    cellBox(esc(mandateText('Mandate', M.dialed)), { tight: true, bold: true, bg: MANDATE_BG, span: 2 })}${
+    cellBox(esc(mandateText('Connected Mandate', M.connected)), { tight: true, bold: true, bg: MANDATE_BG, span: 2 })}${
+    cellBox(esc(mandateText('Talktime Mandate', M.talktime, ' Mins')), { tight: true, bold: true, bg: MANDATE_BG, span: 2 })}</tr>
+<tr>${['Matrix', 'Employee Name', 'Dialled Calls', 'Achieved %', 'Connected Calls', 'Achieved %', 'Talktime', 'Achieved %']
+    .map((h) => cellBox(esc(h), { tight: true, bold: true, bg: MATRIX_BG })).join('')}</tr>
+${blockRows}
+<tr>${cellBox('Grand Total (A + B + C)', { tight: true, bold: true, bg: GRAND_BG, fg: ON_DARK, span: 2 })}${
+    line(r.grandTotal, r.grandTotal.days, r.grandTotal.activeEmployees)
+      .map((v) => t(v, { bold: true, bg: GRAND_BG, fg: ON_DARK })).join('')
+  }</tr>
+</table>
+</div>`;
+  const inner = `${summary}${detail}`;
+
+  const toCsvText = (rows: unknown[][]) => rows.map((cells) => cells.map(q).join(',')).join('\n');
+  // Kept as two blocks so the combined mail can file them under their own
+  // headings — its order interleaves another report between them.
+  const summaryCsvRows: unknown[][] = [
+    SUMMARY_COLS,
+    ['TOTAL', '', '', '', '', '', '', ''],
+    ...r.blocks.map((b) => [b.label, b.activeEmployees, ...line(b.totals, b.days, b.activeEmployees)]),
+  ];
+  const detailCsvRows: unknown[][] = [
+    ['Date', r.dateLabel, mandateText('Mandate', M.dialed), '',
+      mandateText('Connected Mandate', M.connected), '', mandateText('Talktime Mandate', M.talktime, ' Mins'), ''],
+    ['Matrix', 'Employee Name', 'Dialled Calls', 'Achieved %', 'Connected Calls', 'Achieved %', 'Talktime', 'Achieved %'],
+    ...r.blocks.flatMap((b) => [
+      ...b.rows.map((row) => [b.label, row.name, ...line(row, b.days)]),
+      [b.letter ? `${b.label} Total ${b.letter}` : `${b.label} Total`, '', ...line(b.totals, b.days, b.activeEmployees)],
+    ]),
+    ['Grand Total (A + B + C)', '', ...line(r.grandTotal, r.grandTotal.days, r.grandTotal.activeEmployees)],
+  ];
+  const summaryCsv = toCsvText(summaryCsvRows);
+  const detailCsv = toCsvText(detailCsvRows);
+  // The standalone attachment keeps both titles; the combined mail files the
+  // same two blocks under its own numbered headings instead.
+  const csv = [
+    toCsvText([['OVERALL CALLING REPORT SUMMARY']]), summaryCsv, '',
+    toCsvText([['Overall Calling Report']]), detailCsv,
+  ].join('\n');
+
+  return {
+    subject: DEFAULT_EMAIL_SUBJECTS.OVERALL_CALLING,
+    html: shell('Overall Calling Report', r.dateLabel, inner, {
+      footer: OVERALL_CALLING_FOOTER, wide: true, greeting: 'Hi Team,',
+    }),
+    inner,
+    parts: { summary, detail, summaryCsv, detailCsv },
+    csv,
+    periodLabel: r.dateLabel,
+    rows: [],
+  };
+}
+
+const OVERALL_CALLING_FOOTER =
+  'Sent automatically by the Counselling CRM. All dates are IST. Dialled and Connected count ' +
+  'leads worked, once each, under their latest follow-up — the same rule the other reports use. ' +
+  'Talktime is the dialer\'s total minutes, the figure the Talktime KPI reports, not the average ' +
+  'per call. Mandates are the daily targets set on KPI Targets. An agent row is measured against ' +
+  'the mandate times the days the window covers; a floor total is measured against that times the ' +
+  'number of active employees, since the mandate is per agent per day. Active means agents who ' +
+  'dialled at least one lead in that window, which is the count shown in the summary. The week ' +
+  'is Monday to today and the month is the 1st to today, so a partial window is judged against a ' +
+  'partial mandate. Overall has no day count, so its percentages are a dash. Note the Grand ' +
+  'Total adds Daily + Weekly + Monthly, ' +
+  'and those windows overlap — today sits inside this week, which sits inside this month — so it ' +
+  'is the sum the sheet asks for, not a count of distinct work.';
+
+// ─── All reports, in one email ───────────────────────────────────────────────
+
+/**
+ * The five tables in one mail, in the order Himanshu asked for:
+ *
+ *   1. Overall Calling Summary   — the calling roll-up by window
+ *   2. Summary Report            — the feedback summary, leads by outcome
+ *   3. Overall-Report            — the calling detail, per agent per window
+ *   4. Caller-wise Report        — the KPI scoreboard, per agent
+ *   5. University-Wise Report    — the same leads split by college
+ *
+ * Every section is the *same* markup its own email sends, reused rather than
+ * re-rendered: each builder now returns its table alongside its full email, so
+ * a figure here and the same figure in the standalone report cannot disagree.
+ *
+ * Two scopes, because the reports do not agree on what "everyone" means. The
+ * per-agent tables take the agent scope; the feedback and college breakdowns
+ * take the wider one, so an org-wide rule counts follow-ups whoever logged
+ * them — exactly as those reports behave on their own.
+ */
+export async function buildAllReportsEmail(
+  db: PrismaClient,
+  agentScope: Prisma.UserWhereInput,
+  breakdownScope: Prisma.UserWhereInput,
+  frequency: EmailFrequency,
+  now: Date,
+): Promise<BuiltReport> {
+  // In series: each of these is already several grouped queries, and this runs
+  // on the same cron as every other due rule.
+  const calling = await buildOverallCallingEmail(db, agentScope, frequency, now);
+  const feedback = await buildFeedbackSummaryEmail(db, breakdownScope, frequency, now);
+  const agentWise = await buildAgentWiseEmail(db, agentScope, frequency, now);
+  const college = await buildCollegeWiseEmail(db, breakdownScope, frequency, now);
+
+  const sections: { title: string; html: string; csv: string }[] = [
+    { title: '1. Overall Calling Summary', html: calling.parts?.summary ?? '', csv: calling.parts?.summaryCsv ?? '' },
+    { title: '2. Summary Report', html: feedback.inner ?? '', csv: feedback.csv ?? '' },
+    { title: '3. Overall-Report', html: calling.parts?.detail ?? '', csv: calling.parts?.detailCsv ?? '' },
+    { title: '4. Caller-wise Report', html: agentWise.inner ?? '', csv: agentWise.csv ?? '' },
+    { title: '5. University-Wise Report', html: college.inner ?? '', csv: college.csv ?? '' },
+  ];
+
+  const heading = (text: string, first: boolean) =>
+    `<div style="font-size:15px;font-weight:bold;color:${INK};margin:${first ? '0' : '26px'} 0 8px">${esc(text)}</div>`;
+  const inner = sections.map((sec, i) => `${heading(sec.title, i === 0)}${sec.html}`).join('');
+
+  // One attachment carrying every table, each under its own heading so the
+  // sheet is readable rather than five files to open.
+  const csv = sections
+    .filter((sec) => sec.csv)
+    .map((sec) => `"${sec.title}"\n${sec.csv}`)
+    .join('\n\n');
+
+  return {
+    subject: allReportsSubject(now),
+    html: shell('Overall Call Centre — Calling Summary', calling.periodLabel, inner, {
+      footer: ALL_REPORTS_FOOTER, wide: true, greeting: 'Hi Team,',
+    }),
+    csv,
+    periodLabel: calling.periodLabel,
+    rows: [],
+  };
+}
+
+const ALL_REPORTS_FOOTER =
+  'Sent automatically by the Counselling CRM. All dates are IST. Each section is the same table ' +
+  'its own report sends, so the figures here and there cannot differ. Leads are counted once ' +
+  'under their latest follow-up; a lead is Not Connected when that feedback is in the Not ' +
+  'Connected category and Connected otherwise. Calling mandates and KPI targets both come from ' +
+  'the KPI Targets page. The subject names the month, so each month starts its own mail thread.';

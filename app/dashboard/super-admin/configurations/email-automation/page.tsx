@@ -13,7 +13,7 @@ import { useToast } from '@/components/ui/use-toast';
 import { PinGate } from '@/components/shared/pin-gate';
 import { PIN_GATED_ACTIONS } from '@/lib/pin-gated-actions';
 import { cn } from '@/lib/utils';
-import { DEFAULT_EMAIL_SUBJECTS } from '@/lib/email-subjects';
+import { subjectFor } from '@/lib/email-subjects';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -23,7 +23,7 @@ interface Rule {
   id: string;
   name: string;
   reportType: 'AGENT_PERFORMANCE' | 'TEAM_SUMMARY' | 'WELCOME' | 'FEEDBACK_SUMMARY'
-    | 'COLLEGE_WISE' | 'AGENT_WISE';
+    | 'COLLEGE_WISE' | 'AGENT_WISE' | 'OVERALL_CALLING' | 'ALL_REPORTS';
   /** Blank uses the report's own subject — see DEFAULT_EMAIL_SUBJECTS. */
   subject: string | null;
   frequency: 'DAILY' | 'WEEKLY' | 'MONTHLY' | 'QUARTERLY';
@@ -64,12 +64,15 @@ const REPORT_LABEL: Record<Rule['reportType'], string> = {
   WELCOME: 'Welcome email — login details and links',
   FEEDBACK_SUMMARY: 'Feedback summary — leads by outcome, with the university count',
   AGENT_WISE: 'Agent wise report — the KPI scoreboard, every agent in one file',
+  OVERALL_CALLING: 'Overall Calling Report — dialled, connected and talktime vs the daily mandate',
+  ALL_REPORTS: 'All Reports — every table above, in one email',
   COLLEGE_WISE: 'University / College wise — the same leads split by college',
 };
 
 /** Reports that cover the whole floor rather than one person. */
 const MANAGEMENT_REPORTS: Rule['reportType'][] = [
-  'TEAM_SUMMARY', 'FEEDBACK_SUMMARY', 'COLLEGE_WISE', 'AGENT_WISE',
+  'TEAM_SUMMARY', 'FEEDBACK_SUMMARY', 'COLLEGE_WISE', 'AGENT_WISE', 'OVERALL_CALLING',
+  'ALL_REPORTS',
 ];
 
 const ROLES = ['SUPER_ADMIN', 'REPORTS', 'OPERATIONS', 'COUNSELLING_TL'];
@@ -388,6 +391,8 @@ function EmailAutomationContent() {
                     <option value="FEEDBACK_SUMMARY">{REPORT_LABEL.FEEDBACK_SUMMARY}</option>
                     <option value="COLLEGE_WISE">{REPORT_LABEL.COLLEGE_WISE}</option>
                     <option value="AGENT_WISE">{REPORT_LABEL.AGENT_WISE}</option>
+                    <option value="OVERALL_CALLING">{REPORT_LABEL.OVERALL_CALLING}</option>
+                    <option value="ALL_REPORTS">{REPORT_LABEL.ALL_REPORTS}</option>
                     <option value="WELCOME">{REPORT_LABEL.WELCOME}</option>
                   </select>
                 </div>
@@ -398,12 +403,12 @@ function EmailAutomationContent() {
                     id="er-subject"
                     value={editing.subject ?? ''}
                     onChange={(e) => set({ subject: e.target.value })}
-                    placeholder={DEFAULT_EMAIL_SUBJECTS[editing.reportType] ?? ''}
+                    placeholder={subjectFor(editing.reportType, null)}
                   />
                   <p className="text-[11px] text-muted-foreground">
                     Leave blank to use{' '}
                     <span className="font-medium text-foreground">
-                      “{DEFAULT_EMAIL_SUBJECTS[editing.reportType] ?? ''}”
+                      “{subjectFor(editing.reportType, null)}”
                     </span>
                     . Keep it the same on every send — Gmail and Outlook group mail into one
                     conversation by subject, so a subject that changes (a date, for instance) starts
