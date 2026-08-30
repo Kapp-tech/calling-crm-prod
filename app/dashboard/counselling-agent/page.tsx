@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { isAttendanceBlock, requireCheckIn } from '@/lib/attendance-required';
 import { useSession } from 'next-auth/react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -115,6 +116,8 @@ export default function CounsellingAgentPage() {
       }).then((r) => r.json()),
     onSuccess: (data, variables) => {
       if (data.error) {
+        // The check-in dialog says it better than a toast would.
+        if (isAttendanceBlock(data)) { requireCheckIn(); return; }
         toast({ variant: 'destructive', title: 'Error', description: data.error });
         return;
       }

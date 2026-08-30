@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
   CalendarClock, ChevronDown, Check, Search, X, Loader2,
-  Clock, Coffee, Gauge, Users, AlertCircle, RefreshCw, Utensils, Timer,
+  Clock, Coffee, Gauge, Users, AlertCircle, RefreshCw, Utensils, Timer, Eye, EyeOff,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -38,6 +38,8 @@ interface ReportRow {
   idleSeconds: number;
   activeSeconds: number;
   autoClosed: boolean;
+  /** Device IP captured at check-in; null for shifts predating the column. */
+  punchInIp: string | null;
 }
 
 interface Filters {
@@ -182,6 +184,50 @@ function CounsellorMultiSelect({
 }
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
+
+/**
+ * The check-in IP, behind a click.
+ *
+ * Kept hidden by default rather than given a column of its own: it is only
+ * looked at when a shift is being questioned, and a permanent column of IP
+ * addresses would push the numbers people actually read off the screen — and
+ * put everyone's device address in front of anyone glancing at the report.
+ */
+function PunchInIp({ ip }: { ip: string | null }) {
+  const [shown, setShown] = useState(false);
+
+  if (!ip) {
+    return (
+      <span
+        className="text-[10px] text-muted-foreground/50"
+        title="No IP was recorded for this check-in — either the shift predates this, or no forwarding header reached the app"
+      >
+        no IP
+      </span>
+    );
+  }
+
+  return shown ? (
+    <button
+      type="button"
+      onClick={() => setShown(false)}
+      title="Hide the IP"
+      className="inline-flex items-center gap-1.5 rounded-md border border-border/70 bg-muted/50 px-1.5 py-0.5 hover:bg-muted"
+    >
+      <EyeOff className="h-3 w-3 shrink-0 text-muted-foreground" />
+      <span className="font-mono text-[11px] leading-none text-foreground">{ip}</span>
+    </button>
+  ) : (
+    <button
+      type="button"
+      onClick={() => setShown(true)}
+      title="Show the device IP this shift was checked in from"
+      className="inline-flex items-center rounded px-1 py-0.5 text-muted-foreground/60 hover:bg-muted hover:text-foreground"
+    >
+      <Eye className="h-3 w-3" />
+    </button>
+  );
+}
 
 export default function AgentTimeBreakUpPage() {
   const today = todayStr();
@@ -427,7 +473,12 @@ export default function AgentTimeBreakUpPage() {
                       </div>
                     </TableCell>
                     <TableCell className="text-sm">{r.date}</TableCell>
-                    <TableCell className="text-sm tabular-nums">{formatTime(r.punchInAt)}</TableCell>
+                    <TableCell className="text-sm tabular-nums">
+                      <span className="inline-flex items-center gap-1.5">
+                        {formatTime(r.punchInAt)}
+                        <PunchInIp ip={r.punchInIp} />
+                      </span>
+                    </TableCell>
                     <TableCell className="text-sm tabular-nums">
                       <span className="inline-flex items-center gap-1">
                         {formatTime(r.punchOutAt)}

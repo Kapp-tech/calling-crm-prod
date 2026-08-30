@@ -919,6 +919,11 @@ model Attendance {
   // True if punchOutAt was inferred (auto-closed) rather than explicitly clicked.
   autoClosed Boolean @default(false)
 
+  /// The device's IP at check-in, for spotting a shift marked from somewhere it
+  /// should not have been. Null on every shift recorded before this was added,
+  /// and null when no forwarding header reaches the app.
+  punchInIp String?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

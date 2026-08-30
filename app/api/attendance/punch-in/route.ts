@@ -1,12 +1,13 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import { closeStaleAttendanceRecords, getAttendanceDateString, summarizeAttendance } from '@/lib/attendance';
+import { clientIpFrom } from '@/lib/client-ip';
 
 const PUNCH_ROLES = ['COUNSELLING_AGENT', 'COUNSELLING_TL'];
 
-export async function POST() {
+export async function POST(req: NextRequest) {
   try {
     const session = await getServerSession(authOptions);
     if (!session || !PUNCH_ROLES.includes(session.user.role)) {
@@ -31,7 +32,13 @@ export async function POST() {
 
     const now = new Date();
     const created = await prisma.attendance.create({
-      data: { userId: session.user.id, date, punchInAt: now, lastHeartbeatAt: now },
+      // Recorded once, at check-in. Not refreshed afterwards: the question this
+      // answers is "where was the shift started from", and a heartbeat-tracked
+      // value would just show wherever they last had the tab open.
+      data: {
+        userId: session.user.id, date, punchInAt: now, lastHeartbeatAt: now,
+        punchInIp: clientIpFrom(req.headers),
+      },
       include: { breaks: true },
     });
 

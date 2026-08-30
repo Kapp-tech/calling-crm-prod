@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { failIfAttendanceBlock, isAttendanceError } from '@/lib/attendance-required';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
@@ -76,7 +77,10 @@ function FeedbackForm({
         body: JSON.stringify(data),
       }).then(async (r) => {
         const json = await r.json();
-        if (json.error) throw new Error(typeof json.error === 'string' ? json.error : 'Failed to save');
+        if (json.error) {
+          failIfAttendanceBlock(json);
+          throw new Error(typeof json.error === 'string' ? json.error : 'Failed to save');
+        }
         return json;
       }),
     onSuccess: (_, variables) => {
@@ -87,6 +91,8 @@ function FeedbackForm({
       onSuccess();
     },
     onError: (err: Error) => {
+      // The check-in dialog is already open and says it better than a toast.
+      if (isAttendanceError(err)) return;
       toast({ variant: 'destructive', title: 'Error', description: err.message });
     },
   });

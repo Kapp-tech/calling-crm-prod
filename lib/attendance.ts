@@ -40,6 +40,8 @@ export interface AttendanceSummary {
   idleSeconds: number;
   activeSeconds: number;
   autoClosed: boolean;
+  /** The device IP recorded at check-in; null for shifts predating the column. */
+  punchInIp: string | null;
   currentBreakStartAt: string | null;
   currentBreakType: BreakCategory | null;
 }
@@ -67,7 +69,7 @@ export function summarizeAttendance(record: AttendanceWithBreaks | null, now: Da
     return {
       status: 'NOT_PUNCHED_IN', punchInAt: null, punchOutAt: null,
       breakSeconds: 0, breakSecondsByType: emptyBreakSecondsByType(), idleSeconds: 0, activeSeconds: 0,
-      autoClosed: false, currentBreakStartAt: null, currentBreakType: null,
+      autoClosed: false, punchInIp: null, currentBreakStartAt: null, currentBreakType: null,
     };
   }
 
@@ -93,6 +95,7 @@ export function summarizeAttendance(record: AttendanceWithBreaks | null, now: Da
     // MAX_HEARTBEAT_WINDOW_SECONDS below.
     activeSeconds: record.activeSeconds,
     autoClosed: record.autoClosed,
+    punchInIp: record.punchInIp,
     currentBreakStartAt: openBreak?.startAt.toISOString() ?? null,
     currentBreakType: openBreak ? (openBreak.type ?? 'OTHER') : null,
   };

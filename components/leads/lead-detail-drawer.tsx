@@ -4,6 +4,7 @@ import { useState, useMemo, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useSession } from 'next-auth/react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { failIfAttendanceBlock, isAttendanceError } from '@/lib/attendance-required';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
@@ -576,7 +577,10 @@ function FollowUpSlot({
         body: JSON.stringify({ ...data, scheduledAt: scheduledInstant?.toISOString() ?? null }),
       }).then(async (r) => {
         const json = await r.json();
-        if (json.error) throw new Error(typeof json.error === 'string' ? json.error : 'Failed to save');
+        if (json.error) {
+          failIfAttendanceBlock(json);
+          throw new Error(typeof json.error === 'string' ? json.error : 'Failed to save');
+        }
         return json;
       });
     },
@@ -591,6 +595,8 @@ function FollowUpSlot({
       setScheduledAt('');
     },
     onError: (err: Error) => {
+      // The check-in dialog is already open and says it better than a toast.
+      if (isAttendanceError(err)) return;
       toast({ variant: 'destructive', title: 'Error', description: err.message });
     },
   });

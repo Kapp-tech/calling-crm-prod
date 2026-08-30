@@ -757,7 +757,8 @@ const AGENT_WISE_FOOTER =
   'come from KPI Targets, judged against the targets for this rule\'s own cadence — a weekly ' +
   'rule reports against the weekly targets. The Total row multiplies each per-agent target by ' +
   'the headcount. A blank means no target is set for that KPI in this period, which is not the ' +
-  'same as achieving nothing. Grade is a band on Score %: A+ 90, A 80, B 70, C 60, D 50.';
+  'same as achieving nothing. Grade is a band on Score %: Excellent 85 and above, Very Good 70, ' +
+  'Good 50, Needs Improvement 30, Unsatisfactory below 30 — the higher band takes each boundary.';
 
 // ─── Overall Calling Report ──────────────────────────────────────────────────
 

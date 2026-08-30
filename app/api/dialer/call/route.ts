@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
+import { needsCheckIn } from '@/lib/attendance-gate';
+import { ATTENDANCE_REQUIRED_CODE, ATTENDANCE_REQUIRED_MESSAGE } from '@/lib/attendance-required';
 import { z } from 'zod';
 import { authOptions } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
@@ -18,6 +20,14 @@ export async function POST(req: NextRequest) {
   const session = await getServerSession(authOptions);
   if (!session) {
     return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
+  }
+
+  // Same gate as logging a follow-up: no attendance, no calling.
+  if (await needsCheckIn(prisma, session.user)) {
+    return NextResponse.json(
+      { success: false, error: ATTENDANCE_REQUIRED_MESSAGE, code: ATTENDANCE_REQUIRED_CODE },
+      { status: 403 },
+    );
   }
 
   if (!isDialshreeConfigured()) {

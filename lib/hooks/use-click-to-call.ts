@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
+import { failIfAttendanceBlock, isAttendanceError } from '@/lib/attendance-required';
 import { useToast } from '@/components/ui/use-toast';
 
 /**
@@ -34,7 +35,12 @@ export function useClickToCall(leadId: string | null) {
         body: JSON.stringify({ leadId }),
       });
       const json = await r.json();
-      if (!r.ok || !json.success) throw new Error(json.error || 'Could not place the call');
+      if (!r.ok || !json.success) {
+        // Refused for want of attendance? Open the check-in dialog instead of
+        // only reporting the failure. This throws when it applies.
+        failIfAttendanceBlock(json);
+        throw new Error(json.error || 'Could not place the call');
+      }
       return json;
     },
     onSuccess: (json) => {
@@ -43,7 +49,10 @@ export function useClickToCall(leadId: string | null) {
       setCallRef(ref != null ? String(ref) : undefined);
       toast({ title: 'Calling…', description: 'Answer your dialer to connect to the lead.' });
     },
-    onError: (err: Error) => toast({ title: 'Call failed', description: err.message, variant: 'destructive' }),
+    onError: (err: Error) => {
+      if (isAttendanceError(err)) return;
+      toast({ title: 'Call failed', description: err.message, variant: 'destructive' });
+    },
   });
 
   const hangupMutation = useMutation({
