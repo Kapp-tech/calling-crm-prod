@@ -409,7 +409,10 @@ export interface CollegeBreakdownRow {
 
 export interface CollegeBreakdown {
   label: string;
-  /** Every outcome that occurred, most common first — the columns on offer. */
+  /**
+   * Every outcome that occurred, in COLLEGE_OUTCOME_ORDER — the fixed sequence
+   * the report is read in, not by volume. Unlisted outcomes come last.
+   */
   availableOutcomes: string[];
   /**
    * Outcomes that occurred in this window with no feedback category set, so
@@ -421,6 +424,97 @@ export interface CollegeBreakdown {
   rows: CollegeBreakdownRow[];
   totals: Omit<CollegeBreakdownRow, 'college'>;
 }
+
+/**
+ * The order the University / College wise report shows outcome columns in.
+ *
+ * Fixed by Himanshu rather than derived from the data: the report is compared
+ * week to week, and columns that reshuffle themselves by volume make that
+ * impossible. It runs conversion-first (Walk-In, applications, admissions),
+ * then warm interest, then the reasons a call went nowhere, then the reasons a
+ * number was no good.
+ *
+ * These are the CRM's own labels, which differ from the sheet's in three
+ * places — the sheet says "Call Back", "Call Disconnected" and "Switched Off"
+ * where the CRM has `Callback`, `Call Disconnect` and `Switch Off`. Using the
+ * sheet's spelling would have left those three columns empty and dropped the
+ * real ones to the end.
+ *
+ * Matching is loose — case and punctuation are ignored — so renaming an option
+ * to "Call Back" later keeps it in position instead of silently exiling it.
+ * Anything not listed here still appears, at the end, most-used first: today
+ * that is "Already Admission Done in same University" and "Already Application
+ * Done in same University".
+ */
+export const COLLEGE_OUTCOME_ORDER = [
+  'Walk-In',
+  'Application Done',
+  'Admission Done',
+  'Cold',
+  'Interested',
+  'Hot',
+  'HOT-RNR',
+  'Warm',
+  'Will Apply Today/Tomorrow',
+  'Planning for Later',
+  'Callback',
+  'RNR',
+  'Call Disconnect',
+  'Not Intrested',
+  'Not Eligible',
+  'Taken Admission in Other University',
+  'ICNA',
+  'Switch Off',
+  'Wrong Number',
+  'Out of network',
+  'Invalid Number',
+  'Application Filled in Other University',
+  'Language Barrier',
+  'Budget Issue',
+  'Tried 5 Time',
+];
+
+/**
+ * The report's outcome columns: every listed outcome ALWAYS, in order, then any
+ * unlisted one that actually occurred, most-used first.
+ *
+ * The listed columns appear even at zero. That is the point of a fixed
+ * sequence — the sheet this replaces carries "Cold 0" and "Tried 5 Time 0", and
+ * a column that vanishes on a quiet day makes two weeks impossible to compare
+ * side by side. Whichever outcome names the CRM happens to hold are used, so
+ * the header always reflects what the option is really called.
+ */
+function outcomeColumns(totals: Map<string, number>): string[] {
+  /**
+   * A rank can hold MORE THAN ONE label, and that is not hypothetical: this
+   * database carries both `Callback` and `Call Back`, which normalise to the
+   * same key. Keeping one per slot silently dropped the other's column, and its
+   * leads then appeared in Dialed while belonging to no outcome — the row
+   * stopped adding up. Both are kept, adjacent, in the right region.
+   */
+  const bySlot = new Map<number, [string, number][]>();
+  const unlisted: [string, number][] = [];
+  for (const [label, count] of Array.from(totals.entries())) {
+    const rank = OUTCOME_RANK.get(outcomeKey(label));
+    if (rank === undefined) unlisted.push([label, count]);
+    else bySlot.set(rank, [...(bySlot.get(rank) ?? []), [label, count]]);
+  }
+  const busiestFirst = (a: [string, number], b: [string, number]) =>
+    b[1] - a[1] || a[0].localeCompare(b[0]);
+
+  const listed = COLLEGE_OUTCOME_ORDER.flatMap((canonical, i) => {
+    const hits = bySlot.get(i);
+    // Nothing occurred under this name — the column still appears, at zero.
+    if (!hits || hits.length === 0) return [canonical];
+    return [...hits].sort(busiestFirst).map(([label]) => label);
+  });
+  return [...listed, ...[...unlisted].sort(busiestFirst).map(([label]) => label)];
+}
+
+/** Case- and punctuation-insensitive, so a rename does not reorder the report. */
+const outcomeKey = (label: string) => label.toLowerCase().replace(/[^a-z0-9]/g, '');
+
+const OUTCOME_RANK = new Map(COLLEGE_OUTCOME_ORDER.map((l, i) => [outcomeKey(l), i]));
 
 /** Leads carrying no college at all still have to appear, or this table's Dialed
  *  column would not add up to the feedback summary's Total. */
@@ -528,13 +622,42 @@ export async function buildCollegeBreakdown(
 
   return {
     label: window.label,
-    availableOutcomes: Array.from(outcomeTotals.entries())
-      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
-      .map(([label]) => label),
+    availableOutcomes: outcomeColumns(outcomeTotals),
     uncategorisedOutcomes: Array.from(uncategorised).sort((a, b) => a.localeCompare(b)),
     rows,
     totals,
   };
+}
+
+/**
+ * How many days each agent actually checked in, per IST calendar day, inside a
+ * window.
+ *
+ * "Working days" on a report means days the person was on the clock — counted
+ * from their own check-ins, not from the calendar and not from the roster. A
+ * six-day window in which someone checked in three times reads as 3.
+ *
+ * `Attendance.date` is already the IST day key as a plain string, so this is a
+ * straight string range with no timezone arithmetic to get wrong — one row per
+ * user per day is guaranteed by the table's own unique constraint, so counting
+ * rows is counting days.
+ *
+ * Returns a map keyed by user id; a user with no shifts is simply absent from
+ * it, which the caller reads as zero.
+ */
+export async function workingDaysByAgent(
+  db: { attendance: { groupBy: Function } },
+  userIds: string[],
+  fromDayKey: string,
+  toDayKey: string,
+): Promise<Map<string, number>> {
+  if (userIds.length === 0) return new Map();
+  const rows = (await db.attendance.groupBy({
+    by: ['userId'],
+    where: { userId: { in: userIds }, date: { gte: fromDayKey, lte: toDayKey } },
+    _count: { date: true },
+  })) as { userId: string; _count: { date: number } }[];
+  return new Map(rows.map((r) => [r.userId, r._count.date]));
 }
 
 // ─── Overall Calling Report ──────────────────────────────────────────────────
@@ -542,6 +665,10 @@ export async function buildCollegeBreakdown(
 export interface CallingRow {
   name: string;
   employeeCode: string | null;
+  /** ISO date. Context a manager reads a new joiner's numbers against. */
+  joiningDate: string | null;
+  /** Days this agent actually checked in inside the window — not calendar days. */
+  workingDays: number;
   dialed: number;
   connected: number;
   /** Total dialer minutes, the same figure the Talktime KPI reports. */
@@ -645,8 +772,14 @@ export async function buildOverallCallingReport(
     { key: 'OVERALL', label: 'Overall', letter: null, from: null, to: null, days: null },
   ];
 
-  const agents = await db.user.findMany({ where: agentWhere, select: { id: true } });
+  const agents = await db.user.findMany({
+    where: agentWhere,
+    select: { id: true, joiningDate: true },
+  });
   const ids = agents.map((a) => a.id);
+  const joinedBy = new Map(
+    agents.map((a) => [a.id, a.joiningDate ? istDayKey(a.joiningDate) : null] as const),
+  );
 
   const blocks: CallingBlock[] = [];
   for (const s of spec) {
@@ -669,9 +802,17 @@ export async function buildOverallCallingReport(
       if (t.agentId) talkBy.set(t.agentId, Math.floor((t._sum.talkTimeSeconds ?? 0) / 60));
     }
 
+    // Overall has no bounded window, so working days count from the first
+    // shift anyone ever recorded up to today rather than from nothing.
+    const workedBy = await workingDaysByAgent(
+      db, ids, s.from ?? '0000-01-01', s.to ?? todayKey,
+    );
+
     const rows: CallingRow[] = agentRows.map((r) => ({
       name: r.name,
       employeeCode: r.employeeCode,
+      joiningDate: joinedBy.get(r.id) ?? null,
+      workingDays: workedBy.get(r.id) ?? 0,
       dialed: r.dialedCalls,
       connected: r.connectedCalls,
       talktimeMin: talkBy.get(r.id) ?? 0,

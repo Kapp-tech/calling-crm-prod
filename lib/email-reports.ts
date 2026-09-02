@@ -1,7 +1,7 @@
 import { EmailFrequency, PrismaClient, Prisma, EmailReportType, KpiPeriod } from '@prisma/client';
 import {
   buildAgentReport, buildFeedbackBreakdown, buildCollegeBreakdown, AgentReportRow,
-  buildOverallCallingReport,
+  buildOverallCallingReport, workingDaysByAgent,
 } from './reports';
 import { kpiScoreboardFor, computeKpiActual, kpiScore, kpiPeriodRange, KPI_PERIODS } from './kpi';
 import { gradeFor, gradeColour } from './kpi-grade';
@@ -539,8 +539,9 @@ export async function buildCollegeWiseEmail(
    * to open the spreadsheet to see the columns the email had quietly dropped.
    * A wide table is a nuisance; a table that hides data is a wrong one.
    *
-   * `availableOutcomes` is already ordered most-common first, so the columns
-   * that matter are the ones still on screen before any horizontal scrolling.
+   * `availableOutcomes` arrives in COLLEGE_OUTCOME_ORDER — a fixed sequence set
+   * by management, conversion-first, so the report can be compared week to week
+   * instead of reshuffling itself by volume.
    */
   const outcomes = cb.availableOutcomes;
 
@@ -642,7 +643,11 @@ export async function buildAgentWiseEmail(
       orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
       include: { targets: { select: { period: true, target: true, points: true } } },
     }),
-    db.user.findMany({ where: scope, select: { id: true, name: true, employeeCode: true }, orderBy: { name: 'asc' } }),
+    db.user.findMany({
+      where: scope,
+      select: { id: true, name: true, employeeCode: true, joiningDate: true },
+      orderBy: { name: 'asc' },
+    }),
   ]);
 
   const targetOf = (d: (typeof definitions)[number]) =>
@@ -660,7 +665,17 @@ export async function buildAgentWiseEmail(
    * due rule, on a box with a few hundred MB of headroom, so it caps concurrency
    * at one agent's worth of queries.
    */
-  const rows: { name: string; code: string; cells: { actual: number | null; score: number | null }[]; total: number }[] = [];
+  // Working days come from the agent's own check-ins inside the KPI window, so
+  // a five-day figure and a two-day figure are not read as the same effort.
+  const { from: winFrom, to: winTo } = kpiPeriodRange(period, now);
+  const workedBy = await workingDaysByAgent(
+    db, agents.map((a) => a.id), istDayKey(winFrom), istDayKey(winTo),
+  );
+
+  const rows: {
+    name: string; code: string; workingDays: number; joined: string;
+    cells: { actual: number | null; score: number | null }[]; total: number;
+  }[] = [];
   for (const a of agents) {
     const cells = await Promise.all(
       definitions.map(async (d) => {
@@ -669,7 +684,14 @@ export async function buildAgentWiseEmail(
       }),
     );
     const total = Math.round(cells.reduce((sum, c) => sum + (c.score ?? 0), 0) * 10) / 10;
-    rows.push({ name: a.name, code: a.employeeCode ?? '', cells, total });
+    rows.push({
+      name: a.name,
+      code: a.employeeCode ?? '',
+      workingDays: workedBy.get(a.id) ?? 0,
+      joined: a.joiningDate ? istDayKey(a.joiningDate) : '—',
+      cells,
+      total,
+    });
   }
 
   const pct = (a: number | null, t: number | null) => {
@@ -687,7 +709,7 @@ export async function buildAgentWiseEmail(
 
   // Flat 33-column shape, shared by the CSV and the HTML so they cannot differ.
   const totalRow: (string | number)[] = [
-    'Total', '', '', '', '',
+    'Total', '', '', '', '', '', '',
     ...definitions.flatMap((d, i) => {
       const achieved = sum(rows.map((r) => r.cells[i].actual));
       const one = targetOf(d);
@@ -698,7 +720,7 @@ export async function buildAgentWiseEmail(
     totalScore ?? '', teamMax ?? '', pct(totalScore, teamMax), '',
   ];
   const headRow = [
-    'Date', 'Agent', 'Employee Code', 'Period', 'Range',
+    'Date', 'Agent', 'Employee Code', 'Working Days', 'Date of Joining', 'Period', 'Range',
     ...definitions.flatMap((d) => [
       `${d.name} – Achieved`, `${d.name} – Target`, `${d.name} %`, `${d.name} – Points Earned`,
     ]),
@@ -709,7 +731,7 @@ export async function buildAgentWiseEmail(
     return {
       scorePct,
       cells: [
-        dateCell, r.name, r.code, periodLabel, rangeLabel,
+        dateCell, r.name, r.code, r.workingDays, r.joined, periodLabel, rangeLabel,
         ...definitions.flatMap((d, i) => [
           r.cells[i].actual ?? '', targetOf(d) ?? '',
           pct(r.cells[i].actual, targetOf(d)), r.cells[i].score ?? '',
@@ -736,7 +758,7 @@ export async function buildAgentWiseEmail(
     : `<div style="overflow-x:auto;-webkit-overflow-scrolling:touch">
 <table role="presentation" cellpadding="0" cellspacing="0" style="border-collapse:collapse;min-width:100%">
 <tr>${totalRow.map((v, i) => t(v, i, { bold: true, bg: STRIPE })).join('')}</tr>
-<tr>${cellBox('Employee Details', { head: true, tight: true, span: 5 })}${
+<tr>${cellBox('Employee Details', { head: true, tight: true, span: 7 })}${
       definitions.map((d) => cellBox(esc(`${d.name} Matrix`), { head: true, tight: true, span: 4 })).join('')
     }${cellBox('Scoring', { head: true, tight: true, span: 4 })}</tr>
 <tr>${headRow.map((h, i) => t(h, i, { head: true })).join('')}</tr>
@@ -871,9 +893,12 @@ export async function buildOverallCallingEmail(
     days: number | null,
     people = 1,
     row: Parameters<typeof cellBox>[1] = {},
+    /** Total rows stay solid black end to end — a band colour there reads as a
+     *  person's grade when it is the floor's, and breaks the line visually. */
+    plain = false,
   ) => {
     const { cells, overall } = line(v, days, people);
-    const tint = gradeColour(overall);
+    const tint = plain ? null : gradeColour(overall);
     return cells
       .map((val, i) =>
         i < 6
@@ -889,37 +914,48 @@ export async function buildOverallCallingEmail(
       : b.rows.map((row, i) => `<tr>${
           // The Matrix label spans the whole block, as in the sheet.
           (i === 0 ? cellBox(esc(b.label), { tight: true, bold: true, rowSpan: b.rows.length }) : '')
-        }${t(row.name, { align: 'left' })}${metrics(row, b.days)}</tr>`).join('');
+        }${t(row.name, { align: 'left' })}${t(row.workingDays)}${
+          t(row.joiningDate ?? '—')
+        }${metrics(row, b.days)}</tr>`).join('');
     const label = b.letter ? `${b.label} Total ${b.letter}` : `${b.label} Total`;
-    const totals = `<tr>${cellBox(esc(label), { tight: true, bold: true, bg: TOTAL_BG, fg: ON_DARK, span: 2 })}${
-      metrics(b.totals, b.days, b.activeEmployees, { bold: true, bg: TOTAL_BG, fg: ON_DARK })
+    const totals = `<tr>${cellBox(esc(label), { tight: true, bold: true, bg: TOTAL_BG, fg: ON_DARK, span: 4 })}${
+      metrics(b.totals, b.days, b.activeEmployees, { bold: true, bg: TOTAL_BG, fg: ON_DARK }, true)
     }</tr>`;
     return body + totals;
   }).join('');
 
+  // The summary's rows are WINDOWS, not people, so it has no Working Days or
+  // Date of Joining and is two columns narrower than the detail table. Each
+  // table spans its own width rather than being padded to match the other,
+  // which left two empty columns sitting in the summary.
   const SUMMARY_COLS = ['Matrix', 'No of Active Employee', 'Dialled Calls', 'Achieved %',
     'Connected Calls', 'Achieved %', 'Talktime', 'Achieved %', 'Overall Scoring', 'Grade'];
-  const DETAIL_COLS = ['Matrix', 'Employee Name', 'Dialled Calls', 'Achieved %',
-    'Connected Calls', 'Achieved %', 'Talktime', 'Achieved %', 'Overall Scoring', 'Grade'];
-  const COLS = SUMMARY_COLS.length; // 10 — the span every banner row needs
+  const DETAIL_COLS = ['Matrix', 'Employee Name', 'Working Days', 'Date of Joining',
+    'Dialled Calls', 'Achieved %', 'Connected Calls', 'Achieved %', 'Talktime', 'Achieved %',
+    'Overall Scoring', 'Grade'];
+  const COLS = DETAIL_COLS.length;      // 12 — the detail table's banner span
+  const SUM_COLS = SUMMARY_COLS.length; // 10 — the summary's own
 
   // The roll-up management reads first: one row per window, with the active
   // headcount next to the figures so the percentage explains itself.
-  const summary = `<table role="presentation" cellpadding="0" cellspacing="0" style="border-collapse:collapse;min-width:100%;margin-bottom:22px">
-<tr>${cellBox('OVERALL CALLING REPORT SUMMARY', { tight: true, bold: true, bg: STRIPE, span: COLS })}</tr>
+  const summary = `<table role="presentation" cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:auto;margin-bottom:22px">
+<tr>${cellBox('OVERALL CALLING REPORT SUMMARY', { tight: true, bold: true, bg: STRIPE, span: SUM_COLS })}</tr>
 <tr>${SUMMARY_COLS.map((h) => cellBox(esc(h), { tight: true, bold: true, bg: MATRIX_BG })).join('')}</tr>
 <tr>${cellBox('TOTAL', { tight: true, bold: true, bg: TOTAL_BG, fg: ON_DARK })}${
-    cellBox('', { tight: true, bg: TOTAL_BG, fg: ON_DARK, span: COLS - 1 })}</tr>
+    cellBox('', { tight: true, bg: TOTAL_BG, fg: ON_DARK, span: SUM_COLS - 1 })}</tr>
 ${r.blocks.map((b) => `<tr>${
     t(b.label, { bold: true })
   }${t(b.activeEmployees)}${metrics(b.totals, b.days, b.activeEmployees)}</tr>`).join('')}
 </table>`;
 
+  // width:auto, not min-width:100% — with a dozen columns the browser stretched
+  // them to fill the mail and left "221" floating in a very wide cell. Content
+  // width is what the university-wise report gets, and what Himanshu asked for.
   const detail = `<div style="overflow-x:auto;-webkit-overflow-scrolling:touch">
-<table role="presentation" cellpadding="0" cellspacing="0" style="border-collapse:collapse;min-width:100%">
+<table role="presentation" cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:auto">
 <tr>${cellBox('Overall Calling Report', { tight: true, bold: true, bg: STRIPE, span: COLS })}</tr>
 <tr>${cellBox('Date', { tight: true, bold: true, bg: MANDATE_BG })}${
-    cellBox(esc(r.dateLabel), { tight: true, bold: true, bg: MANDATE_BG })}${
+    cellBox(esc(r.dateLabel), { tight: true, bold: true, bg: MANDATE_BG, span: 3 })}${
     cellBox(esc(mandateText('Mandate', M.dialed)), { tight: true, bold: true, bg: MANDATE_BG, span: 2 })}${
     cellBox(esc(mandateText('Connected Mandate', M.connected)), { tight: true, bold: true, bg: MANDATE_BG, span: 2 })}${
     cellBox(esc(mandateText('Talktime Mandate', M.talktime, ' Mins')), { tight: true, bold: true, bg: MANDATE_BG, span: 2 })}${
@@ -935,18 +971,23 @@ ${blockRows}
   // headings — its order interleaves another report between them.
   const summaryCsvRows: unknown[][] = [
     SUMMARY_COLS,
-    ['TOTAL', ...Array(COLS - 1).fill('')],
+    ['TOTAL', ...Array(SUM_COLS - 1).fill('')],
     ...r.blocks.map((b) => [b.label, b.activeEmployees, ...line(b.totals, b.days, b.activeEmployees).cells]),
   ];
   const detailCsvRows: unknown[][] = [
-    ['Date', r.dateLabel, mandateText('Mandate', M.dialed), '',
+    // Two blanks sit under Working Days / Date of Joining so each mandate lands
+    // over the pair of columns it actually governs.
+    ['Date', r.dateLabel, '', '',
+      mandateText('Mandate', M.dialed), '',
       mandateText('Connected Mandate', M.connected), '',
       mandateText('Talktime Mandate', M.talktime, ' Mins'), '', 'Scoring', ''],
     DETAIL_COLS,
     ...r.blocks.flatMap((b) => [
-      ...b.rows.map((row) => [b.label, row.name, ...line(row, b.days).cells]),
+      ...b.rows.map((row) => [
+        b.label, row.name, row.workingDays, row.joiningDate ?? '', ...line(row, b.days).cells,
+      ]),
       [
-        b.letter ? `${b.label} Total ${b.letter}` : `${b.label} Total`, '',
+        b.letter ? `${b.label} Total ${b.letter}` : `${b.label} Total`, '', '', '',
         ...line(b.totals, b.days, b.activeEmployees).cells,
       ],
     ]),

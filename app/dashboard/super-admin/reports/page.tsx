@@ -182,13 +182,12 @@ export default function ReportsPage() {
     [data?.collegeBreakdown.availableOutcomes],
   );
   /**
-   * Every outcome that occurred, ordered by how often it was a lead's *last*
-   * feedback — the biggest column first.
+   * Every outcome that occurred, in the fixed sequence management reads the
+   * report in — see COLLEGE_OUTCOME_ORDER. It used to default to five
+   * hand-picked outcomes, which quietly omitted the rest.
    *
-   * This used to default to five hand-picked outcomes, which meant the table
-   * quietly omitted the rest and put the five in an order that had nothing to
-   * do with the data. Narrowing with the picker now keeps the by-count order
-   * rather than the order the boxes happened to be ticked in.
+   * Narrowing with the picker keeps that sequence rather than the order the
+   * boxes happened to be ticked in.
    */
   const shownOutcomes = useMemo(() => {
     if (!outcomeCols) return available;
@@ -572,9 +571,9 @@ export default function ReportsPage() {
               The same leads as the summary above, counted the same way, so Dialed totals to the
               same number. A lead is <strong>Not Connected</strong> when its latest feedback is in
               the Not Connected category, and <strong>Connected</strong> otherwise — the two are
-              exhaustive, so they always add back to Dialed. Outcome columns are ordered by how
-              often each was a lead&rsquo;s last feedback; narrow them with the selector, which is
-              instant because every outcome is already loaded.
+              exhaustive, so they always add back to Dialed. Outcome columns follow a fixed
+              sequence so the report reads the same way each week; narrow them with the selector,
+              which is instant because every outcome is already loaded.
             </p>
             {/* A missing category is the one case the split cannot decide, so it
                 is said out loud rather than folded into a number. */}

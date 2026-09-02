@@ -154,3 +154,4 @@ export async function closeStaleAttendanceRecords(opts: { userId?: string } = {}
     ]);
   }
 }
+
