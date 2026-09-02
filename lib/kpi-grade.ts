@@ -26,3 +26,22 @@ export function gradeFor(pct: number | null): string {
   if (pct >= 30) return 'Needs Improvement';
   return 'Unsatisfactory';
 }
+
+/**
+ * The band's fill colour, from Himanshu's sheet.
+ *
+ * Lives beside `gradeFor` on purpose: a colour and a grade that disagree about
+ * where 70% sits would be worse than having neither, so both read the same
+ * thresholds in the same file. Change a boundary and change it once.
+ *
+ * Returns null when there is nothing to grade, so the caller leaves the cell
+ * plain rather than painting it a colour that means something.
+ */
+export function gradeColour(pct: number | null): string | null {
+  if (pct === null) return null;
+  if (pct >= 85) return '#b6d8a8'; // Excellent
+  if (pct >= 70) return '#9fc5e8'; // Very Good
+  if (pct >= 50) return '#ffe59a'; // Good
+  if (pct >= 30) return '#f6b26b'; // Needs Improvement
+  return '#ea9999';                // Unsatisfactory
+}

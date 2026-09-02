@@ -1,5 +1,6 @@
 import { Prisma, PrismaClient } from '@prisma/client';
 import { istStartOfDay, istEndOfDay, istDayKey, istShiftDays, toUtcSqlTimestamp } from './ist-time';
+import { FEEDBACK_HISTORY } from './feedback-history';
 
 /**
  * Agent performance reporting.
@@ -161,7 +162,7 @@ export async function buildAgentReport(
       Prisma.sql`
         WITH latest AS (
           SELECT DISTINCT ON (f."agentId", f."leadId") f."agentId", fo."categoryId"
-          FROM "LeadFeedback" f
+          FROM ${FEEDBACK_HISTORY} f
           LEFT JOIN "FeedbackOption" fo ON fo.id = f."feedbackOptionId"
           WHERE f."agentId" IN (${Prisma.join(ids)})
             ${
@@ -295,6 +296,13 @@ export interface FeedbackBreakdownRow {
 export interface FeedbackBreakdown {
   /** Distinct colleges among the leads counted below. */
   universities: number;
+  /**
+   * Agents who logged at least one follow-up in the window — "who was actually
+   * working that day", not the size of the roster. It is the number that makes
+   * the total legible: 4,261 leads means one thing across 14 people and quite
+   * another across 6.
+   */
+  teamMembers: number;
   total: number;
   rows: FeedbackBreakdownRow[];
   label: string;
@@ -324,7 +332,9 @@ export async function buildFeedbackBreakdown(
   const window = reportRange(range, from, to, now);
   const agents = await db.user.findMany({ where: agentWhere, select: { id: true } });
   const ids = agents.map((a) => a.id);
-  if (ids.length === 0) return { universities: 0, total: 0, rows: [], label: window.label };
+  if (ids.length === 0) {
+    return { universities: 0, teamMembers: 0, total: 0, rows: [], label: window.label };
+  }
 
   // Shared by both queries below so the two can never drift apart on which
   // leads they are talking about. Explicit UTC literals, never a JS Date — see
@@ -332,14 +342,14 @@ export async function buildFeedbackBreakdown(
   // the window by 5h30m on the UTC server.
   const latest = Prisma.sql`
     SELECT DISTINCT ON (f."leadId") f."leadId", f."feedbackOptionId"
-    FROM "LeadFeedback" f
+    FROM ${FEEDBACK_HISTORY} f
     WHERE f."agentId" IN (${Prisma.join(ids)})
       ${window.from ? Prisma.sql`AND f."createdAt" >= ${toUtcSqlTimestamp(window.from)}::timestamp` : Prisma.empty}
       ${window.to ? Prisma.sql`AND f."createdAt" <= ${toUtcSqlTimestamp(window.to)}::timestamp` : Prisma.empty}
     ORDER BY f."leadId", f."createdAt" DESC
   `;
 
-  const [breakdown, [totals]] = await Promise.all([
+  const [breakdown, [totals], [members]] = await Promise.all([
     db.$queryRaw<{ feedback: string | null; category: string | null; leads: bigint }[]>(Prisma.sql`
       WITH latest AS (${latest})
       SELECT fo.label AS feedback, fc.name AS category, count(*)::bigint AS leads
@@ -357,6 +367,16 @@ export async function buildFeedbackBreakdown(
       FROM latest l JOIN "Lead" ld ON ld.id = l."leadId"
       WHERE ld.college IS NOT NULL AND btrim(ld.college) <> ''
     `),
+    // Counted off the follow-ups themselves, not the `latest` CTE: that one is
+    // one row per LEAD, so an agent whose every lead was later touched by
+    // someone else would vanish from it despite having worked.
+    db.$queryRaw<{ members: bigint }[]>(Prisma.sql`
+      SELECT count(DISTINCT f."agentId")::bigint AS members
+      FROM ${FEEDBACK_HISTORY} f
+      WHERE f."agentId" IN (${Prisma.join(ids)})
+        ${window.from ? Prisma.sql`AND f."createdAt" >= ${toUtcSqlTimestamp(window.from)}::timestamp` : Prisma.empty}
+        ${window.to ? Prisma.sql`AND f."createdAt" <= ${toUtcSqlTimestamp(window.to)}::timestamp` : Prisma.empty}
+    `),
   ]);
 
   const rows = breakdown.map((r) => ({
@@ -367,6 +387,7 @@ export async function buildFeedbackBreakdown(
 
   return {
     universities: Number(totals?.universities ?? 0),
+    teamMembers: Number(members?.members ?? 0),
     total: rows.reduce((sum, r) => sum + r.leads, 0),
     rows,
     label: window.label,
@@ -441,7 +462,7 @@ export async function buildCollegeBreakdown(
   >(Prisma.sql`
     WITH latest AS (
       SELECT DISTINCT ON (f."leadId") f."leadId", f."feedbackOptionId"
-      FROM "LeadFeedback" f
+      FROM ${FEEDBACK_HISTORY} f
       WHERE f."agentId" IN (${Prisma.join(ids)})
         ${window.from ? Prisma.sql`AND f."createdAt" >= ${toUtcSqlTimestamp(window.from)}::timestamp` : Prisma.empty}
         ${window.to ? Prisma.sql`AND f."createdAt" <= ${toUtcSqlTimestamp(window.to)}::timestamp` : Prisma.empty}
@@ -562,16 +583,8 @@ export interface OverallCallingReport {
   /** Per-day expectations, read from the KPI Targets page's daily targets. */
   mandates: { dialed: number | null; connected: number | null; talktime: number | null };
   blocks: CallingBlock[];
-  /**
-   * Daily + Weekly + Monthly, as the sheet defines it. These windows overlap —
-   * today sits inside this week, which sits inside this month — so it is the
-   * sum the sheet asks for, not a count of distinct work. `days` is the same
-   * sum of the three windows' days, so the percentage is at least measured
-   * against the same thing the numerator adds up.
-   */
-  grandTotal: {
-    dialed: number; connected: number; talktimeMin: number; days: number; activeEmployees: number;
-  };
+  // No grand total. That row added Daily + Weekly + Monthly, windows which
+  // overlap, so it was never a count of distinct work — Himanshu dropped it.
 }
 
 /**
@@ -599,10 +612,6 @@ export async function buildOverallCallingReport(
   const monday = istShiftDays(todayKey, -(dow === 0 ? 6 : dow - 1));
   const monthFirst = `${todayKey.slice(0, 8)}01`;
   const dayOfMonth = Number(todayKey.slice(8, 10));
-  const daysInclusive = (from: string, to: string) =>
-    Math.round(
-      (Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000,
-    ) + 1;
 
   const defs = await db.kpiDefinition.findMany({
     select: { name: true, source: true, targets: { where: { period: 'DAILY' }, select: { target: true } } },
@@ -616,9 +625,22 @@ export async function buildOverallCallingReport(
       defs.find((d) => d.source === 'CALL_TALKTIME_MINUTES')?.targets[0]?.target ?? byName(/talk/i),
   };
 
+  /**
+   * Weekly is the WHOLE OF LAST WEEK, Monday to Saturday — not this week so
+   * far. On a Wednesday it reports the previous Monday-to-Saturday, a settled
+   * six-day window that will not move again. Sunday is excluded because the
+   * floor does not work it, so counting it would divide a full week's effort by
+   * seven days of mandate.
+   *
+   * Monthly stays the 1st to today: a month in progress is what a manager wants
+   * mid-month, and it is what the sheet has always shown.
+   */
+  const lastMonday = istShiftDays(monday, -7);
+  const lastSaturday = istShiftDays(lastMonday, 5);
+
   const spec: Omit<CallingBlock, 'rows' | 'totals' | 'employees' | 'activeEmployees'>[] = [
     { key: 'DAILY', label: 'Daily', letter: 'A', from: todayKey, to: todayKey, days: 1 },
-    { key: 'WEEKLY', label: 'Weekly', letter: 'B', from: monday, to: todayKey, days: daysInclusive(monday, todayKey) },
+    { key: 'WEEKLY', label: 'Weekly', letter: 'B', from: lastMonday, to: lastSaturday, days: 6 },
     { key: 'MONTHLY', label: 'Monthly', letter: 'C', from: monthFirst, to: todayKey, days: dayOfMonth },
     { key: 'OVERALL', label: 'Overall', letter: null, from: null, to: null, days: null },
   ];
@@ -670,19 +692,6 @@ export async function buildOverallCallingReport(
     });
   }
 
-  // A + B + C, as the sheet defines it. Deliberately NOT including Overall.
-  const abc = blocks.filter((b) => b.letter !== null);
-  const grandTotal = abc.reduce(
-    (acc, b) => ({
-      dialed: acc.dialed + b.totals.dialed,
-      connected: acc.connected + b.totals.connected,
-      talktimeMin: acc.talktimeMin + b.totals.talktimeMin,
-      days: acc.days + (b.days ?? 0),
-      activeEmployees: acc.activeEmployees + b.activeEmployees,
-    }),
-    { dialed: 0, connected: 0, talktimeMin: 0, days: 0, activeEmployees: 0 },
-  );
-
   const [yy, mm, dd] = todayKey.split('-');
-  return { dateLabel: `${dd}/${mm}/${yy}`, mandates, blocks, grandTotal };
+  return { dateLabel: `${dd}/${mm}/${yy}`, mandates, blocks };
 }

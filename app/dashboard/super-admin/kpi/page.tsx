@@ -627,7 +627,11 @@ export default function KpiPage() {
                             guess why the number is not the one they configured. */}
                         {data.custom && baseTargetFor(d.id) !== null && (
                           <span className="block text-[10px] font-normal text-muted-foreground/70">
-                            {targetFor(d.id) === baseTargetFor(d.id)
+                            {/* Ask the source whether it is a snapshot. Comparing
+                                the scaled target to the base said "live count"
+                                for every column on a one-day range, where
+                                base × 1 == base. */}
+                            {sourceOf(d.source)?.snapshot
                               ? 'live count'
                               : `${baseTargetFor(d.id)} × ${data.custom.days}d`}
                           </span>

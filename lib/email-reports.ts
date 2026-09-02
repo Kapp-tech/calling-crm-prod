@@ -4,7 +4,7 @@ import {
   buildOverallCallingReport,
 } from './reports';
 import { kpiScoreboardFor, computeKpiActual, kpiScore, kpiPeriodRange, KPI_PERIODS } from './kpi';
-import { gradeFor } from './kpi-grade';
+import { gradeFor, gradeColour } from './kpi-grade';
 import { istDayKey, istShiftDays, formatSheetDate } from './ist-time';
 import { istParts, reportWindowFor } from './email-schedule';
 import { DEFAULT_EMAIL_SUBJECTS, allReportsSubject } from './email-subjects';
@@ -36,7 +36,6 @@ const LINK = '#0b4a8f';     // links stay link-coloured; that is usability, not 
 const MANDATE_BG = '#ffff66';  // the date / mandate strip
 const MATRIX_BG = '#f0a23c';   // the column headers
 const TOTAL_BG = '#000000';    // per-block totals, white on black
-const GRAND_BG = '#0000ff';    // the grand total, white on blue
 const ON_DARK = '#ffffff';
 
 function esc(v: unknown): string {
@@ -136,9 +135,6 @@ function cellBox(
 function cell(v: unknown, o: Parameters<typeof cellBox>[1] = {}): string {
   return cellBox(esc(v), o);
 }
-
-/** White, cream, white, cream — the banding in the brief. */
-const stripe = (i: number) => (i % 2 === 1 ? STRIPE : undefined);
 
 // ─── The four windows every report covers ─────────────────────────────────────
 
@@ -274,21 +270,20 @@ function agentSection(block: AgentBlock, isFirst: boolean): string {
   // Each agent gets their own bordered table under their own name, rather than
   // one long grid with divider rows — with a rule on every cell, a separate
   // table is what reads as a separate person.
-  const rows = block.periods.map((f, i) => {
+  const rows = block.periods.map((f) => {
     const r = f.row;
-    const bg = stripe(i);
     const range = f.window.from === f.window.to ? f.window.from : `${f.window.from} → ${f.window.to}`;
     const period = `<span style="font-weight:bold">${esc(f.window.label)}</span>`
       + `<br><span style="font-size:10px;color:${MUTED}">${esc(range)}</span>`;
     return `<tr>${[
-      cellBox(period, { bg }),
-      cell(num(r?.dialedCalls), { bg }),
-      cell(num(r?.connectedCalls), { bg }),
-      cell(num(r?.notConnectedCalls), { bg }),
-      cell(num(r?.applications), { bg }),
-      cell(num(r?.admissions), { bg }),
-      cell(talk(r), { bg }),
-      cell(scoreText(f), { bold: true, bg }),
+      cellBox(period),
+      cell(num(r?.dialedCalls)),
+      cell(num(r?.connectedCalls)),
+      cell(num(r?.notConnectedCalls)),
+      cell(num(r?.applications)),
+      cell(num(r?.admissions)),
+      cell(talk(r)),
+      cell(scoreText(f), { bold: true }),
     ].join('')}</tr>`;
   }).join('');
 
@@ -494,15 +489,19 @@ export async function buildFeedbackSummaryEmail(
   const inner = fb.rows.length === 0
     ? `<p style="font-size:13px;color:${MUTED}">No follow-ups were logged in this period.</p>`
     : `<table role="presentation" cellpadding="0" cellspacing="0" style="border-collapse:collapse;min-width:420px">
-<tr>${cell('University/Institution Count', { head: true })}${cell(fb.universities, { head: true })}</tr>
-${fb.rows.map((r, i) => `<tr>${cell(r.feedback, { bg: stripe(i) })}${cell(r.leads, { bg: stripe(i) })}</tr>`).join('\n')}
-<tr>${cell('Total', { bold: true, bg: STRIPE })}${cell(fb.total, { bold: true, bg: STRIPE })}</tr>
+<tr>${cellBox('Calling Summary Report', { bold: true, bg: MANDATE_BG, span: 2 })}</tr>
+<tr>${cell('Total', { bold: true, bg: MATRIX_BG })}${cell(fb.total, { bold: true, bg: MATRIX_BG })}</tr>
+<tr>${cell('Count of Team Members', { bold: true, bg: STRIPE })}${cell(fb.teamMembers, { bold: true, bg: STRIPE })}</tr>
+<tr>${cell('University/Institution Count', { bold: true, bg: MATRIX_BG })}${cell(fb.universities, { bold: true, bg: MATRIX_BG })}</tr>
+${fb.rows.map((r) => `<tr>${cell(r.feedback)}${cell(r.leads)}</tr>`).join('\n')}
 </table>`;
 
   const csv = [
+    ['Calling Summary Report', ''],
+    ['Total', fb.total],
+    ['Count of Team Members', fb.teamMembers],
     ['University/Institution Count', fb.universities],
     ...fb.rows.map((r) => [r.feedback, r.leads]),
-    ['Total', fb.total],
   ].map((cells) => cells.map(q).join(',')).join('\n');
 
   return {
@@ -516,7 +515,9 @@ ${fb.rows.map((r, i) => `<tr>${cell(r.feedback, { bg: stripe(i) })}${cell(r.lead
 }
 
 const FEEDBACK_FOOTER =
-  'Sent automatically by the Counselling CRM. All dates are IST. Every lead is counted once, ' +
+  'Sent automatically by the Counselling CRM. All dates are IST. Count of Team Members is the ' +
+  'agents who logged at least one follow-up in the window, not the size of the roster. ' +
+  'Every lead is counted once, ' +
   'under its latest follow-up in the period, so the Total is leads worked rather than ' +
   'follow-ups logged. Outcomes nobody used are not listed.';
 
@@ -561,7 +562,7 @@ export async function buildCollegeWiseEmail(
 <table role="presentation" cellpadding="0" cellspacing="0" style="border-collapse:collapse;min-width:100%">
 <tr>${line(formatSheetDate(w.label), cb.totals).map((v, i) => t(v, i, { bold: true, bg: STRIPE })).join('')}</tr>
 <tr>${headers.map((h, i) => t(h, i, { head: true })).join('')}</tr>
-${cb.rows.map((r, ri) => `<tr>${line(r.college, r).map((v, i) => t(v, i, { bg: stripe(ri) })).join('')}</tr>`).join('\n')}
+${cb.rows.map((r) => `<tr>${line(r.college, r).map((v, i) => t(v, i)).join('')}</tr>`).join('\n')}
 </table>
 </div>`;
 
@@ -705,14 +706,17 @@ export async function buildAgentWiseEmail(
   ];
   const bodyRows = rows.map((r) => {
     const scorePct = maxScore > 0 ? Math.round((r.total / maxScore) * 100) : null;
-    return [
-      dateCell, r.name, r.code, periodLabel, rangeLabel,
-      ...definitions.flatMap((d, i) => [
-        r.cells[i].actual ?? '', targetOf(d) ?? '',
-        pct(r.cells[i].actual, targetOf(d)), r.cells[i].score ?? '',
-      ]),
-      r.total, maxScore > 0 ? maxScore : '', scorePct === null ? '' : `${scorePct}%`, gradeFor(scorePct),
-    ] as (string | number)[];
+    return {
+      scorePct,
+      cells: [
+        dateCell, r.name, r.code, periodLabel, rangeLabel,
+        ...definitions.flatMap((d, i) => [
+          r.cells[i].actual ?? '', targetOf(d) ?? '',
+          pct(r.cells[i].actual, targetOf(d)), r.cells[i].score ?? '',
+        ]),
+        r.total, maxScore > 0 ? maxScore : '', scorePct === null ? '' : `${scorePct}%`, gradeFor(scorePct),
+      ] as (string | number)[],
+    };
   });
 
   const csv = [
@@ -720,7 +724,7 @@ export async function buildAgentWiseEmail(
     ['Employee Details', '', '', '', '',
       ...definitions.flatMap((d) => [`${d.name} Matrix`, '', '', '']), 'Scoring', '', '', ''],
     headRow,
-    ...bodyRows,
+    ...bodyRows.map((r) => r.cells),
   ].map((cells) => cells.map(q).join(',')).join('\n');
 
   // The band row uses real colspans in HTML rather than the CSV's padding
@@ -736,7 +740,24 @@ export async function buildAgentWiseEmail(
       definitions.map((d) => cellBox(esc(`${d.name} Matrix`), { head: true, tight: true, span: 4 })).join('')
     }${cellBox('Scoring', { head: true, tight: true, span: 4 })}</tr>
 <tr>${headRow.map((h, i) => t(h, i, { head: true })).join('')}</tr>
-${bodyRows.map((r, ri) => `<tr>${r.map((v, i) => t(v, i, { bg: stripe(ri) })).join('')}</tr>`).join('\n')}
+${bodyRows.map(({ cells, scorePct }) => {
+      const tint = gradeColour(scorePct);
+      /**
+       * Unsatisfactory paints the WHOLE row, not just its two score cells.
+       * Himanshu's point: a person who needs attention should be findable by
+       * scanning down 33 columns, and a tint on the far right of a table that
+       * scrolls sideways is exactly what a reader misses. Every other band
+       * colours only the score, so the row stays readable.
+       */
+      const wholeRow = scorePct !== null && scorePct < 30;
+      const rowBg = wholeRow ? { bg: tint ?? undefined } : {};
+      const last = cells.length - 1;
+      return `<tr>${cells
+        .map((v, i) =>
+          t(v, i, i >= last - 1 && tint ? { ...rowBg, bg: tint, bold: true } : rowBg),
+        )
+        .join('')}</tr>`;
+    }).join('\n')}
 </table>
 </div>`;
 
@@ -758,7 +779,9 @@ const AGENT_WISE_FOOTER =
   'rule reports against the weekly targets. The Total row multiplies each per-agent target by ' +
   'the headcount. A blank means no target is set for that KPI in this period, which is not the ' +
   'same as achieving nothing. Grade is a band on Score %: Excellent 85 and above, Very Good 70, ' +
-  'Good 50, Needs Improvement 30, Unsatisfactory below 30 — the higher band takes each boundary.';
+  'Good 50, Needs Improvement 30, Unsatisfactory below 30 — the higher band takes each boundary. ' +
+  'The Score % and Grade cells carry their band colour, and an Unsatisfactory row is shaded end ' +
+  'to end so it can be found without reading across every column.';
 
 // ─── Overall Calling Report ──────────────────────────────────────────────────
 
@@ -796,77 +819,113 @@ export async function buildOverallCallingEmail(
    * on leave is not reported as a collapse — and it is why the summary puts the
    * active count immediately before the figures it explains.
    */
-  const pct = (achieved: number, mandate: number | null, days: number | null, people = 1) => {
-    if (mandate === null || days === null) return '—';
-    if (mandate === 0) return '100%';   // none expected, so none is success
-    if (people === 0) return '—';       // nobody worked; there is no target to miss
-    return `${Math.round((achieved / (mandate * days * people)) * 100)}%`;
+  const pctNum = (
+    achieved: number, mandate: number | null, days: number | null, people = 1,
+  ): number | null => {
+    if (mandate === null || days === null) return null;
+    if (mandate === 0) return 100;      // none expected, so none is success
+    if (people === 0) return null;      // nobody worked; there is no target to miss
+    return Math.round((achieved / (mandate * days * people)) * 100);
   };
+  const fmt = (n: number | null) => (n === null ? '—' : `${n}%`);
+
+  /**
+   * A row's eight figures, plus the score they average to.
+   *
+   * Overall Scoring is the mean of the three achievement percentages, exactly
+   * as Himanshu specified: (Dialled % + Connected % + Talktime %) / 3. It needs
+   * all three to mean anything, so a missing mandate — or the Overall window,
+   * which has no day count — leaves it and the Grade blank rather than dividing
+   * two numbers by three.
+   */
   const line = (
     v: { dialed: number; connected: number; talktimeMin: number },
     days: number | null,
     people = 1,
-  ) => [
-    v.dialed, pct(v.dialed, M.dialed, days, people),
-    v.connected, pct(v.connected, M.connected, days, people),
-    v.talktimeMin, pct(v.talktimeMin, M.talktime, days, people),
-  ];
+  ): { cells: (string | number)[]; overall: number | null } => {
+    const d = pctNum(v.dialed, M.dialed, days, people);
+    const c = pctNum(v.connected, M.connected, days, people);
+    const tt = pctNum(v.talktimeMin, M.talktime, days, people);
+    const overall = d !== null && c !== null && tt !== null ? Math.round((d + c + tt) / 3) : null;
+    return {
+      cells: [
+        v.dialed, fmt(d), v.connected, fmt(c), v.talktimeMin, fmt(tt),
+        fmt(overall), gradeFor(overall),
+      ],
+      overall,
+    };
+  };
   const mandateText = (label: string, v: number | null, unit = '') =>
     v === null ? `${label} — not set` : `${label} - ${v}${unit}`;
 
   const t = (v: unknown, o: Parameters<typeof cellBox>[1] = {}) => cell(v, { ...o, tight: true });
 
+  /**
+   * The eight metric cells, with Overall Scoring and Grade filled by their
+   * band colour. The tint overrides whatever the row is painted — on the black
+   * total rows the band colour wins and the text flips back to dark, because a
+   * colour that means "Unsatisfactory" is no use invisible on black.
+   */
+  const metrics = (
+    v: { dialed: number; connected: number; talktimeMin: number },
+    days: number | null,
+    people = 1,
+    row: Parameters<typeof cellBox>[1] = {},
+  ) => {
+    const { cells, overall } = line(v, days, people);
+    const tint = gradeColour(overall);
+    return cells
+      .map((val, i) =>
+        i < 6
+          ? t(val, row)
+          : t(val, { ...row, bold: true, ...(tint ? { bg: tint, fg: INK } : {}) }),
+      )
+      .join('');
+  };
+
   const blockRows = r.blocks.map((b) => {
     const body = b.rows.length === 0
-      ? `<tr>${cellBox('No agents in scope', { tight: true, span: 8 })}</tr>`
-      : b.rows.map((row, i) => {
-          const cells = [
-            // The Matrix label spans the whole block, as in the sheet.
-            ...(i === 0 ? [cellBox(esc(b.label), { tight: true, bold: true, rowSpan: b.rows.length })] : []),
-            t(row.name, { align: 'left', bg: stripe(i) }),
-            ...line(row, b.days).map((v) => t(v, { bg: stripe(i) })),
-          ];
-          return `<tr>${cells.join('')}</tr>`;
-        }).join('');
+      ? `<tr>${cellBox('No agents in scope', { tight: true, span: COLS })}</tr>`
+      : b.rows.map((row, i) => `<tr>${
+          // The Matrix label spans the whole block, as in the sheet.
+          (i === 0 ? cellBox(esc(b.label), { tight: true, bold: true, rowSpan: b.rows.length }) : '')
+        }${t(row.name, { align: 'left' })}${metrics(row, b.days)}</tr>`).join('');
     const label = b.letter ? `${b.label} Total ${b.letter}` : `${b.label} Total`;
     const totals = `<tr>${cellBox(esc(label), { tight: true, bold: true, bg: TOTAL_BG, fg: ON_DARK, span: 2 })}${
-      line(b.totals, b.days, b.activeEmployees).map((v) => t(v, { bold: true, bg: TOTAL_BG, fg: ON_DARK })).join('')
+      metrics(b.totals, b.days, b.activeEmployees, { bold: true, bg: TOTAL_BG, fg: ON_DARK })
     }</tr>`;
     return body + totals;
   }).join('');
 
   const SUMMARY_COLS = ['Matrix', 'No of Active Employee', 'Dialled Calls', 'Achieved %',
-    'Connected Calls', 'Achieved %', 'Talktime', 'Achieved %'];
+    'Connected Calls', 'Achieved %', 'Talktime', 'Achieved %', 'Overall Scoring', 'Grade'];
+  const DETAIL_COLS = ['Matrix', 'Employee Name', 'Dialled Calls', 'Achieved %',
+    'Connected Calls', 'Achieved %', 'Talktime', 'Achieved %', 'Overall Scoring', 'Grade'];
+  const COLS = SUMMARY_COLS.length; // 10 — the span every banner row needs
 
   // The roll-up management reads first: one row per window, with the active
   // headcount next to the figures so the percentage explains itself.
   const summary = `<table role="presentation" cellpadding="0" cellspacing="0" style="border-collapse:collapse;min-width:100%;margin-bottom:22px">
-<tr>${cellBox('OVERALL CALLING REPORT SUMMARY', { tight: true, bold: true, bg: STRIPE, span: 8 })}</tr>
+<tr>${cellBox('OVERALL CALLING REPORT SUMMARY', { tight: true, bold: true, bg: STRIPE, span: COLS })}</tr>
 <tr>${SUMMARY_COLS.map((h) => cellBox(esc(h), { tight: true, bold: true, bg: MATRIX_BG })).join('')}</tr>
 <tr>${cellBox('TOTAL', { tight: true, bold: true, bg: TOTAL_BG, fg: ON_DARK })}${
-    cellBox('', { tight: true, bg: TOTAL_BG, fg: ON_DARK, span: 7 })}</tr>
-${r.blocks.map((b, i) => `<tr>${[
-    t(b.label, { bold: true, bg: stripe(i) }),
-    t(b.activeEmployees, { bg: stripe(i) }),
-    ...line(b.totals, b.days, b.activeEmployees).map((v) => t(v, { bg: stripe(i) })),
-  ].join('')}</tr>`).join('')}
+    cellBox('', { tight: true, bg: TOTAL_BG, fg: ON_DARK, span: COLS - 1 })}</tr>
+${r.blocks.map((b) => `<tr>${
+    t(b.label, { bold: true })
+  }${t(b.activeEmployees)}${metrics(b.totals, b.days, b.activeEmployees)}</tr>`).join('')}
 </table>`;
 
   const detail = `<div style="overflow-x:auto;-webkit-overflow-scrolling:touch">
 <table role="presentation" cellpadding="0" cellspacing="0" style="border-collapse:collapse;min-width:100%">
-<tr>${cellBox('Overall Calling Report', { tight: true, bold: true, bg: STRIPE, span: 8 })}</tr>
+<tr>${cellBox('Overall Calling Report', { tight: true, bold: true, bg: STRIPE, span: COLS })}</tr>
 <tr>${cellBox('Date', { tight: true, bold: true, bg: MANDATE_BG })}${
     cellBox(esc(r.dateLabel), { tight: true, bold: true, bg: MANDATE_BG })}${
     cellBox(esc(mandateText('Mandate', M.dialed)), { tight: true, bold: true, bg: MANDATE_BG, span: 2 })}${
     cellBox(esc(mandateText('Connected Mandate', M.connected)), { tight: true, bold: true, bg: MANDATE_BG, span: 2 })}${
-    cellBox(esc(mandateText('Talktime Mandate', M.talktime, ' Mins')), { tight: true, bold: true, bg: MANDATE_BG, span: 2 })}</tr>
-<tr>${['Matrix', 'Employee Name', 'Dialled Calls', 'Achieved %', 'Connected Calls', 'Achieved %', 'Talktime', 'Achieved %']
-    .map((h) => cellBox(esc(h), { tight: true, bold: true, bg: MATRIX_BG })).join('')}</tr>
+    cellBox(esc(mandateText('Talktime Mandate', M.talktime, ' Mins')), { tight: true, bold: true, bg: MANDATE_BG, span: 2 })}${
+    cellBox('Scoring', { tight: true, bold: true, bg: MANDATE_BG, span: 2 })}</tr>
+<tr>${DETAIL_COLS.map((h) => cellBox(esc(h), { tight: true, bold: true, bg: MATRIX_BG })).join('')}</tr>
 ${blockRows}
-<tr>${cellBox('Grand Total (A + B + C)', { tight: true, bold: true, bg: GRAND_BG, fg: ON_DARK, span: 2 })}${
-    line(r.grandTotal, r.grandTotal.days, r.grandTotal.activeEmployees)
-      .map((v) => t(v, { bold: true, bg: GRAND_BG, fg: ON_DARK })).join('')
-  }</tr>
 </table>
 </div>`;
   const inner = `${summary}${detail}`;
@@ -876,18 +935,21 @@ ${blockRows}
   // headings — its order interleaves another report between them.
   const summaryCsvRows: unknown[][] = [
     SUMMARY_COLS,
-    ['TOTAL', '', '', '', '', '', '', ''],
-    ...r.blocks.map((b) => [b.label, b.activeEmployees, ...line(b.totals, b.days, b.activeEmployees)]),
+    ['TOTAL', ...Array(COLS - 1).fill('')],
+    ...r.blocks.map((b) => [b.label, b.activeEmployees, ...line(b.totals, b.days, b.activeEmployees).cells]),
   ];
   const detailCsvRows: unknown[][] = [
     ['Date', r.dateLabel, mandateText('Mandate', M.dialed), '',
-      mandateText('Connected Mandate', M.connected), '', mandateText('Talktime Mandate', M.talktime, ' Mins'), ''],
-    ['Matrix', 'Employee Name', 'Dialled Calls', 'Achieved %', 'Connected Calls', 'Achieved %', 'Talktime', 'Achieved %'],
+      mandateText('Connected Mandate', M.connected), '',
+      mandateText('Talktime Mandate', M.talktime, ' Mins'), '', 'Scoring', ''],
+    DETAIL_COLS,
     ...r.blocks.flatMap((b) => [
-      ...b.rows.map((row) => [b.label, row.name, ...line(row, b.days)]),
-      [b.letter ? `${b.label} Total ${b.letter}` : `${b.label} Total`, '', ...line(b.totals, b.days, b.activeEmployees)],
+      ...b.rows.map((row) => [b.label, row.name, ...line(row, b.days).cells]),
+      [
+        b.letter ? `${b.label} Total ${b.letter}` : `${b.label} Total`, '',
+        ...line(b.totals, b.days, b.activeEmployees).cells,
+      ],
     ]),
-    ['Grand Total (A + B + C)', '', ...line(r.grandTotal, r.grandTotal.days, r.grandTotal.activeEmployees)],
   ];
   const summaryCsv = toCsvText(summaryCsvRows);
   const detailCsv = toCsvText(detailCsvRows);
@@ -918,12 +980,13 @@ const OVERALL_CALLING_FOOTER =
   'per call. Mandates are the daily targets set on KPI Targets. An agent row is measured against ' +
   'the mandate times the days the window covers; a floor total is measured against that times the ' +
   'number of active employees, since the mandate is per agent per day. Active means agents who ' +
-  'dialled at least one lead in that window, which is the count shown in the summary. The week ' +
-  'is Monday to today and the month is the 1st to today, so a partial window is judged against a ' +
-  'partial mandate. Overall has no day count, so its percentages are a dash. Note the Grand ' +
-  'Total adds Daily + Weekly + Monthly, ' +
-  'and those windows overlap — today sits inside this week, which sits inside this month — so it ' +
-  'is the sum the sheet asks for, not a count of distinct work.';
+  'dialled at least one lead in that window, which is the count shown in the summary. Weekly is ' +
+  'the whole of LAST week, Monday to Saturday — a settled six-day window, not this week so far — ' +
+  'and Monthly is the 1st to today, so a partial window is judged against a ' +
+  'partial mandate. Overall has no day count, so its percentages are a dash. Overall Scoring is ' +
+  'the mean of the three achievement percentages and needs all three, so it is blank wherever one ' +
+  'is missing; Grade bands it — Excellent 85 and above, Very Good 70, Good 50, Needs Improvement ' +
+  '30, Unsatisfactory below 30, the higher band taking each boundary.';
 
 // ─── All reports, in one email ───────────────────────────────────────────────
 

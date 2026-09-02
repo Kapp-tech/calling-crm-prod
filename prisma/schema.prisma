@@ -743,6 +743,11 @@ model LeadFeedbackArchive {
 
   @@index([leadId])
   @@index([leadId, cycle])
+  /// Every performance figure now reads this table alongside LeadFeedback (see
+  /// lib/feedback-history.ts), so it needs the same access pattern indexed:
+  /// one agent over a date window.
+  @@index([agentId, createdAt])
+  @@index([createdAt])
 }
 
 model UploadBatch {

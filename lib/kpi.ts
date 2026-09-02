@@ -1,5 +1,6 @@
 import { KpiPeriod, KpiSource, Prisma, PrismaClient, ReceiptType } from '@prisma/client';
 import { istStartOfDay, istEndOfDay, istDayKey, istShiftDays, toUtcSqlTimestamp } from './ist-time';
+import { FEEDBACK_HISTORY, feedbackNarrowingSql } from './feedback-history';
 
 /**
  * KPI evaluation.
@@ -238,20 +239,6 @@ export interface KpiDefinitionLike {
   receiptType: ReceiptType | null;
 }
 
-/**
- * Builds the feedback filter for a definition.
- *
- * Options and categories are OR'd: "count Hot, Warm, or anything Connected".
- * Both empty means no narrowing at all — every feedback counts.
- */
-function feedbackWhere(def: KpiDefinitionLike): Prisma.LeadFeedbackWhereInput {
-  const or: Prisma.LeadFeedbackWhereInput[] = [];
-  if (def.feedbackOptionIds.length > 0) or.push({ feedbackOptionId: { in: def.feedbackOptionIds } });
-  if (def.feedbackCategoryIds.length > 0) {
-    or.push({ feedbackOption: { categoryId: { in: def.feedbackCategoryIds } } });
-  }
-  return or.length === 0 ? {} : { OR: or };
-}
 
 /**
  * One agent's achievement for one KPI in one period.
@@ -270,20 +257,45 @@ export async function computeKpiActual(
   const { from, to } = typeof period === 'string' ? kpiPeriodRange(period, now) : period;
   const inPeriod = { gte: from, lte: to };
 
+  /**
+   * Both feedback sources read live AND archived follow-ups — see
+   * FEEDBACK_HISTORY. Raw SQL rather than Prisma's `count`/`groupBy` because
+   * the archive is a second table and Prisma cannot span the two; the union has
+   * to happen in SQL. `inPeriod` is kept for the sources that still use it.
+   */
+  const narrowing = feedbackNarrowingSql(
+    def.feedbackOptionIds,
+    def.feedbackCategoryIds,
+    Prisma.sql`f."feedbackOptionId"`,
+    Prisma.sql`fo."categoryId"`,
+  );
+  const window = Prisma.sql`
+    f."agentId" = ${userId}
+      AND f."createdAt" >= ${toUtcSqlTimestamp(from)}::timestamp
+      AND f."createdAt" <= ${toUtcSqlTimestamp(to)}::timestamp
+  `;
+
   switch (def.source) {
-    case 'FEEDBACK_COUNT':
-      return db.leadFeedback.count({
-        where: { agentId: userId, createdAt: inPeriod, ...feedbackWhere(def) },
-      });
+    case 'FEEDBACK_COUNT': {
+      const rows = await db.$queryRaw<{ count: bigint }[]>(Prisma.sql`
+        SELECT count(*)::bigint AS count
+        FROM ${FEEDBACK_HISTORY} f
+        LEFT JOIN "FeedbackOption" fo ON fo.id = f."feedbackOptionId"
+        WHERE ${window} AND (${narrowing})
+      `);
+      return Number(rows[0]?.count ?? 0);
+    }
 
     case 'FEEDBACK_LEADS': {
-      // Distinct leads rather than rows: groupBy is the cheapest way to get a
-      // distinct count out of Prisma without a raw query.
-      const rows = await db.leadFeedback.groupBy({
-        by: ['leadId'],
-        where: { agentId: userId, createdAt: inPeriod, ...feedbackWhere(def) },
-      });
-      return rows.length;
+      // Distinct leads rather than rows: an agent who rings a student twice has
+      // worked one lead.
+      const rows = await db.$queryRaw<{ count: bigint }[]>(Prisma.sql`
+        SELECT count(DISTINCT f."leadId")::bigint AS count
+        FROM ${FEEDBACK_HISTORY} f
+        LEFT JOIN "FeedbackOption" fo ON fo.id = f."feedbackOptionId"
+        WHERE ${window} AND (${narrowing})
+      `);
+      return Number(rows[0]?.count ?? 0);
     }
 
     case 'FEEDBACK_LEADS_LATEST': {
@@ -300,40 +312,26 @@ export async function computeKpiActual(
        * Raw SQL because this is a per-lead argmax, which Prisma cannot express.
        * DISTINCT ON is the cheap way to do it in Postgres.
        */
-      const optionIds = def.feedbackOptionIds;
-      const categoryIds = def.feedbackCategoryIds;
-
-      // Both empty means no narrowing, exactly as feedbackWhere() behaves —
-      // every lead the agent followed up counts, which is the same set
-      // FEEDBACK_LEADS would return.
-      const narrowing =
-        optionIds.length === 0 && categoryIds.length === 0
-          ? Prisma.sql`TRUE`
-          : Prisma.join(
-              [
-                ...(optionIds.length > 0
-                  ? [Prisma.sql`l."feedbackOptionId" IN (${Prisma.join(optionIds)})`]
-                  : []),
-                ...(categoryIds.length > 0
-                  ? [Prisma.sql`fo."categoryId" IN (${Prisma.join(categoryIds)})`]
-                  : []),
-              ],
-              ' OR ',
-            );
+      // Narrowing is applied to the *latest* row per lead, so it names the CTE
+      // columns rather than the raw feedback ones.
+      const latestNarrowing = feedbackNarrowingSql(
+        def.feedbackOptionIds,
+        def.feedbackCategoryIds,
+        Prisma.sql`l."feedbackOptionId"`,
+        Prisma.sql`fo."categoryId"`,
+      );
 
       const rows = await db.$queryRaw<{ count: bigint }[]>(Prisma.sql`
         WITH latest AS (
           SELECT DISTINCT ON (f."leadId") f."leadId", f."feedbackOptionId"
-          FROM "LeadFeedback" f
-          WHERE f."agentId" = ${userId}
-            AND f."createdAt" >= ${toUtcSqlTimestamp(from)}::timestamp
-            AND f."createdAt" <= ${toUtcSqlTimestamp(to)}::timestamp
+          FROM ${FEEDBACK_HISTORY} f
+          WHERE ${window}
           ORDER BY f."leadId", f."createdAt" DESC
         )
         SELECT count(*)::bigint AS count
         FROM latest l
         LEFT JOIN "FeedbackOption" fo ON fo.id = l."feedbackOptionId"
-        WHERE ${narrowing}
+        WHERE ${latestNarrowing}
       `);
       return Number(rows[0]?.count ?? 0);
     }
