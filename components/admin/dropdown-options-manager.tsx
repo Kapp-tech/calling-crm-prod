@@ -17,7 +17,7 @@ import { Switch } from '@/components/ui/switch';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { useToast } from '@/components/ui/use-toast';
 import { cn } from '@/lib/utils';
-import { COLLEGE_ZONES, COLLEGE_DEAL_TYPES } from '@/lib/college-attributes';
+import { COLLEGE_ZONES, COLLEGE_DEAL_TYPES, COLLEGE_CLIENT_TYPES } from '@/lib/college-attributes';
 import { AGENT_TOKEN, checkLandingPageUrl, hasAgentToken, resolveLandingPageUrl } from '@/lib/landing-page';
 import { useUndoable } from '@/components/shared/use-undoable';
 
@@ -53,6 +53,7 @@ interface DropdownOption {
   kappCollegeId?: string | null;
   collegeZone?: string | null;
   collegeDealType?: string | null;
+  collegeClientType?: string | null;
   landingPageUrl?: string | null;
   leadCodeCallingType?: string | null;
   isActive: boolean;
@@ -105,6 +106,7 @@ export function DropdownOptionsManager({ type, title, description, placeholder, 
   const [kappCollegeId, setKappId]      = useState('');
   const [collegeZone, setCollegeZone]         = useState('');
   const [collegeDealType, setCollegeDealType] = useState('');
+  const [collegeClientType, setCollegeClientType] = useState('');
   const [landingPageUrl, setLandingPageUrl]   = useState('');
   const [callingType, setCallingType]         = useState('');
   const [importOpen, setImportOpen]           = useState(false);
@@ -167,6 +169,7 @@ export function DropdownOptionsManager({ type, title, description, placeholder, 
     setKappId(opt.kappCollegeId ?? '');
     setCollegeZone(opt.collegeZone ?? '');
     setCollegeDealType(opt.collegeDealType ?? '');
+    setCollegeClientType(opt.collegeClientType ?? '');
     setLandingPageUrl(opt.landingPageUrl ?? '');
     setCallingType(opt.leadCodeCallingType ?? '');
     landingCaretRef.current = null;
@@ -254,6 +257,7 @@ export function DropdownOptionsManager({ type, title, description, placeholder, 
         if (collegeAttributes) {
           body.collegeZone = collegeZone.trim();
           body.collegeDealType = collegeDealType.trim();
+          body.collegeClientType = collegeClientType.trim();
           body.landingPageUrl = landingPageUrl.trim();
         }
         if (leadCodeMapping) body.leadCodeCallingType = callingType;
@@ -271,6 +275,7 @@ export function DropdownOptionsManager({ type, title, description, placeholder, 
         if (collegeAttributes) {
           body.collegeZone = collegeZone.trim();
           body.collegeDealType = collegeDealType.trim();
+          body.collegeClientType = collegeClientType.trim();
           body.landingPageUrl = landingPageUrl.trim();
         }
         if (leadCodeMapping) body.leadCodeCallingType = callingType;
@@ -706,9 +711,29 @@ BM101,${callingTypes[1]?.value ?? callingTypes[0]?.value ?? 'L2'}`}</pre>
                     ))}
                   </select>
                 </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="opt-college-client-type">Client Type</Label>
+                  <select
+                    id="opt-college-client-type"
+                    value={collegeClientType}
+                    onChange={(e) => setCollegeClientType(e.target.value)}
+                    className={SELECT_CLASS}
+                  >
+                    <option value="">— Not set —</option>
+                    {COLLEGE_CLIENT_TYPES.map((t) => (
+                      <option key={t} value={t}>{t}</option>
+                    ))}
+                  </select>
+                </div>
                 <p className="text-[11px] text-muted-foreground">
                   Every lead brought in for this college — by API or CSV — inherits
                   this Zone and Deal Type. Choose “Not set” to leave them empty.
+                </p>
+                <p className="text-[11px] text-muted-foreground">
+                  Client Type behaves differently: All Leads reads it from the college
+                  each time, so setting it now updates every existing lead for this
+                  college, not just new ones. Leads for a college with none set read
+                  “NA”.
                 </p>
 
                 <div className="space-y-1.5 border-t border-border/60 pt-4">

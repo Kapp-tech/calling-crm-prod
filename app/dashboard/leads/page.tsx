@@ -22,6 +22,12 @@ interface Lead {
   id: string; name: string; email: string; phone: string;
   city?: string | null; state?: string | null; course?: string | null;
   college?: string | null; kappCollegeId?: string | null; campaign?: string | null;
+  /**
+   * Read from the college on every request, not stored on the lead — so a
+   * college marked Client today changes all of its existing leads. "NA" until
+   * someone sets it in Manage Colleges.
+   */
+  clientType?: string | null;
   leadType?: string | null; leadOrigin?: string | null; leadZone?: string | null;
   primaryApplicationConfirm?: string | null; primaryAdmissionConfirm?: string | null;
   leadConfirmation?: string | null; leadStage?: string | null;
@@ -955,6 +961,7 @@ export default function AllLeadsPage() {
               <th className="whitespace-nowrap px-3 py-2.5 text-left text-[10px] font-bold uppercase tracking-wider text-muted-foreground min-w-[90px]">State</th>
               <th className="whitespace-nowrap px-3 py-2.5 text-left text-[10px] font-bold uppercase tracking-wider text-muted-foreground min-w-[110px]">Course</th>
               <th className="whitespace-nowrap px-3 py-2.5 text-left text-[10px] font-bold uppercase tracking-wider text-muted-foreground min-w-[160px]">College</th>
+              <th className="whitespace-nowrap px-3 py-2.5 text-left text-[10px] font-bold uppercase tracking-wider text-muted-foreground min-w-[110px]">Client Type</th>
               <th className="whitespace-nowrap px-3 py-2.5 text-left text-[10px] font-bold uppercase tracking-wider text-muted-foreground min-w-[130px]">KAPP College ID</th>
               <th className="whitespace-nowrap px-3 py-2.5 text-left text-[10px] font-bold uppercase tracking-wider text-muted-foreground min-w-[140px]">Agent</th>
               <th className="whitespace-nowrap px-3 py-2.5 text-left text-[10px] font-bold uppercase tracking-wider text-muted-foreground min-w-[160px]">Feedback</th>
@@ -1034,6 +1041,15 @@ export default function AllLeadsPage() {
                       <td className="px-3 py-2.5 whitespace-nowrap text-xs text-muted-foreground">{lead.state || '—'}</td>
                       <td className="px-3 py-2.5 whitespace-nowrap text-xs text-muted-foreground">{lead.course || '—'}</td>
                       <td className="px-3 py-2.5 whitespace-nowrap text-xs text-muted-foreground">{lead.college || '—'}</td>
+                      {/* "NA" is a real answer here — the college exists but nobody has
+                          said whether it is a client — so it is greyed rather than dashed. */}
+                      <td className="px-3 py-2.5 whitespace-nowrap text-xs">
+                        {lead.clientType && lead.clientType !== 'NA' ? (
+                          <span className="text-foreground">{lead.clientType}</span>
+                        ) : (
+                          <span className="text-muted-foreground/60">NA</span>
+                        )}
+                      </td>
                       <td className="px-3 py-2.5 whitespace-nowrap text-xs font-mono text-muted-foreground">{lead.kappCollegeId || '—'}</td>
 
                       {/* Agent */}
@@ -1114,7 +1130,7 @@ export default function AllLeadsPage() {
                 })}
                 {leads.length === 0 && (
                   <tr>
-                    <td colSpan={28} className="px-3 py-16 text-center text-muted-foreground text-sm">
+                    <td colSpan={29} className="px-3 py-16 text-center text-muted-foreground text-sm">
                       No leads found matching the current filters.
                     </td>
                   </tr>

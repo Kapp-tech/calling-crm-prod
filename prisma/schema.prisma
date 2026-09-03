@@ -656,6 +656,10 @@ model DropdownOption {
   // (API and CSV) instead of being sent per lead.
   collegeZone         String?
   collegeDealType     String?
+  /// COLLEGE-only: whether this college is a paying client. Read live whenever
+  /// a lead is listed rather than copied onto the lead, so setting it later
+  /// updates every existing lead for that college instead of only new ones.
+  collegeClientType   String?
   // COLLEGE-only as well: the college's application landing page, handed to
   // students by counsellors. Stored as a template containing {{%agent%}}, which
   // is replaced with the reading agent's ID at display time so the click is

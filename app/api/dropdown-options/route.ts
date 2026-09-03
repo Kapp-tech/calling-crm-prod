@@ -3,7 +3,7 @@ import { getServerSession } from 'next-auth';
 import { z } from 'zod';
 import { authOptions } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
-import { COLLEGE_ZONES, COLLEGE_DEAL_TYPES } from '@/lib/college-attributes';
+import { COLLEGE_ZONES, COLLEGE_DEAL_TYPES, COLLEGE_CLIENT_TYPES } from '@/lib/college-attributes';
 import { checkLandingPageUrl } from '@/lib/landing-page';
 import { applyLeadCodeMapping } from '@/lib/lead-code';
 import { DropdownType } from '@prisma/client';
@@ -20,6 +20,7 @@ const createSchema = z.object({
   // how an admin clears the value.
   collegeZone:     z.enum(['', ...COLLEGE_ZONES]).optional().nullable(),
   collegeDealType: z.enum(['', ...COLLEGE_DEAL_TYPES]).optional().nullable(),
+  collegeClientType: z.enum(['', ...COLLEGE_CLIENT_TYPES]).optional().nullable(),
   // COLLEGE only. Shape-checked below rather than here so the admin gets a
   // sentence explaining what is wrong instead of a zod field error.
   landingPageUrl:  z.string().max(1000).optional().nullable(),
@@ -65,7 +66,7 @@ export async function GET(req: NextRequest) {
         ...(showAll ? {} : { isActive: true }),
       },
       orderBy: [{ value: 'asc' }],
-  select: { id: true, type: true, value: true, kappCollegeId: true, collegeZone: true, collegeDealType: true, landingPageUrl: true, leadCodeCallingType: true, isActive: true, createdAt: true },
+  select: { id: true, type: true, value: true, kappCollegeId: true, collegeZone: true, collegeDealType: true, collegeClientType: true, landingPageUrl: true, leadCodeCallingType: true, isActive: true, createdAt: true },
     });
     return NextResponse.json(options);
   } catch (err) {
@@ -123,6 +124,7 @@ export async function POST(req: NextRequest) {
         // leaves the corresponding lead field null rather than empty-string.
         collegeZone:     parsed.data.type === 'COLLEGE' ? (parsed.data.collegeZone || null) : null,
         collegeDealType: parsed.data.type === 'COLLEGE' ? (parsed.data.collegeDealType || null) : null,
+        collegeClientType: parsed.data.type === 'COLLEGE' ? (parsed.data.collegeClientType || null) : null,
         landingPageUrl:  parsed.data.type === 'COLLEGE' ? (parsed.data.landingPageUrl?.trim() || null) : null,
         leadCodeCallingType: parsed.data.type === 'LEAD_CODE' ? callingType : null,
         createdBy:     session.user.id,

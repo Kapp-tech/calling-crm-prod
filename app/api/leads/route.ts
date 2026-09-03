@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { clientTypeByCollege } from '@/lib/college-client-type';
 import { getServerSession } from 'next-auth';
 import { z } from 'zod';
 import { authOptions } from '@/lib/auth';
@@ -169,8 +170,15 @@ export async function GET(req: NextRequest) {
     // receives them — hiding them in the browser leaves the real values sitting
     // in the JSON one devtools tab away.
     const masked = await isMaskedRole(session.user.role);
+
+    // Client Type is a property of the COLLEGE, resolved on every read rather
+    // than stored on the lead — so setting it on a college updates all of that
+    // college's existing leads, which is the point of it.
+    const clientTypeOf = await clientTypeByCollege(prisma);
+    const withClientType = leads.map((l) => ({ ...l, clientType: clientTypeOf(l.college) }));
+
     return NextResponse.json({
-      leads: masked ? leads.map((l) => maskContact(l, true)) : leads,
+      leads: masked ? withClientType.map((l) => maskContact(l, true)) : withClientType,
       // The UI needs to know, so it can drop the WhatsApp button — that link has
       // to carry the real number, so it cannot work for a masked reader.
       masked,

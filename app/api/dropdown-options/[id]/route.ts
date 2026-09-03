@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { authOptions } from '@/lib/auth';
 import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
-import { COLLEGE_ZONES, COLLEGE_DEAL_TYPES } from '@/lib/college-attributes';
+import { COLLEGE_ZONES, COLLEGE_DEAL_TYPES, COLLEGE_CLIENT_TYPES } from '@/lib/college-attributes';
 import { checkLandingPageUrl } from '@/lib/landing-page';
 import { applyLeadCodeMapping } from '@/lib/lead-code';
 
@@ -15,6 +15,7 @@ const updateSchema = z.object({
   // "not configured"; anything outside the fixed lists is rejected.
   collegeZone:     z.enum(['', ...COLLEGE_ZONES]).optional().nullable(),
   collegeDealType: z.enum(['', ...COLLEGE_DEAL_TYPES]).optional().nullable(),
+  collegeClientType: z.enum(['', ...COLLEGE_CLIENT_TYPES]).optional().nullable(),
   landingPageUrl:  z.string().max(1000).optional().nullable(),
   leadCodeCallingType: z.string().max(200).optional().nullable(),
   isActive:      z.boolean().optional(),
@@ -36,10 +37,11 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   // "not configured" and should leave the lead's zone unset, whereas '' would be
   // copied onto every lead as a real (blank) value. No trimming needed — zod has
   // already restricted these to '' or an exact list member.
-  const { collegeZone, collegeDealType, landingPageUrl, leadCodeCallingType, ...rest } = parsed.data;
+  const { collegeZone, collegeDealType, collegeClientType, landingPageUrl, leadCodeCallingType, ...rest } = parsed.data;
   const data: Prisma.DropdownOptionUpdateInput = { ...rest };
   if (collegeZone !== undefined) data.collegeZone = collegeZone || null;
   if (collegeDealType !== undefined) data.collegeDealType = collegeDealType || null;
+  if (collegeClientType !== undefined) data.collegeClientType = collegeClientType || null;
   if (landingPageUrl !== undefined) {
     const check = checkLandingPageUrl(landingPageUrl ?? '');
     if (!check.ok) return NextResponse.json({ error: check.error }, { status: 400 });

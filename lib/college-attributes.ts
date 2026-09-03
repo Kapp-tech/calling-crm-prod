@@ -20,5 +20,20 @@ export const AGENT_ZONES = COLLEGE_ZONES;
 
 export const COLLEGE_DEAL_TYPES = ['Branding', 'CPL', 'CPA', 'CPS'] as const;
 
+/**
+ * Whether the college is a paying client.
+ *
+ * Unlike Zone and Deal Type, this is NOT copied onto the lead when it is
+ * ingested — it is read from the college every time a lead is listed. A college
+ * signed today changes what every one of its existing leads shows, which is the
+ * behaviour asked for: "NA will be changed to the respective value". A stamped
+ * copy would only ever apply to leads created after the change.
+ */
+export const COLLEGE_CLIENT_TYPES = ['Client', 'Non Client'] as const;
+
+/** Shown against a lead whose college has no Client Type set yet. */
+export const UNSET_CLIENT_TYPE = 'NA';
+
 export type CollegeZone = (typeof COLLEGE_ZONES)[number];
 export type CollegeDealType = (typeof COLLEGE_DEAL_TYPES)[number];
+export type CollegeClientType = (typeof COLLEGE_CLIENT_TYPES)[number];

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { clientTypeByCollege } from '@/lib/college-client-type';
 import { getServerSession } from 'next-auth';
 import { z } from 'zod';
 import { authOptions } from '@/lib/auth';
@@ -203,7 +204,7 @@ export async function GET(req: NextRequest) {
     // Fixed columns
     const fixedHeaders = [
       'Lead ID', 'Name', 'Email', 'Phone',
-      'City', 'State', 'Course', 'College', 'KAPP College ID',
+      'City', 'State', 'Course', 'College', 'Client Type', 'KAPP College ID',
       'Lead Code', 'Lead Type', 'Lead Origin', 'Zone',
       'Status', 'Uploaded By',
       'Assigned To', 'Assigned By', 'Assigned From', 'Prev Assignee 2',
@@ -240,6 +241,10 @@ export async function GET(req: NextRequest) {
     const displayId = (id: string) =>
       'L' + id.replace(/\D/g, '').slice(-9).padStart(9, '0');
 
+    // Same live lookup the All Leads list uses, so the column downloads exactly
+    // as it reads on screen.
+    const clientTypeOf = await clientTypeByCollege(prisma);
+
     const rows = leads.map((l) => {
       const jsonArr = (v: unknown) =>
         Array.isArray(v) ? (v as string[]).join(', ') : '';
@@ -253,7 +258,7 @@ export async function GET(req: NextRequest) {
         l.name,
         mask(l.email, 'email'),
         mask(l.phone, 'phone'),
-        l.city, l.state, l.course, l.college, l.kappCollegeId,
+        l.city, l.state, l.course, l.college, clientTypeOf(l.college), l.kappCollegeId,
         l.campaign, l.leadType, l.leadOrigin, l.leadZone,
         l.status,
         l.uploadedBy?.name ?? '',
