@@ -1,7 +1,7 @@
 import { EmailFrequency, PrismaClient, Prisma, EmailReportType, KpiPeriod } from '@prisma/client';
 import {
   buildAgentReport, buildFeedbackBreakdown, buildCollegeBreakdown, AgentReportRow,
-  buildOverallCallingReport, workingDaysByAgent,
+  buildOverallCallingReport, activeDaysByAgent,
 } from './reports';
 import { kpiScoreboardFor, computeKpiActual, kpiScore, kpiPeriodRange, KPI_PERIODS } from './kpi';
 import { gradeFor, gradeColour } from './kpi-grade';
@@ -665,12 +665,13 @@ export async function buildAgentWiseEmail(
    * due rule, on a box with a few hundred MB of headroom, so it caps concurrency
    * at one agent's worth of queries.
    */
-  // Working days come from the agent's own check-ins inside the KPI window, so
-  // a five-day figure and a two-day figure are not read as the same effort.
+  // Days the agent actually worked inside the KPI window, so a five-day figure
+  // and a two-day figure are not read as the same effort. Counted from recorded
+  // work rather than check-ins, matching the Overall Calling report — the two
+  // reports go out in the same mail and a column of the same name must not mean
+  // two different things.
   const { from: winFrom, to: winTo } = kpiPeriodRange(period, now);
-  const workedBy = await workingDaysByAgent(
-    db, agents.map((a) => a.id), istDayKey(winFrom), istDayKey(winTo),
-  );
+  const workedBy = await activeDaysByAgent(db, agents.map((a) => a.id), winFrom, winTo);
 
   const rows: {
     name: string; code: string; workingDays: number; joined: string;
@@ -816,8 +817,10 @@ const AGENT_WISE_FOOTER =
  * seven. Measuring a partial window against a whole one would report the whole
  * floor as failing every Monday.
  *
- * Overall has no mandate: an unbounded window has no number of days to scale
- * by, so its percentage columns are a dash rather than an invented figure.
+ * Overall is unbounded and so has no calendar day count. It is scaled instead
+ * by the days each agent personally worked, which is the figure that block
+ * prints in Working Days — so an agent of four days and one of twenty-five are
+ * both judged against their own time on the floor rather than each other's.
  */
 export async function buildOverallCallingEmail(
   db: PrismaClient,
@@ -829,25 +832,29 @@ export async function buildOverallCallingEmail(
   const M = r.mandates;
 
   /**
-   * Achieved against the daily mandate x the days the window covers x the
-   * people it covers.
+   * Achieved against the daily mandate x AGENT-DAYS.
    *
-   * The headcount matters and was missing at first: a mandate is per agent per
-   * day, so an agent row divides by one person, but a floor total of eleven
-   * agents divides by eleven. Without it a full day's work for the whole team
+   * A mandate is per agent per day, so the target is always the mandate times
+   * the number of agent-days the figure covers. For one agent in a bounded
+   * window that is just the window's days; for a floor total it is days x the
+   * active headcount. Without the headcount a full day's work for eleven agents
    * read as 1,100% of target.
    *
    * Active people rather than the whole roster, so a day when half the team is
    * on leave is not reported as a collapse — and it is why the summary puts the
    * active count immediately before the figures it explains.
+   *
+   * Overall has no calendar day count, so its agent-days come from the days each
+   * agent actually worked. That is what turned that block's percentages from a
+   * dash into a number.
    */
   const pctNum = (
-    achieved: number, mandate: number | null, days: number | null, people = 1,
+    achieved: number, mandate: number | null, agentDays: number | null,
   ): number | null => {
-    if (mandate === null || days === null) return null;
+    if (mandate === null || agentDays === null) return null;
     if (mandate === 0) return 100;      // none expected, so none is success
-    if (people === 0) return null;      // nobody worked; there is no target to miss
-    return Math.round((achieved / (mandate * days * people)) * 100);
+    if (agentDays === 0) return null;   // nobody worked; there is no target to miss
+    return Math.round((achieved / (mandate * agentDays)) * 100);
   };
   const fmt = (n: number | null) => (n === null ? '—' : `${n}%`);
 
@@ -856,18 +863,17 @@ export async function buildOverallCallingEmail(
    *
    * Overall Scoring is the mean of the three achievement percentages, exactly
    * as Himanshu specified: (Dialled % + Connected % + Talktime %) / 3. It needs
-   * all three to mean anything, so a missing mandate — or the Overall window,
-   * which has no day count — leaves it and the Grade blank rather than dividing
-   * two numbers by three.
+   * all three to mean anything, so a missing mandate — or an agent with no days
+   * worked at all — leaves it and the Grade blank rather than dividing two
+   * numbers by three.
    */
   const line = (
     v: { dialed: number; connected: number; talktimeMin: number },
-    days: number | null,
-    people = 1,
+    agentDays: number | null,
   ): { cells: (string | number)[]; overall: number | null } => {
-    const d = pctNum(v.dialed, M.dialed, days, people);
-    const c = pctNum(v.connected, M.connected, days, people);
-    const tt = pctNum(v.talktimeMin, M.talktime, days, people);
+    const d = pctNum(v.dialed, M.dialed, agentDays);
+    const c = pctNum(v.connected, M.connected, agentDays);
+    const tt = pctNum(v.talktimeMin, M.talktime, agentDays);
     const overall = d !== null && c !== null && tt !== null ? Math.round((d + c + tt) / 3) : null;
     return {
       cells: [
@@ -890,14 +896,13 @@ export async function buildOverallCallingEmail(
    */
   const metrics = (
     v: { dialed: number; connected: number; talktimeMin: number },
-    days: number | null,
-    people = 1,
+    agentDays: number | null,
     row: Parameters<typeof cellBox>[1] = {},
     /** Total rows stay solid black end to end — a band colour there reads as a
      *  person's grade when it is the floor's, and breaks the line visually. */
     plain = false,
   ) => {
-    const { cells, overall } = line(v, days, people);
+    const { cells, overall } = line(v, agentDays);
     const tint = plain ? null : gradeColour(overall);
     return cells
       .map((val, i) =>
@@ -908,6 +913,16 @@ export async function buildOverallCallingEmail(
       .join('');
   };
 
+  /**
+   * The agent-days one PERSON's row is measured against. A bounded window gives
+   * every agent the same day count; Overall gives each their own, because "all
+   * time" means something different for a joiner of four days and one of
+   * twenty-five. It is the same number the row prints in Working Days, so the
+   * percentage can be checked against the row it sits on.
+   */
+  const rowDays = (b: { days: number | null }, row: { workingDays: number }) =>
+    b.days ?? row.workingDays;
+
   const blockRows = r.blocks.map((b) => {
     const body = b.rows.length === 0
       ? `<tr>${cellBox('No agents in scope', { tight: true, span: COLS })}</tr>`
@@ -916,10 +931,10 @@ export async function buildOverallCallingEmail(
           (i === 0 ? cellBox(esc(b.label), { tight: true, bold: true, rowSpan: b.rows.length }) : '')
         }${t(row.name, { align: 'left' })}${t(row.workingDays)}${
           t(row.joiningDate ?? '—')
-        }${metrics(row, b.days)}</tr>`).join('');
+        }${metrics(row, rowDays(b, row))}</tr>`).join('');
     const label = b.letter ? `${b.label} Total ${b.letter}` : `${b.label} Total`;
     const totals = `<tr>${cellBox(esc(label), { tight: true, bold: true, bg: TOTAL_BG, fg: ON_DARK, span: 4 })}${
-      metrics(b.totals, b.days, b.activeEmployees, { bold: true, bg: TOTAL_BG, fg: ON_DARK }, true)
+      metrics(b.totals, b.agentDays, { bold: true, bg: TOTAL_BG, fg: ON_DARK }, true)
     }</tr>`;
     return body + totals;
   }).join('');
@@ -945,7 +960,7 @@ export async function buildOverallCallingEmail(
     cellBox('', { tight: true, bg: TOTAL_BG, fg: ON_DARK, span: SUM_COLS - 1 })}</tr>
 ${r.blocks.map((b) => `<tr>${
     t(b.label, { bold: true })
-  }${t(b.activeEmployees)}${metrics(b.totals, b.days, b.activeEmployees)}</tr>`).join('')}
+  }${t(b.activeEmployees)}${metrics(b.totals, b.agentDays)}</tr>`).join('')}
 </table>`;
 
   // width:auto, not min-width:100% — with a dozen columns the browser stretched
@@ -972,7 +987,7 @@ ${blockRows}
   const summaryCsvRows: unknown[][] = [
     SUMMARY_COLS,
     ['TOTAL', ...Array(SUM_COLS - 1).fill('')],
-    ...r.blocks.map((b) => [b.label, b.activeEmployees, ...line(b.totals, b.days, b.activeEmployees).cells]),
+    ...r.blocks.map((b) => [b.label, b.activeEmployees, ...line(b.totals, b.agentDays).cells]),
   ];
   const detailCsvRows: unknown[][] = [
     // Two blanks sit under Working Days / Date of Joining so each mandate lands
@@ -984,11 +999,11 @@ ${blockRows}
     DETAIL_COLS,
     ...r.blocks.flatMap((b) => [
       ...b.rows.map((row) => [
-        b.label, row.name, row.workingDays, row.joiningDate ?? '', ...line(row, b.days).cells,
+        b.label, row.name, row.workingDays, row.joiningDate ?? '', ...line(row, rowDays(b, row)).cells,
       ]),
       [
         b.letter ? `${b.label} Total ${b.letter}` : `${b.label} Total`, '', '', '',
-        ...line(b.totals, b.days, b.activeEmployees).cells,
+        ...line(b.totals, b.agentDays).cells,
       ],
     ]),
   ];
@@ -1024,7 +1039,11 @@ const OVERALL_CALLING_FOOTER =
   'dialled at least one lead in that window, which is the count shown in the summary. Weekly is ' +
   'the whole of LAST week, Monday to Saturday — a settled six-day window, not this week so far — ' +
   'and Monthly is the 1st to today, so a partial window is judged against a ' +
-  'partial mandate. Overall has no day count, so its percentages are a dash. Overall Scoring is ' +
+  'partial mandate. Overall covers all time and so has no calendar day count: each agent there is ' +
+  'measured against the days they personally worked, shown in their Working Days column, and the ' +
+  'Overall total against the sum of those. Working Days counts days with recorded calling work — ' +
+  'a follow-up or a dialer call — not check-ins, which were not recorded on most days before ' +
+  'check-in became compulsory. Overall Scoring is ' +
   'the mean of the three achievement percentages and needs all three, so it is blank wherever one ' +
   'is missing; Grade bands it — Excellent 85 and above, Very Good 70, Good 50, Needs Improvement ' +
   '30, Unsatisfactory below 30, the higher band taking each boundary.';

@@ -629,35 +629,55 @@ export async function buildCollegeBreakdown(
   };
 }
 
+
 /**
- * How many days each agent actually checked in, per IST calendar day, inside a
- * window.
+ * IST days on which each agent actually did calling work in the window.
  *
- * "Working days" on a report means days the person was on the clock — counted
- * from their own check-ins, not from the calendar and not from the roster. A
- * six-day window in which someone checked in three times reads as 3.
+ * A day counts if the agent logged a follow-up OR the dialer recorded a call
+ * for them. Both signals are needed: Shivam Rajput has 8 days with follow-ups
+ * but 11 days with call logs, because dialling a lead and leaving no feedback
+ * is a real and common thing. The union of the two is the honest count of days
+ * worked.
  *
- * `Attendance.date` is already the IST day key as a plain string, so this is a
- * straight string range with no timezone arithmetic to get wrong — one row per
- * user per day is guaranteed by the table's own unique constraint, so counting
- * rows is counting days.
+ * This replaced a version that counted Attendance check-ins, which cannot
+ * carry the column or the denominator. Check-in only started on 4 Aug
+ * 2026 and was skipped on most days until the attendance gate shipped: Yash
+ * Sharma has 10 check-ins against 25 days of recorded calling. Dividing a
+ * lifetime of work by 10 days of mandate scores him at 167%; dividing by the
+ * 25 days he actually worked scores him at 61%. Going forward the gate makes
+ * the two converge, since an agent can no longer call without checking in.
  *
- * Returns a map keyed by user id; a user with no shifts is simply absent from
- * it, which the caller reads as zero.
+ * UNION, not UNION ALL: an agent normally has both a follow-up and a call log
+ * on the same day, and that is one day worked, not two.
  */
-export async function workingDaysByAgent(
-  db: { attendance: { groupBy: Function } },
+export async function activeDaysByAgent(
+  db: PrismaClient,
   userIds: string[],
-  fromDayKey: string,
-  toDayKey: string,
+  from: Date | null,
+  to: Date | null,
 ): Promise<Map<string, number>> {
   if (userIds.length === 0) return new Map();
-  const rows = (await db.attendance.groupBy({
-    by: ['userId'],
-    where: { userId: { in: userIds }, date: { gte: fromDayKey, lte: toDayKey } },
-    _count: { date: true },
-  })) as { userId: string; _count: { date: number } }[];
-  return new Map(rows.map((r) => [r.userId, r._count.date]));
+  // Explicit UTC literals, never a JS Date — see toUtcSqlTimestamp.
+  const rows = await db.$queryRaw<{ agentId: string; days: number }[]>(Prisma.sql`
+    SELECT "agentId", count(*)::int AS "days"
+    FROM (
+      SELECT f."agentId" AS "agentId",
+             to_char(f."createdAt" + interval '5 hours 30 minutes', 'YYYY-MM-DD') AS "day"
+      FROM ${FEEDBACK_HISTORY} f
+      WHERE f."agentId" IN (${Prisma.join(userIds)})
+        ${from ? Prisma.sql`AND f."createdAt" >= ${toUtcSqlTimestamp(from)}::timestamp` : Prisma.empty}
+        ${to ? Prisma.sql`AND f."createdAt" <= ${toUtcSqlTimestamp(to)}::timestamp` : Prisma.empty}
+      UNION
+      SELECT c."agentId" AS "agentId",
+             to_char(c."startedAt" + interval '5 hours 30 minutes', 'YYYY-MM-DD') AS "day"
+      FROM "CallLog" c
+      WHERE c."agentId" IN (${Prisma.join(userIds)})
+        ${from ? Prisma.sql`AND c."startedAt" >= ${toUtcSqlTimestamp(from)}::timestamp` : Prisma.empty}
+        ${to ? Prisma.sql`AND c."startedAt" <= ${toUtcSqlTimestamp(to)}::timestamp` : Prisma.empty}
+    ) d
+    GROUP BY "agentId"
+  `);
+  return new Map(rows.map((r) => [r.agentId, Number(r.days)]));
 }
 
 // ─── Overall Calling Report ──────────────────────────────────────────────────
@@ -667,7 +687,11 @@ export interface CallingRow {
   employeeCode: string | null;
   /** ISO date. Context a manager reads a new joiner's numbers against. */
   joiningDate: string | null;
-  /** Days this agent actually checked in inside the window — not calendar days. */
+  /**
+   * Days this agent actually did calling work inside the window — a follow-up
+   * or a dialer call, not calendar days and NOT check-ins. See
+   * `activeDaysByAgent` for why check-ins cannot carry this column.
+   */
   workingDays: number;
   dialed: number;
   connected: number;
@@ -686,7 +710,8 @@ export interface CallingBlock {
    * IST days the window covers so far — 1 for today, Monday-to-today for the
    * week, the 1st-to-today for the month. Counting elapsed days rather than
    * whole ones is what stops a Wednesday being measured against a full week.
-   * Null for Overall, which has no meaningful mandate.
+   * Null for Overall, which is unbounded and so has no calendar day count. A
+   * row in that block is measured against its own agent's worked days instead.
    */
   days: number | null;
   rows: CallingRow[];
@@ -702,6 +727,15 @@ export interface CallingBlock {
    * column immediately before the figures it explains.
    */
   activeEmployees: number;
+  /**
+   * Agent-days the block's TOTAL row is measured against: target =
+   * mandate x agentDays.
+   *
+   * For a bounded window that is simply days x active people. Overall has no
+   * day count, so it is the sum of each agent's own worked days — which is the
+   * same arithmetic, just with a different number of days per person.
+   */
+  agentDays: number;
   totals: { dialed: number; connected: number; talktimeMin: number };
 }
 
@@ -765,7 +799,7 @@ export async function buildOverallCallingReport(
   const lastMonday = istShiftDays(monday, -7);
   const lastSaturday = istShiftDays(lastMonday, 5);
 
-  const spec: Omit<CallingBlock, 'rows' | 'totals' | 'employees' | 'activeEmployees'>[] = [
+  const spec: Omit<CallingBlock, 'rows' | 'totals' | 'employees' | 'activeEmployees' | 'agentDays'>[] = [
     { key: 'DAILY', label: 'Daily', letter: 'A', from: todayKey, to: todayKey, days: 1 },
     { key: 'WEEKLY', label: 'Weekly', letter: 'B', from: lastMonday, to: lastSaturday, days: 6 },
     { key: 'MONTHLY', label: 'Monthly', letter: 'C', from: monthFirst, to: todayKey, days: dayOfMonth },
@@ -802,11 +836,10 @@ export async function buildOverallCallingReport(
       if (t.agentId) talkBy.set(t.agentId, Math.floor((t._sum.talkTimeSeconds ?? 0) / 60));
     }
 
-    // Overall has no bounded window, so working days count from the first
-    // shift anyone ever recorded up to today rather than from nothing.
-    const workedBy = await workingDaysByAgent(
-      db, ids, s.from ?? '0000-01-01', s.to ?? todayKey,
-    );
+    // Days each agent actually worked in this window. Overall passes a null
+    // window, so it counts every day they have ever recorded work on — which
+    // is exactly the day count its percentages divide by.
+    const workedBy = await activeDaysByAgent(db, ids, window.from, window.to);
 
     const rows: CallingRow[] = agentRows.map((r) => ({
       name: r.name,
@@ -817,11 +850,17 @@ export async function buildOverallCallingReport(
       connected: r.connectedCalls,
       talktimeMin: talkBy.get(r.id) ?? 0,
     }));
+    const activeEmployees = rows.filter((r) => r.dialed > 0).length;
     blocks.push({
       ...s,
       rows,
       employees: rows.length,
-      activeEmployees: rows.filter((r) => r.dialed > 0).length,
+      activeEmployees,
+      // Overall's people worked different numbers of days, so its total target
+      // is the sum of theirs rather than one day count times a headcount.
+      agentDays: s.days === null
+        ? rows.reduce((n, r) => n + r.workingDays, 0)
+        : s.days * activeEmployees,
       totals: rows.reduce(
         (acc, r) => ({
           dialed: acc.dialed + r.dialed,
