@@ -5,6 +5,9 @@ import {
 } from './reports';
 import { kpiScoreboardFor, computeKpiActual, kpiScore, kpiPeriodRange, KPI_PERIODS } from './kpi';
 import { gradeFor, gradeColour } from './kpi-grade';
+import {
+  isAbsent, presentCount, targetForAgent, scoreForAgent, maxScoreForAgent, pctForTeam, pctForAgent,
+} from './kpi-absence';
 import { istDayKey, istShiftDays, formatSheetDate } from './ist-time';
 import { istParts, reportWindowFor } from './email-schedule';
 import { DEFAULT_EMAIL_SUBJECTS, allReportsSubject } from './email-subjects';
@@ -363,18 +366,200 @@ export async function buildTeamSummary(
   };
 }
 
-/** One agent's own numbers, same four periods, addressed to them. */
-export function buildAgentEmail(block: AgentBlock, today: string): BuiltReport {
-  const inner = agentSection(block, true);
+// ─── One agent's own daily report ────────────────────────────────────────────
+
+/** One KPI on one agent's day: what was asked, what was done, what it scored. */
+export interface AgentKpiLine {
+  name: string;
+  /** "calls", "min", "leads" — shown beside the name so a bare 180 is readable. */
+  unit: string | null;
+  actual: number | null;
+  target: number | null;
+  pct: number | null;
+  /**
+   * Points still earned behind the scenes — they are what the grade is a band
+   * on — but no longer shown. Himanshu asked for the points off this report:
+   * "remove ... Points earned. Just give the grade."
+   */
+  points: number | null;
+}
+
+export interface AgentDailyPerformance {
+  id: string;
+  name: string;
+  employeeCode: string | null;
+  tl: string | null;
+  joiningDate: string | null;
+  dayKey: string;
+  /** 0 or 1 for a single day. Zero means no work recorded, so no target. */
+  workingDays: number;
+  lines: AgentKpiLine[];
+  score: number;
+  maxScore: number;
+  scorePct: number | null;
+}
+
+/**
+ * KPIs left off the agent's own daily mail — hidden AND unscored.
+ *
+ * Himanshu asked for Paid Apps to come off this report, and chose to drop it
+ * from the grade as well rather than have the grade rest on a row the agent
+ * cannot see. So this report scores out of 43 points (8 + 8 + 7 + 7 + 13) where
+ * the management reports score out of 50.
+ *
+ * **That divergence is deliberate. Do not "fix" it.** An agent's grade on their
+ * own mail will not match their grade on the Caller-wise report, because Paid
+ * Apps — almost always zero, and worth 7 points — drags the management figure
+ * down. Someone on 23 points grades Good here (23/43 = 53%) and Needs
+ * Improvement there (23/50 = 46%).
+ *
+ * Matched on name, so renaming the KPI in Manage KPIs means updating this.
+ */
+const AGENT_MAIL_EXCLUDED_KPIS = [/paid\s*app/i];
+
+/**
+ * Each agent's own day, KPI by KPI: achieved against target, with the grade
+ * every other report uses.
+ *
+ * This replaced a four-row table of today / yesterday / this week / this month
+ * carrying bare activity counts and no targets at all. Himanshu's instruction:
+ * show only the daily figures, as achieved against target, with the score and
+ * grade. An agent reading their own mail needs to know whether they hit the
+ * number, and the three extra windows were three chances to read the wrong row.
+ *
+ * Only KPIs with a daily target appear. Every row here is Achieved vs Target,
+ * so a KPI with nothing to hit has nothing to say — which is why Not connected,
+ * Applications, Admissions and Avg talktime are no longer shown: none of them
+ * is a KPI with a daily target on this install.
+ *
+ * Six `computeKpiActual` calls per agent, against the twenty-four the four-window
+ * version made — the scoreboard was recomputed for every window.
+ */
+export async function buildAgentDailyPerformance(
+  db: PrismaClient,
+  scope: Prisma.UserWhereInput,
+  now: Date,
+): Promise<AgentDailyPerformance[]> {
+  const dayKey = istDayKey(now);
+  // One pass for identity — name, code, TL, joining date — for everyone in
+  // scope, whether or not they worked today.
+  const { rows: identity } = await buildAgentReport(db, scope, 'DATEWISE', dayKey, dayKey, now);
+  const defs = await db.kpiDefinition.findMany({
+    where: { isActive: true },
+    orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
+    include: { targets: { select: { period: true, target: true, points: true } } },
+  });
+
+  const daily = (d: (typeof defs)[number]) => d.targets.find((t) => t.period === 'DAILY') ?? null;
+  const scored = defs.filter(
+    (d) => daily(d)?.target != null && !AGENT_MAIL_EXCLUDED_KPIS.some((re) => re.test(d.name)),
+  );
+  const maxScore = scored.reduce((sum, d) => sum + (daily(d)?.points ?? 0), 0);
+
+  // The KPI window itself, so the days-worked count and the achievement figures
+  // can never be measured over different hours.
+  const w = kpiPeriodRange('DAILY', now);
+  const workedBy = await activeDaysByAgent(db, identity.map((r) => r.id), w.from, w.to);
+
+  const out: AgentDailyPerformance[] = [];
+  for (const who of identity) {
+    const workingDays = workedBy.get(who.id) ?? 0;
+    const lines: AgentKpiLine[] = [];
+    for (const d of scored) {
+      const t = daily(d)!;
+      const actual = await computeKpiActual(db, d, who.id, 'DAILY', now);
+      const target = targetForAgent(t.target, workingDays);
+      lines.push({
+        name: d.name,
+        unit: d.unit,
+        actual,
+        target,
+        pct: pctForAgent(actual, target, workingDays),
+        // kpiScore against the REAL target, then zeroed for an absent agent —
+        // it reads a zero target as met and would award the full points.
+        points: scoreForAgent(kpiScore(actual, t.target, t.points), workingDays),
+      });
+    }
+    const score = Math.round(lines.reduce((sum, l) => sum + (l.points ?? 0), 0) * 10) / 10;
+    out.push({
+      id: who.id,
+      name: who.name,
+      employeeCode: who.employeeCode,
+      tl: who.tl,
+      joiningDate: who.joiningDate,
+      dayKey,
+      workingDays,
+      lines,
+      score,
+      maxScore: maxScoreForAgent(maxScore, workingDays),
+      scorePct: isAbsent(workingDays)
+        ? 0
+        : maxScore > 0 ? Math.round((score / maxScore) * 100) : null,
+    });
+  }
+  return out;
+}
+
+const AGENT_PERFORMANCE_FOOTER =
+  'Sent automatically by the Counselling CRM. All dates are IST. This is your own activity for ' +
+  'the day shown, nothing earlier. Targets are the daily figures set on KPI Targets. Grade is a ' +
+  'band on your score across the KPIs above, each weighted by the points set for it: Excellent ' +
+  '85% and above, Very Good 70, Good 50, Needs Improvement 30, Unsatisfactory below 30, the ' +
+  'higher band taking each boundary. Hitting a target scores it in full, half of it scores half, ' +
+  'and beating it does not score more than full. A KPI only appears here if it has a daily ' +
+  'target set.';
+
+/** One agent's own day, addressed to them. */
+export function buildAgentEmail(p: AgentDailyPerformance): BuiltReport {
+  const meta = [
+    p.employeeCode,
+    p.tl ? `TL: ${p.tl}` : null,
+    p.joiningDate ? `Joined ${p.joiningDate}` : null,
+  ].filter(Boolean).join(' \u00b7 ');
+
+  const COLS = ['KPI', 'Achieved', 'Target', 'Achieved %'];
+  const band = gradeColour(p.scorePct);
+  const fmtPct = (n: number | null) => (n === null ? '\u2014' : `${n}%`);
+
+  const body = p.lines.length === 0
+    ? `<tr>${cellBox('No KPI has a daily target set.', { span: COLS.length })}</tr>`
+    : p.lines.map((l) => `<tr>${[
+        cell(l.unit ? `${l.name} (${l.unit})` : l.name, { align: 'left' }),
+        cell(l.actual ?? '\u2014'),
+        cell(l.target ?? '\u2014'),
+        cell(fmtPct(l.pct)),
+      ].join('')}</tr>`).join('');
+
+  /**
+   * An agent who recorded nothing is told so in words rather than left to work
+   * it out from a row of zeroes — this mail goes to the person themselves, and
+   * "target 0" with no explanation reads like a fault in the report.
+   */
+  const absentNote = isAbsent(p.workingDays)
+    ? `<div style="font-size:11px;color:${MUTED};margin:0 0 5px">`
+      + `No calling activity was recorded for you on this day, so no target was applied.</div>`
+    : '';
+
+  const inner = `<div style="font-size:14px;font-weight:bold;color:${INK}">${esc(p.name)}</div>
+${meta ? `<div style="font-size:11px;color:${MUTED};margin:2px 0 5px">${esc(meta)}</div>` : '<div style="height:5px"></div>'}
+${absentNote}
+<table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="border-collapse:collapse">
+<tr>${COLS.map((h) => cell(h, { head: true })).join('')}</tr>
+${body}
+<tr>${cellBox('Grade', { span: COLS.length - 1, bold: true, bg: TOTAL_BG, fg: ON_DARK })}${
+    cell(gradeFor(p.scorePct) || '\u2014', { bold: true, ...(band ? { bg: band } : {}) })}</tr>
+</table>`;
 
   return {
     subject: DEFAULT_EMAIL_SUBJECTS.AGENT_PERFORMANCE,
     // Addressed to one agent, so the salutation names them rather than "Team".
-    html: shell('Performance report', `Your activity as at ${today}`, inner, {
-      greeting: `Hi ${block.name},`,
+    html: shell('Performance report', `Your activity on ${p.dayKey}`, inner, {
+      greeting: `Hi ${p.name},`,
+      footer: AGENT_PERFORMANCE_FOOTER,
     }),
-    periodLabel: today,
-    rows: block.periods.map((f) => f.row).filter(Boolean) as AgentReportRow[],
+    inner,
+    periodLabel: p.dayKey,
+    rows: [],
   };
 }
 
@@ -678,27 +863,30 @@ export async function buildAgentWiseEmail(
     cells: { actual: number | null; score: number | null }[]; total: number;
   }[] = [];
   for (const a of agents) {
+    const workingDays = workedBy.get(a.id) ?? 0;
     const cells = await Promise.all(
       definitions.map(async (d) => {
         const actual = await computeKpiActual(db, d, a.id, period, now);
-        return { actual, score: kpiScore(actual, targetOf(d), pointsOf(d)) };
+        // scoreForAgent, not kpiScore alone: an absent agent's target is zero
+        // and kpiScore reads a zero target as met, awarding the full points.
+        return {
+          actual,
+          score: scoreForAgent(kpiScore(actual, targetOf(d), pointsOf(d)), workingDays),
+        };
       }),
     );
     const total = Math.round(cells.reduce((sum, c) => sum + (c.score ?? 0), 0) * 10) / 10;
     rows.push({
       name: a.name,
       code: a.employeeCode ?? '',
-      workingDays: workedBy.get(a.id) ?? 0,
+      workingDays,
       joined: a.joiningDate ? istDayKey(a.joiningDate) : '—',
       cells,
       total,
     });
   }
 
-  const pct = (a: number | null, t: number | null) => {
-    if (a === null || t === null) return '';
-    return t <= 0 ? '100%' : `${Math.round((a / t) * 100)}%`;
-  };
+  const fmtPct = (n: number | null) => (n === null ? '' : `${n}%`);
   /** Null, not zero, when nothing contributed — "no target set" is not "did nothing". */
   const sum = (ns: (number | null)[]) => {
     const real = ns.filter((n): n is number => n !== null);
@@ -706,7 +894,16 @@ export async function buildAgentWiseEmail(
   };
 
   const totalScore = sum(rows.map((r) => r.total));
-  const teamMax = maxScore > 0 ? maxScore * rows.length : null;
+  /**
+   * The people who actually worked, not the whole roster. A target for someone
+   * who was not there is a target nobody could have met, and multiplying it by
+   * the full headcount is what made the floor read 84% when the fifteen present
+   * agents had done 95% of theirs.
+   */
+  const present = presentCount(rows.map((r) => r.workingDays));
+  /** Blank, not 100%, when nobody worked — see pctForTeam. */
+  const pct = (a: number | null, t: number | null) => fmtPct(pctForTeam(a, t, present));
+  const teamMax = present > 0 && maxScore > 0 ? maxScore * present : null;
 
   // Flat 33-column shape, shared by the CSV and the HTML so they cannot differ.
   const totalRow: (string | number)[] = [
@@ -714,8 +911,8 @@ export async function buildAgentWiseEmail(
     ...definitions.flatMap((d, i) => {
       const achieved = sum(rows.map((r) => r.cells[i].actual));
       const one = targetOf(d);
-      // Targets are per agent, so the team's is that times the headcount.
-      const target = one === null ? null : one * rows.length;
+      // Per agent, so the team's is that times the number who were present.
+      const target = one === null ? null : one * present;
       return [achieved ?? '', target ?? '', pct(achieved, target), sum(rows.map((r) => r.cells[i].score)) ?? ''];
     }),
     totalScore ?? '', teamMax ?? '', pct(totalScore, teamMax), '',
@@ -728,16 +925,34 @@ export async function buildAgentWiseEmail(
     'Total Score', 'Max Score', 'Score %', 'Grade',
   ];
   const bodyRows = rows.map((r) => {
-    const scorePct = maxScore > 0 ? Math.round((r.total / maxScore) * 100) : null;
+    /**
+     * An absent agent is 0%, not blank and not ungraded: nothing was expected
+     * of them and they earned nothing, so the row still reads Unsatisfactory
+     * and still shades end to end. Absence is the thing management most wants
+     * to find by scanning this report, so it must not be the one case the
+     * grading quietly drops.
+     */
+    const rowMax = maxScoreForAgent(maxScore, r.workingDays);
+    const scorePct = isAbsent(r.workingDays)
+      ? 0
+      : maxScore > 0 ? Math.round((r.total / maxScore) * 100) : null;
     return {
       scorePct,
       cells: [
         dateCell, r.name, r.code, r.workingDays, r.joined, periodLabel, rangeLabel,
-        ...definitions.flatMap((d, i) => [
-          r.cells[i].actual ?? '', targetOf(d) ?? '',
-          pct(r.cells[i].actual, targetOf(d)), r.cells[i].score ?? '',
-        ]),
-        r.total, maxScore > 0 ? maxScore : '', scorePct === null ? '' : `${scorePct}%`, gradeFor(scorePct),
+        ...definitions.flatMap((d, i) => {
+          const target = targetForAgent(targetOf(d), r.workingDays);
+          return [
+            r.cells[i].actual ?? '', target ?? '',
+            fmtPct(pctForAgent(r.cells[i].actual, target, r.workingDays)),
+            r.cells[i].score ?? '',
+          ];
+        }),
+        r.total,
+        // Zero, not blank, for an absent agent: "0 of 0" is coherent next to
+        // their 0%, and it keeps this column summing to the Total row.
+        isAbsent(r.workingDays) ? 0 : rowMax > 0 ? rowMax : '',
+        scorePct === null ? '' : `${scorePct}%`, gradeFor(scorePct),
       ] as (string | number)[],
     };
   });
@@ -799,8 +1014,12 @@ ${bodyRows.map(({ cells, scorePct }) => {
 const AGENT_WISE_FOOTER =
   'Sent automatically by the Counselling CRM. All dates are IST. Achieved, target and points ' +
   'come from KPI Targets, judged against the targets for this rule\'s own cadence — a weekly ' +
-  'rule reports against the weekly targets. The Total row multiplies each per-agent target by ' +
-  'the headcount. A blank means no target is set for that KPI in this period, which is not the ' +
+  'rule reports against the weekly targets. An agent with ZERO Working Days recorded no work at ' +
+  'all in the window, so nothing was expected of them: every target on their row is 0, and so ' +
+  'are their percentages, points and Max Score. The Total row multiplies each per-agent target ' +
+  'by the number of agents who were PRESENT, because a target for someone who was not there is ' +
+  'one nobody could have met. An agent who worked and achieved nothing is not absent and keeps ' +
+  'their full target. A blank means no target is set for that KPI in this period, which is not the ' +
   'same as achieving nothing. Grade is a band on Score %: Excellent 85 and above, Very Good 70, ' +
   'Good 50, Needs Improvement 30, Unsatisfactory below 30 — the higher band takes each boundary. ' +
   'The Score % and Grade cells carry their band colour, and an Unsatisfactory row is shaded end ' +

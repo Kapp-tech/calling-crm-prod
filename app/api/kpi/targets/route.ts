@@ -9,6 +9,8 @@ import {
   KPI_SOURCES, KPI_PERIODS, computeKpiActual, kpiPeriodRange, seedDefaultKpisIfEmpty, kpiScore,
   kpiCustomRange, MAX_CUSTOM_RANGE_DAYS, isSnapshotSource,
 } from '@/lib/kpi';
+import { activeDaysByAgent } from '@/lib/reports';
+import { scoreForAgent } from '@/lib/kpi-absence';
 
 /**
  * The KPI page's data: every KPI definition, its organisation-wide targets, and
@@ -95,7 +97,7 @@ export async function GET(req: NextRequest) {
     const agents = scope
       ? await prisma.user.findMany({
           where: scope,
-          select: { id: true, name: true, employeeCode: true },
+          select: { id: true, name: true, employeeCode: true, joiningDate: true },
           orderBy: { name: 'asc' },
         })
       : [];
@@ -129,6 +131,21 @@ export async function GET(req: NextRequest) {
       return sum + (pts != null && targetFor(d) != null ? pts : 0);
     }, 0);
 
+    /**
+     * Days each agent actually worked in the window — days with a follow-up or
+     * a dialer call, the same count the emailed Caller-wise report shows.
+     *
+     * An agent with zero of them was absent, and nothing was expected of them:
+     * see `lib/kpi-absence.ts`. The scores are adjusted here so the table, the
+     * CSV export and the email cannot disagree about a person who was not
+     * there; the targets themselves are per-agent and so are resolved at render
+     * from `workingDays`.
+     */
+    const window = custom ?? kpiPeriodRange(period, now);
+    const workedBy = await activeDaysByAgent(
+      prisma, agents.map((a) => a.id), window.from, window.to,
+    );
+
     // Achievement for the selected window only — computing all four periods for
     // every agent would be four times the queries for numbers that are not on
     // screen.
@@ -140,14 +157,21 @@ export async function GET(req: NextRequest) {
           ),
         );
         const actuals = Object.fromEntries(pairs);
+        const workingDays = workedBy.get(a.id) ?? 0;
+        // scoreForAgent, not kpiScore alone: an absent agent's target is zero
+        // and kpiScore reads a zero target as met, awarding the full points.
         const scores = Object.fromEntries(
-          definitions.map((d) => [d.id, kpiScore(actuals[d.id], targetFor(d), pointsFor(d))] as const),
+          definitions.map((d) => [
+            d.id,
+            scoreForAgent(kpiScore(actuals[d.id], targetFor(d), pointsFor(d)), workingDays),
+          ] as const),
         );
         // A null score means "not scored", which must not read as zero — but the
         // total is a sum, so nulls simply contribute nothing.
         const total = Object.values(scores).reduce<number>((sum, v) => sum + (v ?? 0), 0);
         return {
           user: a,
+          workingDays,
           actuals,
           scores,
           // Re-rounded: adding one-decimal values repeatedly reintroduces float

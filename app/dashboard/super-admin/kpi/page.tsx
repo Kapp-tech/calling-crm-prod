@@ -14,6 +14,9 @@ import { useToast } from '@/components/ui/use-toast';
 import { cn } from '@/lib/utils';
 import { istDayKey } from '@/lib/ist-time';
 import { gradeFor } from '@/lib/kpi-grade';
+import {
+  isAbsent, presentCount, targetForAgent, maxScoreForAgent, pctForTeam, pctForAgent,
+} from '@/lib/kpi-absence';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -59,7 +62,9 @@ interface KpiResponse {
     base: Record<string, number | null>;
   };
   achievement: {
-    user: { id: string; name: string; employeeCode?: string | null };
+    user: { id: string; name: string; employeeCode?: string | null; joiningDate?: string | null };
+    /** Days with recorded work in this window. Zero means absent — no target. */
+    workingDays: number;
     actuals: Record<string, number | null>;
     scores: Record<string, number | null>;
     totalScore: number;
@@ -296,42 +301,47 @@ export default function KpiPage() {
     const dateCell = `${dd}/${mm}/${yy}`;
 
     const rows = data.achievement;
-    const pctCell = (a: number | null | undefined, t: number | null) => {
-      if (a === null || a === undefined || t === null) return '';
-      // A target of 0 is "none expected", which kpiScore already treats as met.
-      return t <= 0 ? '100%' : `${Math.round((a / t) * 100)}%`;
-    };
+    const fmtPct = (n: number | null) => (n === null ? '' : `${n}%`);
+    // Agents who recorded no work were expected to do nothing, so they carry no
+    // target and are not counted in the team's. See lib/kpi-absence.ts.
+    const present = presentCount(rows.map((r) => r.workingDays));
+    /** Blank, not 100%, when nobody worked — see pctForTeam. */
+    const pctCell = (a: number | null | undefined, t: number | null) =>
+      fmtPct(pctForTeam(a, t, present));
     const sum = (ns: (number | null | undefined)[]) => {
       const real = ns.filter((n): n is number => n !== null && n !== undefined);
       return real.length === 0 ? null : Math.round(real.reduce((x, y) => x + y, 0) * 10) / 10;
     };
 
     // ── Row 1: the Total across every agent in scope ───────────────────────
+    const teamMax = present > 0 && data.maxScore > 0 ? data.maxScore * present : null;
     const totalRow = [
-      'Total', '', '', '', '',
+      'Total', '', '', '', '', '', '',
       ...defs.flatMap((d) => {
         const achieved = sum(rows.map((r) => r.actuals[d.id]));
         const one = targetFor(d.id);
-        // Targets are per agent, so the team's is that times the headcount.
-        const target = one === null ? null : one * rows.length;
+        // Per agent, so the team's is that times the number who were present.
+        const target = one === null ? null : one * present;
         return [achieved ?? '', target ?? '', pctCell(achieved, target), sum(rows.map((r) => r.scores[d.id])) ?? ''];
       }),
       sum(rows.map((r) => r.totalScore)) ?? '',
-      data.maxScore > 0 ? data.maxScore * rows.length : '',
-      pctCell(sum(rows.map((r) => r.totalScore)), data.maxScore > 0 ? data.maxScore * rows.length : null),
+      teamMax ?? '',
+      pctCell(sum(rows.map((r) => r.totalScore)), teamMax),
       '',
     ];
 
     // ── Row 2: the band naming each block ──────────────────────────────────
     const bandRow = [
-      'Employee Details', '', '', '', '',
+      'Employee Details', '', '', '', '', '', '',
       ...defs.flatMap((d) => [`${d.name} Matrix`, '', '', '']),
       'Scoring', '', '', '',
     ];
 
     // ── Row 3: the column headers ──────────────────────────────────────────
+    // Same seven identity columns as the emailed Caller-wise report, so the
+    // download and the mail can be laid side by side.
     const headRow = [
-      'Date', 'Agent', 'Employee Code', 'Period', 'Range',
+      'Date', 'Agent', 'Employee Code', 'Working Days', 'Date of Joining', 'Period', 'Range',
       ...defs.flatMap((d) => [
         `${d.name} – Achieved`, `${d.name} – Target`, `${d.name} %`, `${d.name} – Points Earned`,
       ]),
@@ -339,15 +349,28 @@ export default function KpiPage() {
     ];
 
     const body = rows.map((r) => {
-      const scorePct = data.maxScore > 0 ? Math.round((r.totalScore / data.maxScore) * 100) : null;
+      const rowMax = maxScoreForAgent(data.maxScore, r.workingDays);
+      // An absent agent is 0%, not blank: nothing was expected and nothing was
+      // earned, and absence is what a reader most needs to spot.
+      const scorePct = isAbsent(r.workingDays)
+        ? 0
+        : data.maxScore > 0 ? Math.round((r.totalScore / data.maxScore) * 100) : null;
       return [
-        dateCell, r.user.name, r.user.employeeCode ?? '', periodLabel, rangeLabel,
-        ...defs.flatMap((d) => [
-          r.actuals[d.id] ?? '', targetFor(d.id) ?? '',
-          pctCell(r.actuals[d.id], targetFor(d.id)), r.scores[d.id] ?? '',
-        ]),
+        dateCell, r.user.name, r.user.employeeCode ?? '', r.workingDays,
+        r.user.joiningDate ? istDayKey(new Date(r.user.joiningDate)) : '—',
+        periodLabel, rangeLabel,
+        ...defs.flatMap((d) => {
+          const target = targetForAgent(targetFor(d.id), r.workingDays);
+          return [
+            r.actuals[d.id] ?? '', target ?? '',
+            fmtPct(pctForAgent(r.actuals[d.id], target, r.workingDays)),
+            r.scores[d.id] ?? '',
+          ];
+        }),
         r.totalScore,
-        data.maxScore > 0 ? data.maxScore : '',
+        // Zero, not blank, for an absent agent — keeps the column summing to
+        // the Total row.
+        isAbsent(r.workingDays) ? 0 : rowMax > 0 ? rowMax : '',
         scorePct === null ? '' : `${scorePct}%`,
         gradeFor(scorePct),
       ];
@@ -614,6 +637,10 @@ export default function KpiPage() {
                 <thead className="bg-muted/60">
                   <tr>
                     <th className="px-4 py-3 text-left font-semibold">Agent</th>
+                    <th className="px-3 py-3 text-center font-semibold whitespace-nowrap">
+                      Working
+                      <span className="block text-[10px] font-normal text-muted-foreground">days worked</span>
+                    </th>
                     {defs.map((d) => (
                       <th key={d.id} className="px-3 py-3 text-center font-semibold whitespace-nowrap">
                         {d.name}
@@ -648,16 +675,26 @@ export default function KpiPage() {
                 </thead>
                 <tbody>
                   {data.achievement.length === 0 ? (
-                    <tr><td colSpan={defs.length + 2} className="px-4 py-10 text-center text-muted-foreground">No agents to show.</td></tr>
+                    <tr><td colSpan={defs.length + 3} className="px-4 py-10 text-center text-muted-foreground">No agents to show.</td></tr>
                   ) : data.achievement.map((row) => (
                     <tr key={row.user.id} className="border-t border-border/50 hover:bg-muted/30">
                       <td className="px-4 py-2.5 whitespace-nowrap">
                         <div className="font-medium">{row.user.name}</div>
                         {row.user.employeeCode && <div className="font-mono text-[10px] text-muted-foreground">{row.user.employeeCode}</div>}
                       </td>
+                      <td className="px-3 py-2.5 text-center whitespace-nowrap">
+                        {isAbsent(row.workingDays) ? (
+                          <span className="text-[11px] font-medium text-muted-foreground" title="No work recorded in this window, so no target was expected.">
+                            absent
+                          </span>
+                        ) : (
+                          <span className="text-xs font-medium">{row.workingDays}</span>
+                        )}
+                      </td>
                       {defs.map((d) => {
                         const actual = row.actuals[d.id];
-                        const target = targetFor(d.id);
+                        // Zero for an absent agent: nothing was expected of them.
+                        const target = targetForAgent(targetFor(d.id), row.workingDays);
                         return (
                           <td key={d.id} className="px-3 py-2.5 text-center whitespace-nowrap">
                             {actual === null || actual === undefined ? (
@@ -676,7 +713,10 @@ export default function KpiPage() {
                         );
                       })}
                       <td className="px-4 py-2.5 text-center whitespace-nowrap">
-                        {data.maxScore > 0 ? (
+                        {/* An absent agent scores 0 out of 0 — nothing expected,
+                            nothing earned — rather than 0 out of a full house
+                            they were never asked to attempt. */}
+                        {maxScoreForAgent(data.maxScore, row.workingDays) > 0 ? (
                           <>
                             <span className={cn('text-sm font-bold', toneFor(row.totalScore, data.maxScore))}>
                               {row.totalScore}
@@ -685,6 +725,12 @@ export default function KpiPage() {
                             <span className="block text-[10px] text-muted-foreground">
                               {Math.round((row.totalScore / data.maxScore) * 100)}%
                             </span>
+                          </>
+                        ) : isAbsent(row.workingDays) ? (
+                          <>
+                            <span className="text-sm font-bold text-muted-foreground">0</span>
+                            <span className="text-xs text-muted-foreground"> / 0</span>
+                            <span className="block text-[10px] text-muted-foreground">no target</span>
                           </>
                         ) : (
                           <span className="text-xs text-muted-foreground/60">—</span>

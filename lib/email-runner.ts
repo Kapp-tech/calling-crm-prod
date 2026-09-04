@@ -1,7 +1,7 @@
 import { EmailRule, Prisma, PrismaClient } from '@prisma/client';
 import { sendEmail, EmailAddress, isEmailConfigured } from './email';
 import {
-  buildAgentEmail, buildTeamSummary, buildAgentBlocks, buildWelcomeEmail,
+  buildAgentEmail, buildTeamSummary, buildAgentDailyPerformance, buildWelcomeEmail,
   buildFeedbackSummaryEmail, buildCollegeWiseEmail, buildAgentWiseEmail,
   buildOverallCallingEmail, buildAllReportsEmail,
 } from './email-reports';
@@ -143,22 +143,23 @@ export async function runEmailRule(
     // One email per agent. Sent in series with a short pause: the box has under
     // 400 MB free and a burst of parallel sends is the kind of thing that takes
     // the whole app down at 9am.
-    const today = istDayKey(now);
-    const { blocks } = await buildAgentBlocks(db, scopeFor(rule), now);
+    // Each agent's own day only — achieved against target, with the score and
+    // grade. The four-window version is still what the Team summary sends.
+    const perf = await buildAgentDailyPerformance(db, scopeFor(rule), now);
     const agents = await db.user.findMany({
-      where: { id: { in: blocks.map((b) => b.id) } },
+      where: { id: { in: perf.map((p) => p.id) } },
       select: { id: true, email: true, name: true },
     });
     const emailOf = new Map(agents.map((a) => [a.id, a]));
 
-    for (const block of blocks) {
-      const agent = emailOf.get(block.id);
+    for (const one of perf) {
+      const agent = emailOf.get(one.id);
       if (!agent?.email) continue;
-      const built = buildAgentEmail(block, today);
+      const built = buildAgentEmail(one);
       const to: EmailAddress[] = [{ emailid: agent.email, name: agent.name }];
       const result = await sendEmail({
         subject: subject(built), html: built.html, to, cc, bcc,
-        messageId: `crm-${stamp}-${block.id.slice(-6)}`,
+        messageId: `crm-${stamp}-${one.id.slice(-6)}`,
       });
       await record(subject(built), to, result);
       await new Promise((r) => setTimeout(r, 400));
