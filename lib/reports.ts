@@ -631,16 +631,65 @@ export async function buildCollegeBreakdown(
 
 
 /**
+ * Active time a check-in must carry before it counts as a day at work on its
+ * own. See `activeDaysByAgent` — an hour sits far above the sub-10-minute
+ * logins that are the only check-ins with no work behind them, and far below
+ * the ~6-hour median of a real shift.
+ */
+const REAL_SHIFT_ACTIVE_SECONDS = 60 * 60;
+
+/**
  * IST days on which each agent actually did calling work in the window.
  *
  * A day counts if the agent logged a follow-up OR the dialer recorded a call
- * for them. Both signals are needed: Shivam Rajput has 8 days with follow-ups
- * but 11 days with call logs, because dialling a lead and leaving no feedback
- * is a real and common thing. The union of the two is the honest count of days
- * worked.
+ * they actually made or took. Both signals are needed: an agent can have days
+ * with call logs and no follow-ups, because dialling a lead and leaving no
+ * feedback is a real and common thing.
  *
- * This replaced a version that counted Attendance check-ins, which cannot
- * carry the column or the denominator. Check-in only started on 4 Aug
+ * ─── A check-in counts only if it was a real shift ──────────────────────────
+ *
+ * Turning up and producing nothing is still a day at work, and it is the day a
+ * manager most wants a target against. Recorded work alone would let that agent
+ * off with no target at all. Check-in cannot be the ONLY signal either: of the
+ * 239 days with real work here, 78 carry no check-in, because check-in only
+ * began on 4 Aug 2026 and was skipped for weeks before the attendance gate.
+ *
+ * But a bare check-in is not a shift, and counting one did real damage. Every
+ * single check-in-with-no-work day on this database — all 7 of them — is a
+ * sub-10-minute login from attendance's first ten days: people opening the new
+ * feature to see what it did. Median active time 1 minute, maximum 7. Counting
+ * those as working days took Kamaleswar Ghosh's Overall achievement from 91% to
+ * 68% on the strength of a five-minute session on 5 August, which is a day he
+ * never worked.
+ *
+ * So a check-in has to carry a real shift's worth of active time. The gap is
+ * wide and unambiguous: days with actual work run to a median of 353 active
+ * minutes and a maximum of 449, while the seven junk days top out at 7. An hour
+ * sits far above the noise and far below any real shift.
+ *
+ * Note this gates the check-in signal ONLY. A genuine working day with no
+ * recorded heartbeat — the CRM tab closed while the agent works the dialer —
+ * still counts through the work branches, which is why days with real work show
+ * a minimum of 0 active minutes and are unaffected by it.
+ *
+ * ─── Unanswered inbound calls are NOT work ──────────────────────────────────
+ *
+ * A missed call is a phone ringing at an empty desk, and the first version of
+ * this counted it as a day worked. On 4 Sept Shivam Rajput was absent and never
+ * checked in, yet the Caller-wise report gave him a full 300-call target while
+ * the other two absentees correctly got zero. The difference was 22 CallLog
+ * rows — every one `callType = 'inbound'`, campaign `sticky100205`, zero
+ * talktime, zero answered. They were calls that arrived FOR his sticky seat
+ * while he was away, not calls he made.
+ *
+ * So an inbound call only counts when it was actually answered. Across the
+ * whole database every one of the 1,887 inbound rows has zero talktime — in
+ * this dialer, inbound means missed — but the talktime clause stays so that an
+ * answered inbound would count if that ever changes. Outbound always counts,
+ * answered or not: placing the call is the work.
+ *
+ * This replaced a version that counted Attendance check-ins ALONE, which cannot
+ * carry the column or the denominator on its own. Check-in only started on 4 Aug
  * 2026 and was skipped on most days until the attendance gate shipped: Yash
  * Sharma has 10 check-ins against 25 days of recorded calling. Dividing a
  * lifetime of work by 10 days of mandate scores him at 167%; dividing by the
@@ -672,8 +721,21 @@ export async function activeDaysByAgent(
              to_char(c."startedAt" + interval '5 hours 30 minutes', 'YYYY-MM-DD') AS "day"
       FROM "CallLog" c
       WHERE c."agentId" IN (${Prisma.join(userIds)})
+        AND (
+          lower(coalesce(c."callType", '')) <> 'inbound'
+          OR coalesce(c."talkTimeSeconds", 0) > 0
+        )
         ${from ? Prisma.sql`AND c."startedAt" >= ${toUtcSqlTimestamp(from)}::timestamp` : Prisma.empty}
         ${to ? Prisma.sql`AND c."startedAt" <= ${toUtcSqlTimestamp(to)}::timestamp` : Prisma.empty}
+      UNION
+      -- Attendance.date is already the IST day key as a plain string, so it
+      -- joins the other two branches with no timezone arithmetic at all.
+      SELECT a."userId" AS "agentId", a."date" AS "day"
+      FROM "Attendance" a
+      WHERE a."userId" IN (${Prisma.join(userIds)})
+        AND a."activeSeconds" >= ${REAL_SHIFT_ACTIVE_SECONDS}
+        ${from ? Prisma.sql`AND a."date" >= ${istDayKey(from)}` : Prisma.empty}
+        ${to ? Prisma.sql`AND a."date" <= ${istDayKey(to)}` : Prisma.empty}
     ) d
     GROUP BY "agentId"
   `);
