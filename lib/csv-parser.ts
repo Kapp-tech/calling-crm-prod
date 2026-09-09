@@ -65,6 +65,53 @@ export function parseCSV(file: File): Promise<LeadCSVRow[]> {
   });
 }
 
+// ─── Lead code ────────────────────────────────────────────────────────────────
+
+/**
+ * A lead code is letters, digits and underscore. Nothing else.
+ *
+ * The column is labelled "Lead Code" in the UI and carried as `campaign`
+ * everywhere downstream. It went unvalidated until now, and the result is that
+ * 4,895 of the 42,631 leads on production hold a code that is really a tracking
+ * string rather than a code — `kollegeapply/bm101/API` on 1,618 leads,
+ * `kollegeapply/kapp01_ssa/2026` on 549, and in one case an entire URL with its
+ * UTM query string attached. 380 distinct malformed values in total, every one
+ * of them from a CSV upload rather than the API.
+ *
+ * That matters beyond tidiness: the lead code is what decides a lead's Data
+ * Calling Type through the Manage Lead Codes mapping, and a code with a slash
+ * in it matches no mapping, so those leads fall through to `NA` and are never
+ * prioritised correctly.
+ *
+ * Exported so the browser-side CSV check and the server-side upload route apply
+ * the identical rule — the client's copy is a courtesy that shows the error
+ * before a 5,000-row file is sent, and the server's is the one that actually
+ * refuses the row.
+ */
+export const LEAD_CODE_PATTERN = /^[A-Za-z0-9_]+$/;
+
+/**
+ * The error for one lead code, or null when it is acceptable.
+ *
+ * A blank code is allowed: plenty of legitimate rows carry none, and making it
+ * mandatory would fail uploads that work today. It is the *malformed* code that
+ * is rejected.
+ *
+ * The offending characters are named in the message. Someone correcting a file
+ * of thousands of rows needs to know it was the slash, not to go hunting.
+ */
+export function leadCodeError(value: string | null | undefined): string | null {
+  const code = value?.trim() ?? '';
+  if (!code) return null;
+  if (LEAD_CODE_PATTERN.test(code)) return null;
+  const offenders = Array.from(new Set(code.replace(/[A-Za-z0-9_]/g, '').split('')))
+    .map((c) => (c === ' ' ? 'space' : c))
+    .join(' ');
+  const shown = code.length > 60 ? `${code.slice(0, 57)}...` : code;
+  return `Invalid lead code "${shown}" — only letters, digits and underscore (_) are allowed`
+    + (offenders ? ` (found: ${offenders})` : '');
+}
+
 // ─── Per-row detailed validation ──────────────────────────────────────────────
 
 export function validateRowDetailed(
@@ -156,6 +203,12 @@ export function validateRowDetailed(
   } else {
     normalized.course = '';
   }
+
+  // ── Lead code (optional, but must be well formed when present) ──
+  const leadCode = row.campaign?.trim() ?? '';
+  const leadCodeMsg = leadCodeError(leadCode);
+  if (leadCodeMsg) errors.push(leadCodeMsg);
+  normalized.campaign = leadCode;
 
   // ── College (required — value in CSV is a KAPP College ID) ──
   const college = row.college?.trim() ?? '';

@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { authOptions } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import { callingTypeForIngest } from '@/lib/lead-code';
+import { leadCodeError } from '@/lib/csv-parser';
 import { planPriorityAssignments } from '@/lib/priority-assignment';
 import { hasPermission } from '@/lib/permissions';
 import { buildDropdownValidationSets, isAllowedDropdownValue } from '@/lib/dropdown-validation';
@@ -108,6 +109,16 @@ export async function POST(req: NextRequest) {
         // No college map configured — store raw value as-is
         resolvedCollege = rawCollegeId;
       }
+
+      /**
+       * Lead code. Enforced here and not only in the browser, because the
+       * browser check can be bypassed by posting to this route directly — and
+       * because a malformed code silently costs the lead its Data Calling Type,
+       * which is decided by matching the code against the Manage Lead Codes
+       * mapping. A code with a slash in it matches nothing and lands on NA.
+       */
+      const leadCodeMsg = leadCodeError(lead.campaign);
+      if (leadCodeMsg) errs.push(leadCodeMsg);
 
       if (!allowed(DropdownType.LEAD_TYPE,          lead.lead_type))         errs.push(`lead_type "${lead.lead_type}" is not in the allowed list`);
       if (!allowed(DropdownType.LEAD_ORIGIN,        lead.lead_origin))       errs.push(`lead_origin "${lead.lead_origin}" is not in the allowed list`);
