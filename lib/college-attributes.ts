@@ -34,6 +34,15 @@ export const COLLEGE_CLIENT_TYPES = ['Client', 'Non Client'] as const;
 /** Shown against a lead whose college has no Client Type set yet. */
 export const UNSET_CLIENT_TYPE = 'NA';
 
+/**
+ * Shown for a lead whose college has no Session / Year set. Same literal as the
+ * unset Client Type and deliberately so — the two sit next to each other in All
+ * Leads, and one reading "NA" while the other sat blank would look like a fault
+ * in one of them. Kept as its own constant so either can change without the
+ * other.
+ */
+export const UNSET_SESSION_YEAR = 'NA';
+
 export type CollegeZone = (typeof COLLEGE_ZONES)[number];
 export type CollegeDealType = (typeof COLLEGE_DEAL_TYPES)[number];
 export type CollegeClientType = (typeof COLLEGE_CLIENT_TYPES)[number];

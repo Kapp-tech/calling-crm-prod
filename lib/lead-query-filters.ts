@@ -3,6 +3,7 @@ import type { PrismaClient, Role } from '@prisma/client';
 import { LeadStatus } from '@prisma/client';
 import { istStartOfDay, istEndOfDay } from '@/lib/ist-time';
 import { parseCsvFilterValues } from '@/lib/csv-filter-value';
+import { UNSET_SESSION_YEAR } from '@/lib/college-attributes';
 
 /**
  * The "other" leads-list filters — everything except feedback selection
@@ -47,6 +48,8 @@ export const nonFeedbackQuerySchema = z.object({
   leadVerification:        z.string().optional(),
   dataCallingType:         z.string().optional(),
   dealType:                z.string().optional(),
+  // Session/Year is the college's, not the lead's — see sessionYearClause.
+  sessionYear:             z.string().optional(),
 });
 
 export type NonFeedbackQuery = z.infer<typeof nonFeedbackQuerySchema>;
@@ -66,10 +69,80 @@ export function hasAnyFilter(q: NonFeedbackQuery): boolean {
 // split(',') silently shredded those into fragments that matched nothing.
 export const splitCsv = parseCsvFilterValues;
 
-export function buildNonFeedbackFilters(
+/**
+ * Session/Year as a Prisma clause on `Lead.college`.
+ *
+ * The value is not on the lead: it is configured on the college and read live,
+ * which is the whole point of it. So filtering by it means "leads whose college
+ * carries one of these years", which needs the college list resolved first.
+ *
+ * `NA` is a real, selectable value because that is what the column shows for a
+ * college with no year set — and it has to cover three cases at once: a college
+ * with the field empty, a lead with no college at all, and a lead whose college
+ * is not in the curated list. `NOT IN` alone would silently drop the null ones,
+ * because in SQL `college NOT IN (...)` is unknown rather than true when
+ * `college` is NULL.
+ *
+ * A year no college carries returns `in: []` — matching nothing. It must not
+ * fall through to "no filter", which would show every lead and read as the
+ * filter being ignored.
+ */
+export async function sessionYearClause(
+  db: { dropdownOption: { findMany: Function } },
+  years: string[],
+): Promise<Record<string, unknown>> {
+  // Active rows only, matching what the All Leads column actually shows — an
+  // inactive 2026 row alongside an active 2027 one must not pull its leads into
+  // a "2026" filter when the table reads 2027 for them.
+  const rows = (await db.dropdownOption.findMany({
+    where: { type: 'COLLEGE', isActive: true },
+    select: { value: true, collegeSessionYear: true },
+  })) as { value: string; collegeSessionYear: string | null }[];
+
+  const wantUnset = years.some((y) => y.trim().toUpperCase() === UNSET_SESSION_YEAR.toUpperCase());
+  const wanted = new Set(
+    years.map((y) => y.trim().toLowerCase()).filter((y) => y && y !== UNSET_SESSION_YEAR.toLowerCase()),
+  );
+
+  const matched: string[] = [];
+  const withAnyYear: string[] = [];
+  for (const r of rows) {
+    const year = r.collegeSessionYear?.trim();
+    if (!year) continue;
+    withAnyYear.push(r.value);
+    if (wanted.has(year.toLowerCase())) matched.push(r.value);
+  }
+
+  const clauses: Record<string, unknown>[] = [];
+  if (matched.length > 0) clauses.push({ college: { in: matched, mode: 'insensitive' } });
+  if (wantUnset) {
+    const unset: Record<string, unknown>[] = [{ college: null }, { college: '' }];
+    if (withAnyYear.length > 0) {
+      unset.push({ college: { notIn: withAnyYear, mode: 'insensitive' } });
+    } else {
+      // No college anywhere has a year, so every lead reads NA.
+      unset.push({ college: { not: null } });
+    }
+    clauses.push({ OR: unset });
+  }
+
+  if (clauses.length === 0) return { college: { in: [] } };
+  if (clauses.length === 1) return clauses[0];
+  return { OR: clauses };
+}
+
+/**
+ * Async because of Session/Year alone, and deliberately inside this shared
+ * builder rather than bolted onto the two list endpoints: `hasAnyFilter` counts
+ * `sessionYear` as "a filter is set", and bulk-delete-by-filter relies on that
+ * guard. A filter that registered as scoping but was not actually applied there
+ * would let a delete run far wider than the screen showed.
+ */
+export async function buildNonFeedbackFilters(
+  db: { dropdownOption: { findMany: Function } },
   q: NonFeedbackQuery,
   sessionUser: { id: string; role: Role },
-): Record<string, unknown>[] {
+): Promise<Record<string, unknown>[]> {
   const cities      = splitCsv(q.city);
   const states      = splitCsv(q.state);
   const courses     = splitCsv(q.course);
@@ -147,6 +220,9 @@ export function buildNonFeedbackFilters(
     const vals = splitCsv(q.dealType);
     if (vals.length > 0) filters.push({ dealType: { in: vals } });
   }
+  // Last, and the only clause that needs a query — skipped entirely when unused.
+  const sessionYears = splitCsv(q.sessionYear);
+  if (sessionYears.length > 0) filters.push(await sessionYearClause(db, sessionYears));
 
   return filters;
 }

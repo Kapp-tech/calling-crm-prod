@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { clientTypeByCollege } from '@/lib/college-client-type';
+import { collegeLeadFields } from '@/lib/college-lead-fields';
+import { sessionYearClause } from '@/lib/lead-query-filters';
 import { getServerSession } from 'next-auth';
 import { z } from 'zod';
 import { authOptions } from '@/lib/auth';
@@ -41,6 +42,7 @@ const querySchema = z.object({
   dateTo:      z.string().optional(),
   updatedFrom: z.string().optional(),
   updatedTo:   z.string().optional(),
+  sessionYear: z.string().optional(),
   feedbackTab:      z.enum(['all', 'fresh', 'interested', 'followup', 'not_interested']).optional(),
   feedbackOptionIds: z.string().optional(),
   feedbackCategoryIds: z.string().optional(),
@@ -118,6 +120,13 @@ export async function GET(req: NextRequest) {
     if (dateTo) filters.push({ createdAt: { lte: istEndOfDay(dateTo) } });
     if (parsed.data.updatedFrom) filters.push({ updatedAt: { gte: istStartOfDay(parsed.data.updatedFrom) } });
     if (parsed.data.updatedTo) filters.push({ updatedAt: { lte: istEndOfDay(parsed.data.updatedTo) } });
+    // Reuses the list endpoint's own clause builder rather than repeating the
+    // year-to-college resolution — the download has to match the screen, and
+    // this route already keeps its own copy of most filters.
+    {
+      const years = split(parsed.data.sessionYear ?? null);
+      if (years.length > 0) filters.push(await sessionYearClause(prisma, years));
+    }
     if (feedbackTab && feedbackTab !== 'all') {
       if (feedbackTab === 'fresh')          filters.push({ feedbacks: { none: {} } });
       if (feedbackTab === 'followup')       filters.push({ feedbacks: { some: {} } });
@@ -204,7 +213,7 @@ export async function GET(req: NextRequest) {
     // Fixed columns
     const fixedHeaders = [
       'Lead ID', 'Name', 'Email', 'Phone',
-      'City', 'State', 'Course', 'College', 'Client Type', 'KAPP College ID',
+      'City', 'State', 'Course', 'College', 'Client Type', 'KAPP College ID', 'Session/Year',
       'Lead Code', 'Lead Type', 'Lead Origin', 'Zone',
       'Status', 'Uploaded By',
       'Assigned To', 'Assigned By', 'Assigned From', 'Prev Assignee 2',
@@ -243,7 +252,7 @@ export async function GET(req: NextRequest) {
 
     // Same live lookup the All Leads list uses, so the column downloads exactly
     // as it reads on screen.
-    const clientTypeOf = await clientTypeByCollege(prisma);
+    const { clientTypeOf, sessionYearOf } = await collegeLeadFields(prisma);
 
     const rows = leads.map((l) => {
       const jsonArr = (v: unknown) =>
@@ -258,7 +267,8 @@ export async function GET(req: NextRequest) {
         l.name,
         mask(l.email, 'email'),
         mask(l.phone, 'phone'),
-        l.city, l.state, l.course, l.college, clientTypeOf(l.college), l.kappCollegeId,
+        l.city, l.state, l.course, l.college, clientTypeOf(l.college),
+        l.kappCollegeId, sessionYearOf(l.college),
         l.campaign, l.leadType, l.leadOrigin, l.leadZone,
         l.status,
         l.uploadedBy?.name ?? '',

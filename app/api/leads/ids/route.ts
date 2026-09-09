@@ -53,7 +53,7 @@ export async function GET(req: NextRequest) {
   const { feedbackTab, feedbackOptionIds, feedbackCategoryIds, skip, limit } = parsed.data;
 
   const accessClause = getLeadWhereClause({ id: session.user.id, role: session.user.role });
-  const filters = buildNonFeedbackFilters(parsed.data, session.user);
+  const filters = await buildNonFeedbackFilters(prisma, parsed.data, session.user);
 
   // Kept identical to /api/leads — see the note above.
   if (feedbackTab && feedbackTab !== 'all') {

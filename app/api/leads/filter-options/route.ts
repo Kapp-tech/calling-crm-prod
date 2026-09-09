@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
+import { UNSET_SESSION_YEAR } from '@/lib/college-attributes';
 
 export async function GET() {
   try {
@@ -14,6 +15,7 @@ export async function GET() {
       campaigns, leadTypes, leadOrigins, leadZones, cities, states, colleges, courses,
       leadConfirmations, leadVerifications, dataCallingTypes,
       primaryAppConfirms, primaryAdmConfirms, leadStages, dealTypes,
+      sessionYearRows,
     ] = await Promise.all([
       prisma.lead.findMany({ distinct: ['campaign'],                    where: { ...approved, campaign:                    { not: null } }, select: { campaign:                    true }, orderBy: { campaign:                    'asc' } }),
       prisma.lead.findMany({ distinct: ['leadType'],                    where: { ...approved, leadType:                    { not: null } }, select: { leadType:                    true }, orderBy: { leadType:                    'asc' } }),
@@ -30,7 +32,30 @@ export async function GET() {
       prisma.lead.findMany({ distinct: ['primaryAdmissionConfirm'],    where: { ...approved, primaryAdmissionConfirm:    { not: null } }, select: { primaryAdmissionConfirm:    true }, orderBy: { primaryAdmissionConfirm:    'asc' } }),
       prisma.lead.findMany({ distinct: ['leadStage'],                   where: { ...approved, leadStage:                   { not: null } }, select: { leadStage:                   true }, orderBy: { leadStage:                   'asc' } }),
       prisma.lead.findMany({ distinct: ['dealType'],                    where: { ...approved, dealType:                    { not: null } }, select: { dealType:                    true }, orderBy: { dealType:                    'asc' } }),
+      // Session/Year comes from the COLLEGE list, not from the leads: it is a
+      // college attribute read live, so the years on offer are the ones an
+      // admin has configured — including ones no lead has reached yet.
+      prisma.dropdownOption.findMany({
+        // Active only: an inactive row's year never reaches a lead, so
+        // offering it would be a filter that always returns nothing.
+        where: { type: 'COLLEGE', isActive: true, collegeSessionYear: { not: null } },
+        distinct: ['collegeSessionYear'],
+        select: { collegeSessionYear: true },
+        orderBy: { collegeSessionYear: 'asc' },
+      }),
     ]);
+
+    /**
+     * "NA" is always offered, because that is what the All Leads column shows
+     * for a lead whose college has no year — and a value visible in the table
+     * has to be selectable in the filter. It covers a college with the field
+     * empty, a lead with no college, and a lead whose college is not in the
+     * curated list.
+     */
+    const sessionYears = [
+      ...sessionYearRows.map((r) => r.collegeSessionYear!.trim()).filter(Boolean),
+      UNSET_SESSION_YEAR,
+    ];
 
     return NextResponse.json({
       campaigns:            campaigns.map((r) => r.campaign!),
@@ -46,6 +71,7 @@ export async function GET() {
       dataCallingTypes:     dataCallingTypes.map((r) => r.dataCallingType!),
       primaryAppConfirms:   primaryAppConfirms.map((r) => r.primaryApplicationConfirm!),
       primaryAdmConfirms:   primaryAdmConfirms.map((r) => r.primaryAdmissionConfirm!),
+      sessionYears,
       leadStages:           leadStages.map((r) => r.leadStage!),
       dealTypes:            dealTypes.map((r) => r.dealType!),
     });

@@ -73,7 +73,7 @@ export async function POST(req: NextRequest) {
     // Chosen ids are still passed through the caller's own access clause rather
     // than trusted: an id arriving in a request body is user input, and this
     // endpoint must never delete a lead the requester could not otherwise see.
-    const filters = bySelection ? [] : buildNonFeedbackFilters(query, session.user);
+    const filters = bySelection ? [] : await buildNonFeedbackFilters(prisma, query, session.user);
     const where: Prisma.LeadWhereInput = {
       AND: [
         getLeadWhereClause(session.user),

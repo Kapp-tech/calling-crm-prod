@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { authOptions } from '@/lib/auth';
 import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
+import { collegeSessionConflict } from '@/lib/college-session';
 import { COLLEGE_ZONES, COLLEGE_DEAL_TYPES, COLLEGE_CLIENT_TYPES } from '@/lib/college-attributes';
 import { checkLandingPageUrl } from '@/lib/landing-page';
 import { applyLeadCodeMapping } from '@/lib/lead-code';
@@ -16,6 +17,10 @@ const updateSchema = z.object({
   collegeZone:     z.enum(['', ...COLLEGE_ZONES]).optional().nullable(),
   collegeDealType: z.enum(['', ...COLLEGE_DEAL_TYPES]).optional().nullable(),
   collegeClientType: z.enum(['', ...COLLEGE_CLIENT_TYPES]).optional().nullable(),
+  // COLLEGE only. Free text on purpose: a session is written "2027" by some
+  // colleges and "2026-27" by others, so a 4-digit rule would reject a
+  // legitimate value. Length-capped and trimmed, nothing more.
+  collegeSessionYear: z.string().max(20).optional().nullable(),
   landingPageUrl:  z.string().max(1000).optional().nullable(),
   leadCodeCallingType: z.string().max(200).optional().nullable(),
   isActive:      z.boolean().optional(),
@@ -37,11 +42,13 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   // "not configured" and should leave the lead's zone unset, whereas '' would be
   // copied onto every lead as a real (blank) value. No trimming needed — zod has
   // already restricted these to '' or an exact list member.
-  const { collegeZone, collegeDealType, collegeClientType, landingPageUrl, leadCodeCallingType, ...rest } = parsed.data;
+  const { collegeZone, collegeDealType, collegeClientType, collegeSessionYear, landingPageUrl, leadCodeCallingType, ...rest } = parsed.data;
   const data: Prisma.DropdownOptionUpdateInput = { ...rest };
   if (collegeZone !== undefined) data.collegeZone = collegeZone || null;
   if (collegeDealType !== undefined) data.collegeDealType = collegeDealType || null;
   if (collegeClientType !== undefined) data.collegeClientType = collegeClientType || null;
+  // Trimmed here because, unlike the enum fields, this one is free text.
+  if (collegeSessionYear !== undefined) data.collegeSessionYear = collegeSessionYear?.trim() || null;
   if (landingPageUrl !== undefined) {
     const check = checkLandingPageUrl(landingPageUrl ?? '');
     if (!check.ok) return NextResponse.json({ error: check.error }, { status: 400 });
@@ -65,6 +72,34 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     }
   }
 
+  /**
+   * The same rule on edit, or it is trivially sidestepped: create 2027 while
+   * 2026 is off, then switch 2026 back on and both are live.
+   *
+   * `kappCollegeId` is not in this schema, so a row cannot move to another ID
+   * here — only its Session/Year and its active flag are in play, and each
+   * check runs only when its input is being touched.
+   */
+  const activating = rest.isActive === true;
+  const changingYear = collegeSessionYear !== undefined;
+  if (activating || changingYear) {
+    const self = await prisma.dropdownOption.findUnique({
+      where: { id: params.id },
+      select: { type: true, kappCollegeId: true },
+    });
+    if (self?.type === 'COLLEGE' && self.kappCollegeId) {
+      const siblings = await prisma.dropdownOption.findMany({
+        where: { type: 'COLLEGE', kappCollegeId: self.kappCollegeId, id: { not: params.id } },
+        select: { value: true, collegeSessionYear: true, isActive: true },
+      });
+      const conflict = collegeSessionConflict(self.kappCollegeId, siblings, {
+        ...(changingYear ? { year: collegeSessionYear ?? null } : {}),
+        activating,
+      });
+      if (conflict) return NextResponse.json({ error: conflict }, { status: 409 });
+    }
+  }
+
   try {
     const option = await prisma.dropdownOption.update({
       where: { id: params.id },
@@ -76,7 +111,12 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     return NextResponse.json({ ...option, leadsUpdated });
   } catch (err: unknown) {
     if ((err as { code?: string }).code === 'P2002') {
-      return NextResponse.json({ error: 'This value already exists for this type' }, { status: 409 });
+      // For a college the key includes the session year, so say so — "already
+      // exists" alone reads as a flat refusal when a different year is allowed.
+      return NextResponse.json({
+        error: 'Another entry already uses this name'
+          + (collegeSessionYear !== undefined ? ' for that Session/Year' : ' for this type'),
+      }, { status: 409 });
     }
     console.error('[dropdown-options PATCH]', err);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });

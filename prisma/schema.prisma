@@ -660,6 +660,11 @@ model DropdownOption {
   /// a lead is listed rather than copied onto the lead, so setting it later
   /// updates every existing lead for that college instead of only new ones.
   collegeClientType   String?
+  /// Session / academic year the college is recruiting for — free text, so
+  /// "2027" and "2026-27" are both acceptable. Read live by All Leads exactly
+  /// as collegeClientType is, so editing it here updates every existing lead
+  /// for the college rather than only the next ones ingested.
+  collegeSessionYear  String?
   // COLLEGE-only as well: the college's application landing page, handed to
   // students by counsellors. Stored as a template containing {{%agent%}}, which
   // is replaced with the reading agent's ID at display time so the click is
@@ -678,7 +683,17 @@ model DropdownOption {
 
   creator User @relation("DropdownOptionCreator", fields: [createdBy], references: [id])
 
-  @@unique([type, value])
+  /// A college may exist once per session/year — the same college coming back
+  /// for 2027 is a second row, sharing its name and KAPP ID with the 2026 one.
+  /// Only one of them may be ACTIVE at a time, which the API enforces.
+  ///
+  /// The live index additionally specifies `NULLS NOT DISTINCT`, which Prisma
+  /// cannot express. It matters: every non-COLLEGE type leaves
+  /// collegeSessionYear NULL, and under Postgres's default NULLS DISTINCT two
+  /// Lead Types both called "Hot" would become legal. Verified against the real
+  /// index that they are still rejected. `migrate diff` will report this line —
+  /// it is deliberate, not drift to be "fixed".
+  @@unique([type, value, collegeSessionYear])
   @@index([type, isActive])
   @@index([type, isActive, sortOrder])
   @@index([kappCollegeId])

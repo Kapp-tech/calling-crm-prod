@@ -33,7 +33,7 @@ export async function GET(req: NextRequest) {
 
   try {
     const accessClause = getLeadWhereClause({ id: session.user.id, role: session.user.role });
-    const filters = buildNonFeedbackFilters(parsed.data, session.user);
+    const filters = await buildNonFeedbackFilters(prisma, parsed.data, session.user);
     const where = { AND: [accessClause, ...filters, { currentFeedbackOptionId: { not: null } }] };
 
     const [options, grouped] = await Promise.all([

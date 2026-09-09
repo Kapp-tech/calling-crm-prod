@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { authOptions } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import { COLLEGE_ZONES, COLLEGE_DEAL_TYPES, COLLEGE_CLIENT_TYPES } from '@/lib/college-attributes';
+import { collegeSessionConflict } from '@/lib/college-session';
 import { checkLandingPageUrl } from '@/lib/landing-page';
 import { applyLeadCodeMapping } from '@/lib/lead-code';
 import { DropdownType } from '@prisma/client';
@@ -21,6 +22,10 @@ const createSchema = z.object({
   collegeZone:     z.enum(['', ...COLLEGE_ZONES]).optional().nullable(),
   collegeDealType: z.enum(['', ...COLLEGE_DEAL_TYPES]).optional().nullable(),
   collegeClientType: z.enum(['', ...COLLEGE_CLIENT_TYPES]).optional().nullable(),
+  // COLLEGE only. Free text on purpose: a session is written "2027" by some
+  // colleges and "2026-27" by others, so a 4-digit rule would reject a
+  // legitimate value. Length-capped and trimmed, nothing more.
+  collegeSessionYear: z.string().max(20).optional().nullable(),
   // COLLEGE only. Shape-checked below rather than here so the admin gets a
   // sentence explaining what is wrong instead of a zod field error.
   landingPageUrl:  z.string().max(1000).optional().nullable(),
@@ -66,7 +71,7 @@ export async function GET(req: NextRequest) {
         ...(showAll ? {} : { isActive: true }),
       },
       orderBy: [{ value: 'asc' }],
-  select: { id: true, type: true, value: true, kappCollegeId: true, collegeZone: true, collegeDealType: true, collegeClientType: true, landingPageUrl: true, leadCodeCallingType: true, isActive: true, createdAt: true },
+  select: { id: true, type: true, value: true, kappCollegeId: true, collegeZone: true, collegeDealType: true, collegeClientType: true, collegeSessionYear: true, landingPageUrl: true, leadCodeCallingType: true, isActive: true, createdAt: true },
     });
     return NextResponse.json(options);
   } catch (err) {
@@ -104,14 +109,20 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: (err as Error).message }, { status: 400 });
   }
 
-  // Ensure kappCollegeId is unique within COLLEGE type
+  // One college per KAPP College ID per session year, and only one active —
+  // see lib/college-session.ts for why the second half matters.
   if (parsed.data.type === 'COLLEGE' && parsed.data.kappCollegeId) {
-    const existing = await prisma.dropdownOption.findFirst({
-      where: { type: 'COLLEGE', kappCollegeId: parsed.data.kappCollegeId.trim() },
+    const kappId = parsed.data.kappCollegeId.trim();
+    const siblings = await prisma.dropdownOption.findMany({
+      where: { type: 'COLLEGE', kappCollegeId: kappId },
+      select: { value: true, collegeSessionYear: true, isActive: true },
     });
-    if (existing) {
-      return NextResponse.json({ error: 'A college with this KAPP College ID already exists' }, { status: 409 });
-    }
+    // A new row is created active, so both checks apply.
+    const conflict = collegeSessionConflict(kappId, siblings, {
+      year: parsed.data.collegeSessionYear ?? null,
+      activating: true,
+    });
+    if (conflict) return NextResponse.json({ error: conflict }, { status: 409 });
   }
 
   try {
@@ -125,6 +136,7 @@ export async function POST(req: NextRequest) {
         collegeZone:     parsed.data.type === 'COLLEGE' ? (parsed.data.collegeZone || null) : null,
         collegeDealType: parsed.data.type === 'COLLEGE' ? (parsed.data.collegeDealType || null) : null,
         collegeClientType: parsed.data.type === 'COLLEGE' ? (parsed.data.collegeClientType || null) : null,
+        collegeSessionYear: parsed.data.type === 'COLLEGE' ? (parsed.data.collegeSessionYear?.trim() || null) : null,
         landingPageUrl:  parsed.data.type === 'COLLEGE' ? (parsed.data.landingPageUrl?.trim() || null) : null,
         leadCodeCallingType: parsed.data.type === 'LEAD_CODE' ? callingType : null,
         createdBy:     session.user.id,
@@ -139,7 +151,13 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ...option, leadsUpdated }, { status: 201 });
   } catch (err: unknown) {
     if ((err as { code?: string }).code === 'P2002') {
-      return NextResponse.json({ error: 'This value already exists for this type' }, { status: 409 });
+      // A college's key includes its session year, so a bare "already exists"
+      // would read as a refusal when a different year is in fact allowed.
+      return NextResponse.json({
+        error: parsed.data.type === 'COLLEGE'
+          ? 'Another college already uses this name for that Session/Year'
+          : 'This value already exists for this type',
+      }, { status: 409 });
     }
     console.error('[dropdown-options POST]', err);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });

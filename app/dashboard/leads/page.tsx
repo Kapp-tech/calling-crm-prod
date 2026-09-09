@@ -28,6 +28,7 @@ interface Lead {
    * someone sets it in Manage Colleges.
    */
   clientType?: string | null;
+  sessionYear?: string | null;
   leadType?: string | null; leadOrigin?: string | null; leadZone?: string | null;
   primaryApplicationConfirm?: string | null; primaryAdmissionConfirm?: string | null;
   leadConfirmation?: string | null; leadStage?: string | null;
@@ -62,7 +63,7 @@ interface FilterOptions {
   colleges: string[]; courses: string[];
   leadConfirmations: string[]; leadVerifications: string[]; dataCallingTypes: string[];
   primaryAppConfirms: string[]; primaryAdmConfirms: string[]; leadStages: string[];
-  dealTypes: string[];
+  dealTypes: string[]; sessionYears: string[];
 }
 
 // ─── Advanced filter definitions ─────────────────────────────────────────────
@@ -110,6 +111,7 @@ const FILTER_GROUPS: { group: string; filters: FilterDef[] }[] = [
       { key: 'leadVerification',  label: 'Lead Verification'     },
       { key: 'dataCallingType',   label: 'Data Calling Type'     },
       { key: 'dealType',          label: 'Deal Type'             },
+      { key: 'sessionYear',       label: 'Session/Year'          },
     ],
   },
 ];
@@ -221,6 +223,7 @@ export default function AllLeadsPage() {
   const [leadVerifications,    setLeadVerifications]    = useState<string[]>([]);
   const [dataCallingTypes,     setDataCallingTypes]     = useState<string[]>([]);
   const [dealTypes,            setDealTypes]            = useState<string[]>([]);
+  const [sessionYears,         setSessionYears]         = useState<string[]>([]);
 
   // Dialog state — which filter keys are "active" (shown below basic filters)
   // Seeded so a filter arriving on the URL is visible in the Advanced panel.
@@ -261,7 +264,7 @@ export default function AllLeadsPage() {
     primaryAppConfirms.length > 0, primaryAdmConfirms.length > 0,
     leadConfirmations.length > 0, leadStages.length > 0,
     leadVerifications.length > 0, dataCallingTypes.length > 0,
-    dealTypes.length > 0,
+    dealTypes.length > 0, sessionYears.length > 0,
   ].filter(Boolean).length;
 
   function openFilterDialog() {
@@ -296,6 +299,7 @@ export default function AllLeadsPage() {
       case 'leadVerification':  setLeadVerifications([]);    break;
       case 'dataCallingType':   setDataCallingTypes([]);     break;
       case 'dealType':          setDealTypes([]);            break;
+      case 'sessionYear':       setSessionYears([]);         break;
     }
   }
 
@@ -391,6 +395,7 @@ export default function AllLeadsPage() {
     if (leadVerifications.length)   p.set('leadVerification',    joinCsvFilterValues(leadVerifications));
     if (dataCallingTypes.length)    p.set('dataCallingType',     joinCsvFilterValues(dataCallingTypes));
     if (dealTypes.length)           p.set('dealType',            joinCsvFilterValues(dealTypes));
+    if (sessionYears.length)        p.set('sessionYear',         joinCsvFilterValues(sessionYears));
     return p;
   }
 
@@ -399,7 +404,7 @@ export default function AllLeadsPage() {
     updatedDateFrom, updatedDateTo,
     campaigns, leadTypes, leadOrigins, zones, tlIds, agentIds,
     primaryAppConfirms, primaryAdmConfirms, leadConfirmations,
-    leadStages, leadVerifications, dataCallingTypes, dealTypes,
+    leadStages, leadVerifications, dataCallingTypes, dealTypes, sessionYears,
   ];
 
   const { data: categoryCounts = {} } = useQuery<Record<string, number>>({
@@ -458,6 +463,7 @@ export default function AllLeadsPage() {
   const primaryAdmConfirmOpts   = useMemo(() => str2opt(filterOpts?.primaryAdmConfirms ?? ['Yes', 'No']), [filterOpts]);
   const leadStageOptions        = useMemo(() => str2opt(filterOpts?.leadStages),        [filterOpts]);
   const dealTypeOptions         = useMemo(() => str2opt(filterOpts?.dealTypes),         [filterOpts]);
+  const sessionYearOptions      = useMemo(() => str2opt(filterOpts?.sessionYears),      [filterOpts]);
 
   // ── TLs / Agents ───────────────────────────────────────────────────────────
 
@@ -538,7 +544,7 @@ export default function AllLeadsPage() {
     setPrimaryAppConfirms([]); setPrimaryAdmConfirms([]);
     setLeadConfirmations([]); setLeadStages([]);
     setLeadVerifications([]); setDataCallingTypes([]);
-    setDealTypes([]);
+    setDealTypes([]); setSessionYears([]);
     setActiveFilters([]);
     setFeedbackMode('all'); setSelectedOptIds([]); setSelectedCategoryIds([]);
     setPage(1);
@@ -934,6 +940,14 @@ export default function AllLeadsPage() {
               <MultiSelectFilter placeholder="Any" options={dealTypeOptions} selected={dealTypes} onChange={(v) => filterChange(() => setDealTypes(v))} loading={optsLoading} />
             </div>
           )}
+          {activeFilters.includes('sessionYear') && (
+            <div className="flex flex-col gap-1">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Session/Year</span>
+              {/* The years an admin has configured on colleges, plus NA for a
+                  college with none — matching what the column shows. */}
+              <MultiSelectFilter placeholder="Any" options={sessionYearOptions} selected={sessionYears} onChange={(v) => filterChange(() => setSessionYears(v))} loading={optsLoading} />
+            </div>
+          )}
         </div>
       )}
 
@@ -963,6 +977,7 @@ export default function AllLeadsPage() {
               <th className="whitespace-nowrap px-3 py-2.5 text-left text-[10px] font-bold uppercase tracking-wider text-muted-foreground min-w-[160px]">College</th>
               <th className="whitespace-nowrap px-3 py-2.5 text-left text-[10px] font-bold uppercase tracking-wider text-muted-foreground min-w-[110px]">Client Type</th>
               <th className="whitespace-nowrap px-3 py-2.5 text-left text-[10px] font-bold uppercase tracking-wider text-muted-foreground min-w-[130px]">KAPP College ID</th>
+              <th className="whitespace-nowrap px-3 py-2.5 text-left text-[10px] font-bold uppercase tracking-wider text-muted-foreground min-w-[110px]">Session/Year</th>
               <th className="whitespace-nowrap px-3 py-2.5 text-left text-[10px] font-bold uppercase tracking-wider text-muted-foreground min-w-[140px]">Agent</th>
               <th className="whitespace-nowrap px-3 py-2.5 text-left text-[10px] font-bold uppercase tracking-wider text-muted-foreground min-w-[160px]">Feedback</th>
               <th className="whitespace-nowrap px-3 py-2.5 text-left text-[10px] font-bold uppercase tracking-wider text-muted-foreground min-w-[130px]">Profile %</th>
@@ -1051,6 +1066,16 @@ export default function AllLeadsPage() {
                         )}
                       </td>
                       <td className="px-3 py-2.5 whitespace-nowrap text-xs font-mono text-muted-foreground">{lead.kappCollegeId || '—'}</td>
+                      {/* Read live from the college, exactly as Client Type is, so
+                          editing the year on a college changes every one of its
+                          leads here. "NA" means the college has none set. */}
+                      <td className="px-3 py-2.5 whitespace-nowrap text-xs">
+                        {lead.sessionYear && lead.sessionYear !== 'NA' ? (
+                          <span className="text-foreground">{lead.sessionYear}</span>
+                        ) : (
+                          <span className="text-muted-foreground/60">NA</span>
+                        )}
+                      </td>
 
                       {/* Agent */}
                       <td className="px-3 py-2.5 whitespace-nowrap text-xs">
@@ -1130,7 +1155,7 @@ export default function AllLeadsPage() {
                 })}
                 {leads.length === 0 && (
                   <tr>
-                    <td colSpan={29} className="px-3 py-16 text-center text-muted-foreground text-sm">
+                    <td colSpan={30} className="px-3 py-16 text-center text-muted-foreground text-sm">
                       No leads found matching the current filters.
                     </td>
                   </tr>

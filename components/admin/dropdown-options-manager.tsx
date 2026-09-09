@@ -54,6 +54,7 @@ interface DropdownOption {
   collegeZone?: string | null;
   collegeDealType?: string | null;
   collegeClientType?: string | null;
+  collegeSessionYear?: string | null;
   landingPageUrl?: string | null;
   leadCodeCallingType?: string | null;
   isActive: boolean;
@@ -107,6 +108,7 @@ export function DropdownOptionsManager({ type, title, description, placeholder, 
   const [collegeZone, setCollegeZone]         = useState('');
   const [collegeDealType, setCollegeDealType] = useState('');
   const [collegeClientType, setCollegeClientType] = useState('');
+  const [collegeSessionYear, setCollegeSessionYear] = useState('');
   const [landingPageUrl, setLandingPageUrl]   = useState('');
   const [callingType, setCallingType]         = useState('');
   const [importOpen, setImportOpen]           = useState(false);
@@ -157,6 +159,12 @@ export function DropdownOptionsManager({ type, title, description, placeholder, 
     setKappId('');
     setCollegeZone('');
     setCollegeDealType('');
+    // Both of these were missing: Client Type was never cleared here, so after
+    // editing a college that had one set, "Add Value" opened with that value
+    // still selected and it was saved onto the new college. Session/Year would
+    // have inherited the same leak.
+    setCollegeClientType('');
+    setCollegeSessionYear('');
     setLandingPageUrl('');
     setCallingType('');
     landingCaretRef.current = null;
@@ -170,6 +178,7 @@ export function DropdownOptionsManager({ type, title, description, placeholder, 
     setCollegeZone(opt.collegeZone ?? '');
     setCollegeDealType(opt.collegeDealType ?? '');
     setCollegeClientType(opt.collegeClientType ?? '');
+    setCollegeSessionYear(opt.collegeSessionYear ?? '');
     setLandingPageUrl(opt.landingPageUrl ?? '');
     setCallingType(opt.leadCodeCallingType ?? '');
     landingCaretRef.current = null;
@@ -258,6 +267,7 @@ export function DropdownOptionsManager({ type, title, description, placeholder, 
           body.collegeZone = collegeZone.trim();
           body.collegeDealType = collegeDealType.trim();
           body.collegeClientType = collegeClientType.trim();
+          body.collegeSessionYear = collegeSessionYear.trim();
           body.landingPageUrl = landingPageUrl.trim();
         }
         if (leadCodeMapping) body.leadCodeCallingType = callingType;
@@ -276,6 +286,7 @@ export function DropdownOptionsManager({ type, title, description, placeholder, 
           body.collegeZone = collegeZone.trim();
           body.collegeDealType = collegeDealType.trim();
           body.collegeClientType = collegeClientType.trim();
+          body.collegeSessionYear = collegeSessionYear.trim();
           body.landingPageUrl = landingPageUrl.trim();
         }
         if (leadCodeMapping) body.leadCodeCallingType = callingType;
@@ -436,6 +447,14 @@ export function DropdownOptionsManager({ type, title, description, placeholder, 
                       {idField && opt.kappCollegeId && (
                         <p className="text-[11px] text-muted-foreground">
                           {idField.label}: <span className="font-mono">{opt.kappCollegeId}</span>
+                        </p>
+                      )}
+                      {/* Essential once a college can exist once per intake: two
+                          rows may share a name and a KAPP ID, and the year is
+                          the only thing telling them apart. */}
+                      {opt.collegeSessionYear && (
+                        <p className="text-[11px] text-muted-foreground">
+                          Session/Year: <span className="font-semibold text-foreground">{opt.collegeSessionYear}</span>
                         </p>
                       )}
                       {opt.landingPageUrl && (
@@ -725,15 +744,25 @@ BM101,${callingTypes[1]?.value ?? callingTypes[0]?.value ?? 'L2'}`}</pre>
                     ))}
                   </select>
                 </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="opt-college-session-year">Session/Year</Label>
+                  <Input
+                    id="opt-college-session-year"
+                    value={collegeSessionYear}
+                    onChange={(e) => setCollegeSessionYear(e.target.value)}
+                    placeholder="e.g. 2027"
+                    maxLength={20}
+                  />
+                </div>
                 <p className="text-[11px] text-muted-foreground">
                   Every lead brought in for this college — by API or CSV — inherits
                   this Zone and Deal Type. Choose “Not set” to leave them empty.
                 </p>
                 <p className="text-[11px] text-muted-foreground">
-                  Client Type behaves differently: All Leads reads it from the college
-                  each time, so setting it now updates every existing lead for this
-                  college, not just new ones. Leads for a college with none set read
-                  “NA”.
+                  Client Type and Session/Year behave differently: All Leads reads them
+                  from the college each time, so setting one now updates every existing
+                  lead for this college, not just new ones. Leads for a college with
+                  none set read “NA”.
                 </p>
 
                 <div className="space-y-1.5 border-t border-border/60 pt-4">

@@ -38,7 +38,7 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    const filters = buildNonFeedbackFilters(parsed.data, session.user);
+    const filters = await buildNonFeedbackFilters(prisma, parsed.data, session.user);
     const where: Prisma.LeadWhereInput = { AND: [getLeadWhereClause(session.user), ...filters] };
 
     const [total, sample] = await Promise.all([

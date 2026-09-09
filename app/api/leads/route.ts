@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { clientTypeByCollege } from '@/lib/college-client-type';
+import { collegeLeadFields } from '@/lib/college-lead-fields';
 import { getServerSession } from 'next-auth';
 import { z } from 'zod';
 import { authOptions } from '@/lib/auth';
@@ -127,7 +127,7 @@ export async function GET(req: NextRequest) {
   const skip = (page - 1) * limit;
 
   const accessClause = getLeadWhereClause({ id: session.user.id, role: session.user.role });
-  const filters = buildNonFeedbackFilters(parsed.data, session.user);
+  const filters = await buildNonFeedbackFilters(prisma, parsed.data, session.user);
 
   if (feedbackTab && feedbackTab !== 'all') {
     if (feedbackTab === 'fresh')        filters.push({ feedbacks: { none: {} } });
@@ -174,8 +174,12 @@ export async function GET(req: NextRequest) {
     // Client Type is a property of the COLLEGE, resolved on every read rather
     // than stored on the lead — so setting it on a college updates all of that
     // college's existing leads, which is the point of it.
-    const clientTypeOf = await clientTypeByCollege(prisma);
-    const withClientType = leads.map((l) => ({ ...l, clientType: clientTypeOf(l.college) }));
+    const { clientTypeOf, sessionYearOf } = await collegeLeadFields(prisma);
+    const withClientType = leads.map((l) => ({
+      ...l,
+      clientType: clientTypeOf(l.college),
+      sessionYear: sessionYearOf(l.college),
+    }));
 
     return NextResponse.json({
       leads: masked ? withClientType.map((l) => maskContact(l, true)) : withClientType,
