@@ -723,6 +723,7 @@ const FILTER_GROUPS: { group: string; filters: FilterDef[] }[] = [
       { key: 'leadType',   label: 'Lead Type'   },
       { key: 'leadOrigin', label: 'Lead Origin' },
       { key: 'zone',       label: 'Zone'        },
+      { key: 'dataCallingType', label: 'Data Calling Type' },
     ],
   },
   {
@@ -799,6 +800,7 @@ export default function CounsellingTLPage() {
   const [collegeFilters,    setCollegeFilters]    = useState<string[]>([]);
   const [leadTypeFilters,   setLeadTypeFilters]   = useState<string[]>([]);
   const [leadOriginFilters, setLeadOriginFilters] = useState<string[]>([]);
+  const [dataCallingTypeFilters, setDataCallingTypeFilters] = useState<string[]>([]);
   const [zoneFilters,       setZoneFilters]       = useState<string[]>([]);
   const [feedbackFilter,    setFeedbackFilter]    = useState<string[]>([]);
   const [dateFrom,          setDateFrom]          = useState('');
@@ -839,7 +841,7 @@ export default function CounsellingTLPage() {
     setSelectedIds([]);
     setAllFilteredSelected(false);
     lastClickedIdxRef.current = -1;
-  }, [search, assignmentFilter, cityFilters, stateFilters, campaignFilters, courseFilters, collegeFilters, leadTypeFilters, leadOriginFilters, zoneFilters, agentFilters, feedbackFilter, dateFrom, dateTo, updatedFrom, updatedTo, limit]);
+  }, [search, assignmentFilter, cityFilters, stateFilters, campaignFilters, courseFilters, collegeFilters, leadTypeFilters, leadOriginFilters, zoneFilters, dataCallingTypeFilters, agentFilters, feedbackFilter, dateFrom, dateTo, updatedFrom, updatedTo, limit]);
 
   // ── Data queries ──────────────────────────────────────────────────────────────
 
@@ -850,7 +852,7 @@ export default function CounsellingTLPage() {
   });
 
   const { data, isLoading, isFetching, refetch } = useQuery({
-    queryKey: ['tl-leads', { search, assignmentFilter, cityFilters, stateFilters, campaignFilters, courseFilters, collegeFilters, leadTypeFilters, leadOriginFilters, zoneFilters, agentFilters, feedbackFilter, dateFrom, dateTo, updatedFrom, updatedTo, page, limit }],
+    queryKey: ['tl-leads', { search, assignmentFilter, cityFilters, stateFilters, campaignFilters, courseFilters, collegeFilters, leadTypeFilters, leadOriginFilters, zoneFilters, dataCallingTypeFilters, agentFilters, feedbackFilter, dateFrom, dateTo, updatedFrom, updatedTo, page, limit }],
     queryFn: () => {
       const p = new URLSearchParams({ page: String(page), limit: String(limit), status: 'APPROVED' });
       if (search) p.set('search', search);
@@ -865,6 +867,7 @@ export default function CounsellingTLPage() {
       if (collegeFilters.length > 0)    p.set('college',      joinCsvFilterValues(collegeFilters));
       if (leadTypeFilters.length > 0)   p.set('leadType',     joinCsvFilterValues(leadTypeFilters));
       if (leadOriginFilters.length > 0) p.set('leadOrigin',   joinCsvFilterValues(leadOriginFilters));
+      if (dataCallingTypeFilters.length > 0) p.set('dataCallingType', joinCsvFilterValues(dataCallingTypeFilters));
       if (zoneFilters.length > 0)       p.set('zone',         joinCsvFilterValues(zoneFilters));
       if (agentFilters.length > 0)      p.set('assignedToId', agentFilters.join(','));
       if (feedbackFilter.includes('__fresh__') && feedbackFilter.length === 1) {
@@ -955,6 +958,7 @@ export default function CounsellingTLPage() {
     collegeFilters.forEach((v)    => chips.push({ key: `college-${v}`,     label: `College: ${v}`,     onRemove: () => setCollegeFilters((p)    => p.filter((x) => x !== v)) }));
     leadTypeFilters.forEach((v)   => chips.push({ key: `leadType-${v}`,    label: `Type: ${v}`,        onRemove: () => setLeadTypeFilters((p)   => p.filter((x) => x !== v)) }));
     leadOriginFilters.forEach((v) => chips.push({ key: `leadOrigin-${v}`,  label: `Origin: ${v}`,      onRemove: () => setLeadOriginFilters((p) => p.filter((x) => x !== v)) }));
+    dataCallingTypeFilters.forEach((v) => chips.push({ key: `dct-${v}`, label: `Calling Type: ${v}`, onRemove: () => setDataCallingTypeFilters((p) => p.filter((x) => x !== v)) }));
     zoneFilters.forEach((v)       => chips.push({ key: `zone-${v}`,        label: `Zone: ${v}`,        onRemove: () => setZoneFilters((p)       => p.filter((x) => x !== v)) }));
     feedbackFilter.forEach((v) => {
       const fbLabel = v === '__fresh__'
@@ -975,7 +979,7 @@ export default function CounsellingTLPage() {
       });
     });
     return chips;
-  }, [assignmentFilter, cityFilters, stateFilters, campaignFilters, courseFilters, collegeFilters, leadTypeFilters, leadOriginFilters, zoneFilters, feedbackFilter, feedbackOptions, dateFrom, dateTo, updatedFrom, updatedTo, agentFilters, agents]);
+  }, [assignmentFilter, cityFilters, stateFilters, campaignFilters, courseFilters, collegeFilters, leadTypeFilters, leadOriginFilters, zoneFilters, dataCallingTypeFilters, feedbackFilter, feedbackOptions, dateFrom, dateTo, updatedFrom, updatedTo, agentFilters, agents]);
 
   function clearAllFilters() {
     setAssignmentFilter('all');
@@ -986,6 +990,7 @@ export default function CounsellingTLPage() {
     setCollegeFilters([]);
     setLeadTypeFilters([]);
     setLeadOriginFilters([]);
+    setDataCallingTypeFilters([]);
     setZoneFilters([]);
     setFeedbackFilter([]);
     setDateFrom('');
@@ -1052,6 +1057,7 @@ export default function CounsellingTLPage() {
     if (collegeFilters.length > 0)    p.set('college',      joinCsvFilterValues(collegeFilters));
     if (leadTypeFilters.length > 0)   p.set('leadType',     joinCsvFilterValues(leadTypeFilters));
     if (leadOriginFilters.length > 0) p.set('leadOrigin',   joinCsvFilterValues(leadOriginFilters));
+    if (dataCallingTypeFilters.length > 0) p.set('dataCallingType', joinCsvFilterValues(dataCallingTypeFilters));
     if (zoneFilters.length > 0)       p.set('zone',         joinCsvFilterValues(zoneFilters));
     if (agentFilters.length > 0)      p.set('assignedToId', agentFilters.join(','));
     if (feedbackFilter.includes('__fresh__') && feedbackFilter.length === 1) {
@@ -1306,6 +1312,12 @@ export default function CounsellingTLPage() {
                 <div className="flex flex-col gap-1">
                   <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Zone</span>
                   <MultiSelectFilter placeholder="All Zones" options={filterOptions?.leadZones ?? []} selected={zoneFilters} onChange={setZoneFilters} />
+                </div>
+              )}
+              {selectedFilters.includes('dataCallingType') && (
+                <div className="flex flex-col gap-1">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Data Calling Type</span>
+                  <MultiSelectFilter placeholder="All Calling Types" options={filterOptions?.dataCallingTypes ?? []} selected={dataCallingTypeFilters} onChange={setDataCallingTypeFilters} />
                 </div>
               )}
               {selectedFilters.includes('agent') && (
