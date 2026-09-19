@@ -2,9 +2,49 @@ import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
-import { istStartOfDay, istEndOfDay, istStartOfToday, istDayKey, istShiftDays } from '@/lib/ist-time';
+import { istStartOfDay, istEndOfDay, istStartOfToday, istDayKey, istShiftDays, toUtcSqlTimestamp } from '@/lib/ist-time';
 import { parseCsvFilterValues } from '@/lib/csv-filter-value';
 import { Prisma } from '@prisma/client';
+
+/**
+ * A short per-viewer cache.
+ *
+ * Unlike the filter-options lists, this response DOES depend on the session —
+ * an agent sees their own leads, a TL sees their team's, a Super Admin sees
+ * everything — so a single shared cache would leak one person's figures to
+ * another. The key is the viewer plus the exact filter string, which makes a
+ * hit mean "this same person asked this same question seconds ago".
+ *
+ * Thirty seconds because nobody needs a lead count accurate to the second, and
+ * the dashboard is the page people leave open and return to. It also absorbs
+ * the case that hurts most on one core: several agents opening the dashboard at
+ * the same moment, each firing the same ~19 queries.
+ */
+const STATS_TTL_MS = 30 * 1000;
+const STATS_MAX_ENTRIES = 200;
+
+const statsCache = new Map<string, { at: number; payload: unknown }>();
+
+function cachedStats(key: string): unknown | null {
+  const hit = statsCache.get(key);
+  if (!hit) return null;
+  if (Date.now() - hit.at >= STATS_TTL_MS) {
+    statsCache.delete(key);
+    return null;
+  }
+  return hit.payload;
+}
+
+function storeStats(key: string, payload: unknown) {
+  // Bounded: one entry per viewer per filter combination would otherwise grow
+  // without limit on a long-running process. Oldest insertion goes first, which
+  // is what Map iteration order gives us for free.
+  if (statsCache.size >= STATS_MAX_ENTRIES) {
+    const oldest = statsCache.keys().next().value;
+    if (oldest !== undefined) statsCache.delete(oldest);
+  }
+  statsCache.set(key, { at: Date.now(), payload });
+}
 
 export async function GET(request: Request) {
   try {
@@ -12,6 +52,13 @@ export async function GET(request: Request) {
     if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
     const { searchParams } = new URL(request.url);
+
+    // After the auth check, before any query: a cache hit must never reach a
+    // caller who has not proved who they are.
+    const cacheKey = `${session.user.id}|${searchParams.toString()}`;
+    const cached = cachedStats(cacheKey);
+    if (cached) return NextResponse.json(cached);
+
     const from = searchParams.get('from');
     const to = searchParams.get('to');
     // A value can itself contain a comma (college names are often "Name,
@@ -111,32 +158,20 @@ export async function GET(request: Request) {
       teamAssignedCount,   // team-scoped for TL; equals mainWhere for all other roles
       connectedLeads,
       untouchedLeads,
-      pendingLeads,
-      approvedLeads,
-      disapprovedLeads,
       unassignedLeadsRaw,  // only computed for SA / Reports / TL
       nonTeamAssignedRaw,  // only computed for SA / Reports / Ops
-      leadsForChart,
       applications,        // leads with at least one Application receipt uploaded
       admissions,          // leads with at least one Admission receipt uploaded
     ] = await Promise.all([
       prisma.lead.count({ where: teamWhere }),
       prisma.lead.count({ where: { ...teamWhere, feedbacks: { some: {} } } }),
       prisma.lead.count({ where: { ...teamWhere, feedbacks: { none: {} } } }),
-      prisma.lead.count({ where: { ...baseWhere, status: 'PENDING' } }),
-      prisma.lead.count({ where: { ...baseWhere, status: 'APPROVED' } }),
-      prisma.lead.count({ where: { ...baseWhere, status: 'DISAPPROVED' } }),
       role === 'SUPER_ADMIN' || role === 'REPORTS' || role === 'COUNSELLING_TL'
         ? prisma.lead.count({ where: { ...mainWhere, assignedToId: null } })
         : Promise.resolve(0),
       role === 'COUNSELLING_TL' || role === 'COUNSELLING_AGENT'
         ? Promise.resolve(0)
         : prisma.lead.count({ where: { ...mainWhere, assignedToId: { not: null } } }),
-      prisma.lead.findMany({
-        where: teamWhere,
-        select: { createdAt: true },
-        orderBy: { createdAt: 'asc' },
-      }),
       // Approved only — a receipt merely uploaded and awaiting Super Admin
       // review isn't a confirmed application/admission yet.
       prisma.lead.count({ where: { ...teamWhere, receipts: { some: { type: 'APPLICATION', status: 'APPROVED' } } } }),
@@ -229,55 +264,115 @@ export async function GET(request: Request) {
     const todayKey = istDayKey(new Date());
     const last7Days = Array.from({ length: 7 }, (_, i) => istShiftDays(todayKey, i - 6));
     const sparkStart = istStartOfDay(last7Days[0]);
-    const toSeries = (dates: Date[]): number[] => {
-      const counts = new Map<string, number>(last7Days.map((d) => [d, 0]));
-      for (const dt of dates) {
-        // istDayKey, not toISOString(): the UTC day of an IST evening is the
-        // next day, which would file 18:30-24:00 IST activity under tomorrow.
-        const key = istDayKey(dt);
-        if (counts.has(key)) counts.set(key, (counts.get(key) ?? 0) + 1);
-      }
-      return last7Days.map((d) => counts.get(d) ?? 0);
-    };
-    const sparkScope = teamScopeWhere ?? scopeWhere;
+
+    /**
+     * Grouped in Postgres, not in JavaScript.
+     *
+     * These three used to be `findMany` calls that pulled every matching row
+     * into Node — on 19 Sept that was **115,161 rows** across seven days
+     * (58,374 created, 28,198 assigned, 28,589 follow-ups) — built that many
+     * Date objects, and called istDayKey, which goes through
+     * Intl.DateTimeFormat, on every one. All to draw 21 points. It was the same
+     * defect as the Leads Over Time chart removed above, just bounded by a date
+     * so it did not stand out.
+     *
+     * One GROUP BY returns ~7 rows per series and measured 102 ms — barely more
+     * than a single one-day count (89 ms), so grouping beats both the old
+     * fetch-everything approach and the obvious alternative of 21 separate
+     * counts.
+     *
+     * The day key is computed in SQL with the IST offset rather than by casting
+     * in JS, for the reason the old comment gave: the UTC day of an IST evening
+     * is the next day, which would file 18:30–24:00 IST activity under tomorrow.
+     *
+     * ⚠ The scope below mirrors the Prisma `scopeWhere` / `teamScopeWhere` built
+     * at the top of this route. It is derived from the same role, userId and
+     * teamAgentIds, and deliberately sits in one place — but it IS a second
+     * expression of the same access rule. Change one, change the other.
+     */
+    const sparkLeadScope: Prisma.Sql =
+      role === 'COUNSELLING_AGENT' ? Prisma.sql`AND l."assignedToId" = ${userId}`
+      : role === 'OPERATIONS'      ? Prisma.sql`AND l."uploadedById" = ${userId}`
+      : Prisma.empty;                       // SUPER_ADMIN, REPORTS, TL: unscoped
+
+    /**
+     * A TL is scoped to their team even when that team is empty.
+     *
+     * The Prisma version sets `{ assignedToId: { in: teamAgentIds } }`
+     * unconditionally for a TL, and `in: []` matches nothing. Testing only
+     * `teamAgentIds.length > 0` here fell through to the unscoped branch, so a
+     * TL with no members would have seen the WHOLE COMPANY's assigned leads
+     * instead of zero. `AND false` reproduces what an empty `in` does.
+     */
+    const sparkAssignedScope: Prisma.Sql =
+      role === 'COUNSELLING_TL'
+        ? (teamAgentIds.length > 0
+            ? Prisma.sql`AND l."assignedToId" IN (${Prisma.join(teamAgentIds)})`
+            : Prisma.sql`AND false`)
+        : sparkLeadScope;
+
+    // Explicit UTC literal, never a JS Date — a Date is read in the process
+    // timezone and shifts the window by 5h30m on a UTC server.
+    const sparkFrom = toUtcSqlTimestamp(sparkStart);
+    const ISTDAY = Prisma.sql`interval '5 hours 30 minutes'`;
+
+    type DayCount = { day: string; n: number };
     const [sparkCreated, sparkAssigned, sparkFeedbacks] = await Promise.all([
-      prisma.lead.findMany({
-        where: { ...scopeWhere, status: 'APPROVED', createdAt: { gte: sparkStart } },
-        select: { createdAt: true },
-      }),
-      prisma.lead.findMany({
-        where: { ...sparkScope, status: 'APPROVED', assignedAt: { gte: sparkStart } },
-        select: { assignedAt: true },
-      }),
-      prisma.leadFeedback.findMany({
-        where: {
-          createdAt: { gte: sparkStart },
-          ...(role === 'COUNSELLING_AGENT'
-            ? { agentId: userId }
+      prisma.$queryRaw<DayCount[]>(Prisma.sql`
+        SELECT to_char(l."createdAt" + ${ISTDAY}, 'YYYY-MM-DD') AS day, count(*)::int AS n
+        FROM "Lead" l
+        WHERE l.status = 'APPROVED' AND l."createdAt" >= ${sparkFrom}::timestamp
+          ${sparkLeadScope}
+        GROUP BY 1`),
+      prisma.$queryRaw<DayCount[]>(Prisma.sql`
+        SELECT to_char(l."assignedAt" + ${ISTDAY}, 'YYYY-MM-DD') AS day, count(*)::int AS n
+        FROM "Lead" l
+        WHERE l.status = 'APPROVED' AND l."assignedAt" >= ${sparkFrom}::timestamp
+          ${sparkAssignedScope}
+        GROUP BY 1`),
+      prisma.$queryRaw<DayCount[]>(Prisma.sql`
+        SELECT to_char(f."createdAt" + ${ISTDAY}, 'YYYY-MM-DD') AS day, count(*)::int AS n
+        FROM "LeadFeedback" f
+        ${role === 'OPERATIONS' ? Prisma.sql`JOIN "Lead" l ON l.id = f."leadId"` : Prisma.empty}
+        WHERE f."createdAt" >= ${sparkFrom}::timestamp
+          ${role === 'COUNSELLING_AGENT'
+            ? Prisma.sql`AND f."agentId" = ${userId}`
             : role === 'OPERATIONS'
-              ? { lead: { uploadedById: userId } }
+              ? Prisma.sql`AND l."uploadedById" = ${userId}`
               : teamAgentIds.length > 0
-                ? { agentId: { in: teamAgentIds } }
-                : {}),
-        },
-        select: { createdAt: true },
-      }),
+                ? Prisma.sql`AND f."agentId" IN (${Prisma.join(teamAgentIds)})`
+                : Prisma.empty}
+        GROUP BY 1`),
     ]);
-    const sparklines = {
-      totalLeads: toSeries(sparkCreated.map((l) => l.createdAt)),
-      assignedLeads: toSeries(sparkAssigned.map((l) => l.assignedAt!).filter(Boolean)),
-      connectedLeads: toSeries(sparkFeedbacks.map((f) => f.createdAt)),
+
+    /** Rows keyed by day -> one value per day in last7Days, zero-filled. */
+    const toSeries = (rows: DayCount[]): number[] => {
+      const byDay = new Map(rows.map((r) => [r.day, Number(r.n)]));
+      return last7Days.map((d) => byDay.get(d) ?? 0);
     };
 
-    // ── Leads over time (group by day) ───────────────────────────────────────
-    const dayMap = new Map<string, number>();
-    for (const lead of leadsForChart) {
-      const day = istDayKey(lead.createdAt);
-      dayMap.set(day, (dayMap.get(day) ?? 0) + 1);
-    }
-    const leadsOverTime = Array.from(dayMap.entries()).map(([date, count]) => ({ date, count }));
+    const sparklines = {
+      totalLeads: toSeries(sparkCreated),
+      assignedLeads: toSeries(sparkAssigned),
+      connectedLeads: toSeries(sparkFeedbacks),
+    };
 
-    return NextResponse.json({
+    /**
+     * Leads Over Time and Status Breakdown were removed from the dashboard on
+     * 19 Sept, and their queries with them — the point of removing a panel is
+     * not to hide the work but to stop doing it.
+     *
+     * Leads Over Time cost 6.8 SECONDS of database time on its own. It fetched
+     * every lead's createdAt — 135,469 rows, unbounded and sorted — then built
+     * that many Date objects and called istDayKey (Intl.DateTimeFormat) on each
+     * one to group them by day in JavaScript, to draw a chart of about 45
+     * points. If it is ever wanted back, it must be a GROUP BY day in Postgres
+     * returning ~45 rows, never a findMany.
+     *
+     * Status Breakdown was three counts, ~214 ms.
+     */
+
+    const payload = {
       totalLeads,
       assignedLeads,
       unassignedLeads,
@@ -287,14 +382,13 @@ export async function GET(request: Request) {
       admissions,
       activeAgents,
       activeTLs,
-      pendingLeads,
-      approvedLeads,
-      disapprovedLeads,
       feedbackBreakdown,
       topAgents,
-      leadsOverTime,
       sparklines,
-    });
+    };
+
+    storeStats(cacheKey, payload);
+    return NextResponse.json(payload);
   } catch (error) {
     console.error('[dashboard-stats GET]', error);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });

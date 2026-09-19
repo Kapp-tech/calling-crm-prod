@@ -4,7 +4,7 @@ import { useState, useMemo, useRef, useEffect } from 'react';
 import { useSession } from 'next-auth/react';
 import { useQuery } from '@tanstack/react-query';
 import {
-  AreaChart, Area, BarChart, Bar, PieChart, Pie, Cell,
+  BarChart, Bar, Cell,
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from 'recharts';
 import {
@@ -99,7 +99,6 @@ const EXTRA_CARD_OPTIONS = [
   { key: 'activeAgents', label: 'Active Agents' },
 ];
 
-const STATUS_PIE_COLORS = ['#10b981', '#f59e0b', '#ef4444'];
 const FEEDBACK_COLORS = ['#6366f1', '#8b5cf6', '#a78bfa', '#06b6d4', '#f59e0b', '#10b981', '#f43f5e', '#64748b'];
 
 // Space reserved for the Feedback Breakdown category labels, and the longest
@@ -698,19 +697,6 @@ export default function DashboardPage() {
       : 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-4';
 
   // ── Chart data ────────────────────────────────────────────────────────────
-  const statusPieData = useMemo(() => {
-    const approved = s.approvedLeads ?? 0;
-    const pending = s.pendingLeads ?? 0;
-    const disapproved = s.disapprovedLeads ?? 0;
-    if (!approved && !pending && !disapproved) return [];
-    return [
-      { name: 'Approved', value: approved },
-      { name: 'Pending', value: pending },
-      { name: 'Disapproved', value: disapproved },
-    ];
-  }, [s.approvedLeads, s.pendingLeads, s.disapprovedLeads]);
-
-  const leadsOverTime = s.leadsOverTime ?? [];
   const feedbackBreakdown = s.feedbackBreakdown ?? [];
   const topAgents = s.topAgents ?? [];
 
@@ -948,99 +934,14 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* ── Top charts row: Leads Over Time + Status Pie ── */}
-      <div className="grid gap-4 lg:grid-cols-3">
-        {/* Leads Over Time */}
-        <div className="lg:col-span-2 rounded-xl border border-border/60 bg-card p-5">
-          <h2 className="text-sm font-semibold mb-1">Leads Over Time</h2>
-          <p className="text-xs text-muted-foreground mb-4">{periodLabel}</p>
-          {isLoading ? (
-            <Skeleton className="h-52" />
-          ) : leadsOverTime.length === 0 ? (
-            <div className="h-52 flex items-center justify-center text-sm text-muted-foreground">
-              No data for this period
-            </div>
-          ) : (
-            <ResponsiveContainer width="100%" height={210}>
-              <AreaChart data={leadsOverTime} margin={{ top: 5, right: 5, left: -20, bottom: 0 }}>
-                <defs>
-                  <linearGradient id="leadsGrad" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#6366f1" stopOpacity={0.25} />
-                    <stop offset="95%" stopColor="#6366f1" stopOpacity={0} />
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke="currentColor" className="text-border/40" />
-                <XAxis
-                  dataKey="date" tick={{ fontSize: 11 }}
-                  tickFormatter={fmtChartDate}
-                  stroke="currentColor" className="text-muted-foreground"
-                  tickLine={false} axisLine={false}
-                />
-                <YAxis
-                  tick={{ fontSize: 11 }}
-                  stroke="currentColor" className="text-muted-foreground"
-                  tickLine={false} axisLine={false}
-                  allowDecimals={false}
-                />
-                <Tooltip content={<ChartTooltip labelFormatter={fmtChartDate} />} />
-                <Area
-                  type="monotone" dataKey="count" name="Leads"
-                  stroke="#6366f1" fill="url(#leadsGrad)"
-                  strokeWidth={2} dot={false}
-                  activeDot={{ r: 4, fill: '#6366f1' }}
-                  animationDuration={900} animationEasing="ease-out"
-                />
-              </AreaChart>
-            </ResponsiveContainer>
-          )}
-        </div>
-
-        {/* Status Breakdown Pie */}
-        <div className="rounded-xl border border-border/60 bg-card p-5">
-          <h2 className="text-sm font-semibold mb-1">Status Breakdown</h2>
-          <p className="text-xs text-muted-foreground mb-4">Lead distribution</p>
-          {isLoading ? (
-            <Skeleton className="h-52" />
-          ) : statusPieData.length === 0 ? (
-            <div className="h-52 flex items-center justify-center text-sm text-muted-foreground">
-              No data
-            </div>
-          ) : (
-            <div className="flex flex-col items-center gap-4">
-              <ResponsiveContainer width="100%" height={170}>
-                <PieChart>
-                  <Pie
-                    data={statusPieData}
-                    cx="50%" cy="50%"
-                    innerRadius={48} outerRadius={72}
-                    dataKey="value"
-                    paddingAngle={3}
-                    animationBegin={0} animationDuration={800}
-                  >
-                    {statusPieData.map((_, i) => (
-                      <Cell key={i} fill={STATUS_PIE_COLORS[i % STATUS_PIE_COLORS.length]} />
-                    ))}
-                  </Pie>
-                  <Tooltip content={<ChartTooltip />} />
-                </PieChart>
-              </ResponsiveContainer>
-              <div className="flex flex-wrap gap-x-4 gap-y-1.5 justify-center">
-                {statusPieData.map((d, i) => (
-                  <div key={d.name} className="flex items-center gap-1.5 text-xs">
-                    <span
-                      className="h-2 w-2 rounded-full shrink-0"
-                      style={{ background: STATUS_PIE_COLORS[i] }}
-                    />
-                    <span className="text-muted-foreground">{d.name}</span>
-                    <span className="font-semibold tabular-nums">{formatNum(d.value)}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
-
+      {/* Leads Over Time and Status Breakdown were removed on 19 Sept at
+          Himanshu's request. Leads Over Time was the most expensive thing on
+          this page by a wide margin: it fetched EVERY lead's createdAt —
+          135,469 rows, unbounded and sorted — shipped them all to the browser's
+          server render and grouped them by day in JavaScript, measured at
+          6.8 seconds of database time alone. The chart displayed about 45
+          points. If it ever comes back, it must be a GROUP BY day in Postgres,
+          not a findMany. Status Breakdown was three counts, ~214 ms. */}
       {/* ── Bottom charts: Feedback + Top Performers ── */}
       {(showFeedback || showTopAgents) && (
         <div className={cn('grid gap-4', showFeedback && showTopAgents ? 'lg:grid-cols-2' : '')}>
