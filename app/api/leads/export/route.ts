@@ -1,16 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { collegeLeadFields } from '@/lib/college-lead-fields';
-import { sessionYearClause } from '@/lib/lead-query-filters';
+import { nonFeedbackQuerySchema, buildNonFeedbackFilters, buildFeedbackFilter } from '@/lib/lead-query-filters';
 import { getServerSession } from 'next-auth';
 import { z } from 'zod';
 import { authOptions } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import { hasPermission, isMaskedRole } from '@/lib/permissions';
 import { getLeadWhereClause } from '@/lib/lead-access';
-import { istStartOfDay, istEndOfDay, IST_TIMEZONE } from '@/lib/ist-time';
-import { parseCsvFilterValues as split } from '@/lib/csv-filter-value';
+import { IST_TIMEZONE } from '@/lib/ist-time';
 import { logActivity } from '@/lib/permissions';
-import { Feature, LeadStatus, Prisma } from '@prisma/client';
+import { Feature, Prisma } from '@prisma/client';
 
 // Feedback timestamps are shown in IST, like the rest of the app — the bare
 // toLocaleString() used for the lead-level date columns renders in the server's
@@ -24,27 +23,23 @@ function fmtIstDateTime(d: Date | string): string {
   });
 }
 
-const querySchema = z.object({
-  status:           z.nativeEnum(LeadStatus).optional(),
-  search:           z.string().optional(),
-  city:             z.string().optional(),
-  state:            z.string().optional(),
-  course:           z.string().optional(),
-  college:          z.string().optional(),
-  campaign:         z.string().optional(),
-  leadType:         z.string().optional(),
-  leadOrigin:       z.string().optional(),
-  zone:             z.string().optional(),
-  tlId:             z.string().optional(),
-  assignedToId:     z.string().optional(),
-  assignmentStatus: z.enum(['all', 'unassigned', 'assigned']).optional(),
-  dateFrom:    z.string().optional(),
-  dateTo:      z.string().optional(),
-  updatedFrom: z.string().optional(),
-  updatedTo:   z.string().optional(),
-  sessionYear: z.string().optional(),
-  feedbackTab:      z.enum(['all', 'fresh', 'interested', 'followup', 'not_interested']).optional(),
-  feedbackOptionIds: z.string().optional(),
+/**
+ * The SAME schema the leads list uses, plus the feedback selection.
+ *
+ * This route used to keep its own copy, and it had drifted: the page sends 27
+ * filter parameters and this list accepted 21. Zod strips unknown keys rather
+ * than erroring, so `dataCallingType`, `dealType`, `leadStage`,
+ * `leadConfirmation`, `leadVerification`, `primaryAppConfirm` and
+ * `primaryAdmConfirm` were silently discarded — a filtered download quietly
+ * returned far more than the screen showed. Himanshu filtered to P1, saw 8,145
+ * leads, and downloaded 80,847.
+ *
+ * Sharing the schema and the builder is what makes "what you see is what you
+ * download" true by construction rather than by two lists being kept in step.
+ */
+const querySchema = nonFeedbackQuerySchema.extend({
+  feedbackTab:         z.enum(['all', 'fresh', 'interested', 'followup', 'not_interested']).optional(),
+  feedbackOptionIds:   z.string().optional(),
   feedbackCategoryIds: z.string().optional(),
 });
 
@@ -107,82 +102,20 @@ export async function GET(req: NextRequest) {
     const parsed = querySchema.safeParse(Object.fromEntries(searchParams));
     if (!parsed.success) return NextResponse.json({ error: 'Invalid params' }, { status: 400 });
 
-    const {
-      status, search, city, state, course, college,
-      campaign, leadType, leadOrigin, zone, tlId,
-      assignedToId, assignmentStatus, dateFrom, dateTo, feedbackTab,
-    } = parsed.data;
-
-    const cities      = split(city ?? null);
-    const states      = split(state ?? null);
-    const courses     = split(course ?? null);
-    const colleges    = split(college ?? null);
-    const campaigns   = split(campaign ?? null);
-    const leadTypes   = split(leadType ?? null);
-    const leadOrigins = split(leadOrigin ?? null);
-    const zones       = split(zone ?? null);
-    const tlIds       = split(tlId ?? null);
-    const agentIds    = split(assignedToId ?? null);
+    const { feedbackTab, feedbackOptionIds, feedbackCategoryIds } = parsed.data;
 
     const accessClause = getLeadWhereClause({ id: session.user.id, role: session.user.role });
-    const filters: Record<string, unknown>[] = [];
+    const filters = await buildNonFeedbackFilters(prisma, parsed.data, session.user);
 
-    if (status) filters.push({ status });
-    if (agentIds.length > 0) filters.push({ assignedToId: { in: agentIds } });
-    if (assignmentStatus === 'unassigned') filters.push({ assignedToId: null });
-    if (assignmentStatus === 'assigned')   filters.push({ assignedToId: { not: null } });
-    if (search) {
-      filters.push({
-        OR: [
-          { name:  { contains: search, mode: 'insensitive' } },
-          { email: { contains: search, mode: 'insensitive' } },
-          { phone: { contains: search, mode: 'insensitive' } },
-          { city:  { contains: search, mode: 'insensitive' } },
-        ],
-      });
-    }
-    if (cities.length > 0)      filters.push({ city:      { in: cities,      mode: 'insensitive' } });
-    if (states.length > 0)      filters.push({ state:     { in: states,      mode: 'insensitive' } });
-    if (courses.length > 0)     filters.push({ course:    { in: courses,     mode: 'insensitive' } });
-    if (colleges.length > 0)    filters.push({ college:   { in: colleges,    mode: 'insensitive' } });
-    if (campaigns.length > 0)   filters.push({ campaign:  { in: campaigns,   mode: 'insensitive' } });
-    if (leadTypes.length > 0)   filters.push({ leadType:  { in: leadTypes,   mode: 'insensitive' } });
-    if (leadOrigins.length > 0) filters.push({ leadOrigin:{ in: leadOrigins, mode: 'insensitive' } });
-    if (zones.length > 0)       filters.push({ leadZone:  { in: zones,       mode: 'insensitive' } });
-    if (tlIds.length > 0)       filters.push({ team: { teamLeadId: { in: tlIds } } });
-    // IST calendar-day bounds — see lib/ist-time.ts.
-    if (dateFrom) filters.push({ createdAt: { gte: istStartOfDay(dateFrom) } });
-    if (dateTo) filters.push({ createdAt: { lte: istEndOfDay(dateTo) } });
-    if (parsed.data.updatedFrom) filters.push({ updatedAt: { gte: istStartOfDay(parsed.data.updatedFrom) } });
-    if (parsed.data.updatedTo) filters.push({ updatedAt: { lte: istEndOfDay(parsed.data.updatedTo) } });
-    // Reuses the list endpoint's own clause builder rather than repeating the
-    // year-to-college resolution — the download has to match the screen, and
-    // this route already keeps its own copy of most filters.
-    {
-      const years = split(parsed.data.sessionYear ?? null);
-      if (years.length > 0) filters.push(await sessionYearClause(prisma, years));
-    }
+    // Identical to the leads list — same four tabs, same clauses.
     if (feedbackTab && feedbackTab !== 'all') {
       if (feedbackTab === 'fresh')          filters.push({ feedbacks: { none: {} } });
       if (feedbackTab === 'followup')       filters.push({ feedbacks: { some: {} } });
       if (feedbackTab === 'interested')     filters.push({ feedbacks: { some: { feedbackOption: { label: { contains: 'interested',     mode: 'insensitive' } } } } });
       if (feedbackTab === 'not_interested') filters.push({ feedbacks: { some: { feedbackOption: { label: { contains: 'not interested', mode: 'insensitive' } } } } });
     }
-    {
-      const requestedOptionIds = split(parsed.data.feedbackOptionIds ?? null);
-      const categoryIds = split(parsed.data.feedbackCategoryIds ?? null);
-      const optionIds = new Set(requestedOptionIds);
-      if (categoryIds.length > 0) {
-        const optionsInCategories = await prisma.feedbackOption.findMany({
-          where: { categoryId: { in: categoryIds } },
-          select: { id: true },
-        });
-        for (const o of optionsInCategories) optionIds.add(o.id);
-      }
-      if (requestedOptionIds.length > 0 || categoryIds.length > 0) {
-        filters.push({ currentFeedbackOptionId: { in: Array.from(optionIds) } });
-      }
-    }
+    const feedbackFilter = await buildFeedbackFilter(prisma, feedbackOptionIds, feedbackCategoryIds);
+    if (feedbackFilter) filters.push(feedbackFilter);
 
     const where = filters.length > 0 ? { AND: [accessClause, ...filters] } : accessClause;
 
