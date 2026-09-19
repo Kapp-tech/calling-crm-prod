@@ -55,11 +55,20 @@ function esc(v: string | null | undefined): string {
 }
 
 /**
- * Refuse an export larger than this rather than let one click load the whole
- * book of leads. 50,000 rows is roughly a 20 MB file and a few seconds of work;
- * beyond that the answer is a narrower filter or a database export.
+ * A sanity bound, not a working limit.
+ *
+ * Set to 50,000 when the export was first streamed, which turned out to be
+ * wrong within a day: the floor had legitimately exported 64,517 rows on
+ * 16 Sept, and by 19 Sept the table held 135,469, so an unfiltered Download
+ * returned 413 and — because the client swallowed the error — simply appeared
+ * to do nothing. The cap was sized for the OLD behaviour, where a big export
+ * meant loading everything into memory. Streaming removed that danger: memory
+ * is now flat regardless of size, so a large export is merely slow, and the
+ * one-at-a-time guard stops several running together.
+ *
+ * What remains is a guard against an absurd request, well above any real one.
  */
-const MAX_EXPORT_ROWS = 50_000;
+const MAX_EXPORT_ROWS = 200_000;
 
 /** Rows fetched per round trip. Small enough that memory stays flat. */
 const EXPORT_BATCH = 1_000;

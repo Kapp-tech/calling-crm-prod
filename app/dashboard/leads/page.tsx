@@ -15,6 +15,7 @@ import { cn } from '@/lib/utils';
 import { joinCsvFilterValues, parseCsvFilterValues } from '@/lib/csv-filter-value';
 import { computeProfilingScore, profilingScoreTone } from '@/lib/lead-profiling';
 import { feedbackCategoryTone } from '@/lib/feedback-category-colors';
+import { useToast } from '@/components/ui/use-toast';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -161,6 +162,7 @@ function SkeletonRows({ hideLeadType = false }: { hideLeadType?: boolean }) {
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function AllLeadsPage() {
+  const { toast } = useToast();
   const { data: session } = useSession();
   const role = session?.user?.role;
 
@@ -513,11 +515,31 @@ export default function AllLeadsPage() {
     return `/api/leads/export?${p}`;
   }
 
+  /**
+   * Show why a download failed rather than swallowing it.
+   *
+   * This used to end in `catch {}` with the comment "silently fail — user will
+   * see nothing downloaded", which is exactly what happened on 19 Sept: the
+   * export cap rejected an unfiltered download of 135,469 leads with a 413 and
+   * a message explaining it, the button span and stopped, and the button simply
+   * looked broken. The server already says what is wrong — too many rows, an
+   * export already running, no permission — so say it.
+   */
   async function handleDownload() {
     setIsDownloading(true);
     try {
       const res = await fetch(buildExportUrl());
-      if (!res.ok) throw new Error('Export failed');
+      if (!res.ok) {
+        // The error routes reply in JSON; a failure to parse must not itself
+        // become the error the user sees.
+        const msg = await res.json().then((d) => d?.error).catch(() => null);
+        toast({
+          title: res.status === 429 ? 'An export is already running' : 'Download failed',
+          description: msg ?? `The server returned ${res.status}.`,
+          variant: 'destructive',
+        });
+        return;
+      }
       const blob = await res.blob();
       const url  = URL.createObjectURL(blob);
       const a    = document.createElement('a');
@@ -525,8 +547,12 @@ export default function AllLeadsPage() {
       a.download = `leads-export-${new Date().toISOString().slice(0, 10)}.csv`;
       a.click();
       URL.revokeObjectURL(url);
-    } catch {
-      // silently fail — user will see nothing downloaded
+    } catch (err) {
+      toast({
+        title: 'Download failed',
+        description: err instanceof Error ? err.message : 'The download could not be completed.',
+        variant: 'destructive',
+      });
     } finally {
       setIsDownloading(false);
     }
