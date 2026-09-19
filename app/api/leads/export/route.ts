@@ -10,7 +10,7 @@ import { getLeadWhereClause } from '@/lib/lead-access';
 import { istStartOfDay, istEndOfDay, IST_TIMEZONE } from '@/lib/ist-time';
 import { parseCsvFilterValues as split } from '@/lib/csv-filter-value';
 import { logActivity } from '@/lib/permissions';
-import { Feature, LeadStatus } from '@prisma/client';
+import { Feature, LeadStatus, Prisma } from '@prisma/client';
 
 // Feedback timestamps are shown in IST, like the rest of the app — the bare
 // toLocaleString() used for the lead-level date columns renders in the server's
@@ -54,6 +54,25 @@ function esc(v: string | null | undefined): string {
   return `"${s}"`;
 }
 
+/**
+ * Refuse an export larger than this rather than let one click load the whole
+ * book of leads. 50,000 rows is roughly a 20 MB file and a few seconds of work;
+ * beyond that the answer is a narrower filter or a database export.
+ */
+const MAX_EXPORT_ROWS = 50_000;
+
+/** Rows fetched per round trip. Small enough that memory stays flat. */
+const EXPORT_BATCH = 1_000;
+
+/**
+ * One export at a time, per process.
+ *
+ * On a single-core box three agents clicking Download together is three full
+ * scans competing for the same CPU, which is how a slow export becomes an
+ * outage. The second caller is told to wait rather than joining in.
+ */
+let exportInProgress = false;
+
 export async function GET(req: NextRequest) {
   try {
     const session = await getServerSession(authOptions);
@@ -67,6 +86,13 @@ export async function GET(req: NextRequest) {
       isMaskedRole(session.user.role),
     ]);
     if (!canDownload) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+
+    if (exportInProgress) {
+      return NextResponse.json(
+        { error: 'Another export is already running. Please try again in a moment.' },
+        { status: 429 },
+      );
+    }
 
     const { searchParams } = new URL(req.url);
     const parsed = querySchema.safeParse(Object.fromEntries(searchParams));
@@ -151,10 +177,7 @@ export async function GET(req: NextRequest) {
 
     const where = filters.length > 0 ? { AND: [accessClause, ...filters] } : accessClause;
 
-    const leads = await prisma.lead.findMany({
-      where,
-      orderBy: { createdAt: 'desc' },
-      select: {
+    const LEAD_SELECT = {
         id:          true,
         name:        true,
         email:       true,
@@ -204,11 +227,45 @@ export async function GET(req: NextRequest) {
             remarks:        true,
           },
         },
-        _count: { select: { feedbacks: true } },
-      },
-    });
+      _count: { select: { feedbacks: true } },
+    } as const;
 
-    // ── Build CSV ──────────────────────────────────────────────────────────────
+    /**
+     * Streamed in batches, never assembled in memory.
+     *
+     * This route used to load every matching lead — with every follow-up
+     * attached — build the whole CSV as one string, and only then send it. With
+     * 134,747 leads and 103,101 follow-ups on a 908 MB box that was enough to
+     * put the machine into swap and starve every other request of a database
+     * connection: agents saw "Application error" on All Leads, incoming leads
+     * were rejected on /api/v1/leads, and follow-ups failed to save. One click
+     * on Download could take the CRM out for everyone.
+     *
+     * Now it walks the result set with a cursor, formats each page and writes it
+     * straight to the response. Memory stays flat whether the export is 500 rows
+     * or 130,000, and the browser starts receiving data almost immediately
+     * instead of waiting for the whole file.
+     */
+    const total = await prisma.lead.count({ where });
+    if (total > MAX_EXPORT_ROWS) {
+      return NextResponse.json({
+        error: `That is ${total.toLocaleString('en-IN')} leads. Narrow the filters to `
+          + `${MAX_EXPORT_ROWS.toLocaleString('en-IN')} or fewer, or ask for a database export.`,
+      }, { status: 413 });
+    }
+
+    /**
+     * The follow-up columns are dynamic — Follow-up 1..N, where N is the deepest
+     * follow-up count in the result set. The old code knew N only after loading
+     * everything, which is exactly what we are no longer doing, so it comes from
+     * one aggregate instead. Get this wrong and the header stops matching the
+     * rows.
+     */
+    const deepest = await prisma.leadFeedback.aggregate({
+      where: { lead: where },
+      _max: { followUpNumber: true },
+    });
+    const maxFeedbacks = deepest._max.followUpNumber ?? 0;
 
     // Fixed columns
     const fixedHeaders = [
@@ -227,8 +284,7 @@ export async function GET(req: NextRequest) {
       'Last Feedback', 'Last Feedback Remark', 'Last Feedback Date & Time',
     ];
 
-    // Dynamic feedback columns — up to max feedbacks seen across all leads
-    const maxFeedbacks = leads.reduce((m, l) => Math.max(m, l.feedbacks.length), 0);
+    // Dynamic feedback columns — sized from the aggregate above.
     const feedbackHeaders: string[] = [];
     for (let i = 1; i <= maxFeedbacks; i++) {
       feedbackHeaders.push(`Follow-up ${i} Status`, `Follow-up ${i} Remarks`, `Follow-up ${i} Date & Time`);
@@ -254,7 +310,9 @@ export async function GET(req: NextRequest) {
     // as it reads on screen.
     const { clientTypeOf, sessionYearOf } = await collegeLeadFields(prisma);
 
-    const rows = leads.map((l) => {
+    type LeadRow = Prisma.LeadGetPayload<{ select: typeof LEAD_SELECT }>;
+
+    const toRow = (l: LeadRow) => {
       const jsonArr = (v: unknown) =>
         Array.isArray(v) ? (v as string[]).join(', ') : '';
 
@@ -314,27 +372,73 @@ export async function GET(req: NextRequest) {
       }
 
       return [...fixed, ...fbCols].join(',');
-    });
+    };
 
-    const csv = [allHeaders.map(esc).join(','), ...rows].join('\n');
     const filename = `leads-export-${new Date().toISOString().slice(0, 10)}.csv`;
+    const encoder = new TextEncoder();
+    exportInProgress = true;
 
-    // Exporting is the one action that can move a whole book of leads out of
-    // the CRM in a single click, so it's the highest-value thing to have an
-    // audit trail for — who exported, how many rows, and with which filters —
-    // for reviewing unusual activity (e.g. around a resignation).
-    await logActivity({
-      userId: session.user.id,
-      action: 'LEADS_EXPORTED',
-      targetType: 'Lead',
-      description: `Exported ${leads.length} lead(s) to CSV`,
-      metadata: { rowCount: leads.length, filters: parsed.data },
+    const stream = new ReadableStream<Uint8Array>({
+      async start(controller) {
+        let written = 0;
+        try {
+          controller.enqueue(encoder.encode(allHeaders.map(esc).join(',') + '\n'));
+
+          // Cursor rather than skip/take: OFFSET makes the database re-walk
+          // every row it has already returned, so page 100 costs a hundred
+          // times page 1. `id` is the tiebreaker because createdAt is not
+          // unique and a tie would drop or repeat rows between pages.
+          let cursor: string | null = null;
+          for (;;) {
+            const batch: LeadRow[] = await prisma.lead.findMany({
+              where,
+              orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+              take: EXPORT_BATCH,
+              ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+              select: LEAD_SELECT,
+            });
+            if (batch.length === 0) break;
+
+            controller.enqueue(encoder.encode(batch.map(toRow).join('\n') + '\n'));
+            written += batch.length;
+            cursor = batch[batch.length - 1].id;
+            if (batch.length < EXPORT_BATCH) break;
+          }
+
+          // Exporting is the one action that can move a whole book of leads out
+          // of the CRM in a single click, so it is the highest-value thing to
+          // have an audit trail for — who exported, how many rows, and with
+          // which filters — for reviewing unusual activity (e.g. around a
+          // resignation). Logged with the rows actually written, not the
+          // estimate, so an interrupted download is recorded as what it was.
+          await logActivity({
+            userId: session.user.id,
+            action: 'LEADS_EXPORTED',
+            targetType: 'Lead',
+            description: `Exported ${written} lead(s) to CSV`,
+            metadata: { rowCount: written, filters: parsed.data },
+          });
+          controller.close();
+        } catch (err) {
+          console.error('[leads/export stream]', err);
+          controller.error(err);
+        } finally {
+          exportInProgress = false;
+        }
+      },
+      cancel() {
+        // The browser gave up mid-download; stop holding the slot.
+        exportInProgress = false;
+      },
     });
 
-    return new NextResponse(csv, {
+    return new NextResponse(stream, {
       headers: {
         'Content-Type':        'text/csv;charset=utf-8;',
         'Content-Disposition': `attachment; filename="${filename}"`,
+        // nginx already has proxy_buffering off; this tells any other proxy.
+        'X-Accel-Buffering':   'no',
+        'Cache-Control':       'no-store',
       },
     });
   } catch (error) {
