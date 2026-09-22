@@ -20,6 +20,23 @@ cause and is still unfixed.
 
 ## 1. What is waiting to go out
 
+*Nothing. Everything below shipped on 2026-09-22 (`b2480a0`) — old server only;
+the new server still needs a pull.*
+
+## 1a. Shipped on 2026-09-22 (`b2480a0`) — old server
+
+**The build OOM'd on the first attempt.** `npm run build` died at a ~460 MB heap
+ceiling on the 908 MB box and left `.next` without a BUILD_ID — a pm2 restart at
+that moment would have taken the CRM down. It succeeded with
+`NODE_OPTIONS=--max-old-space-size=1400`, leaning on the 2 GB swapfile. **Use
+that on every future build here**, and take a `cp -r .next ../next-backup`
+first: the running server holds the old build in memory, so the app keeps
+serving through a failed build and can be restored if the retry also fails.
+
+The `Cannot find module` errors in crm-error.log around 03:51 UTC are from that
+window and are historical. `Failed to find Server Action` is the normal
+post-deploy stale-browser error and clears when agents refresh.
+
 ### Masking no longer blocks WhatsApp or the receipt form  *(code only, no DDL)*
 
 Himanshu: with data masking on, the WhatsApp button disappears, and the
