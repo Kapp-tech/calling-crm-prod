@@ -3,7 +3,7 @@ import type { PrismaClient, Role } from '@prisma/client';
 import { LeadStatus } from '@prisma/client';
 import { istStartOfDay, istEndOfDay } from '@/lib/ist-time';
 import { parseCsvFilterValues } from '@/lib/csv-filter-value';
-import { UNSET_SESSION_YEAR } from '@/lib/college-attributes';
+import { UNSET_SESSION_YEAR, UNSET_CLIENT_TYPE } from '@/lib/college-attributes';
 
 /**
  * The "other" leads-list filters — everything except feedback selection
@@ -50,6 +50,8 @@ export const nonFeedbackQuerySchema = z.object({
   dealType:                z.string().optional(),
   // Session/Year is the college's, not the lead's — see sessionYearClause.
   sessionYear:             z.string().optional(),
+  // Client Type is the college's too — see clientTypeClause.
+  clientType:              z.string().optional(),
 });
 
 export type NonFeedbackQuery = z.infer<typeof nonFeedbackQuerySchema>;
@@ -123,6 +125,62 @@ export async function sessionYearClause(
       // No college anywhere has a year, so every lead reads NA.
       unset.push({ college: { not: null } });
     }
+    clauses.push({ OR: unset });
+  }
+
+  if (clauses.length === 0) return { college: { in: [] } };
+  if (clauses.length === 1) return clauses[0];
+  return { OR: clauses };
+}
+
+/**
+ * Client Type as a Prisma clause on `Lead.college`.
+ *
+ * The same shape as `sessionYearClause` and for the same reason: the value
+ * lives on the college and is read live, so filtering by it means "leads whose
+ * college is marked Client / Non Client".
+ *
+ * `NA` is selectable because that is what All Leads shows for a college with
+ * nothing set, and it covers three cases — a college with the field empty, a
+ * lead with no college, and a lead whose college is not in the curated list.
+ * `NOT IN` alone would drop the null ones, since `college NOT IN (...)` is
+ * unknown rather than true when `college` is NULL.
+ *
+ * A value no college carries returns `in: []`, matching nothing — it must not
+ * fall through to "no filter" and quietly show everything.
+ */
+export async function clientTypeClause(
+  db: { dropdownOption: { findMany: Function } },
+  types: string[],
+): Promise<Record<string, unknown>> {
+  const rows = (await db.dropdownOption.findMany({
+    where: { type: 'COLLEGE', isActive: true },
+    select: { value: true, collegeClientType: true },
+  })) as { value: string; collegeClientType: string | null }[];
+
+  const wantUnset = types.some((t) => t.trim().toUpperCase() === UNSET_CLIENT_TYPE.toUpperCase());
+  const wanted = new Set(
+    types.map((t) => t.trim().toLowerCase()).filter((t) => t && t !== UNSET_CLIENT_TYPE.toLowerCase()),
+  );
+
+  const matched: string[] = [];
+  const withAnyType: string[] = [];
+  for (const r of rows) {
+    const t = r.collegeClientType?.trim();
+    if (!t) continue;
+    withAnyType.push(r.value);
+    if (wanted.has(t.toLowerCase())) matched.push(r.value);
+  }
+
+  const clauses: Record<string, unknown>[] = [];
+  if (matched.length > 0) clauses.push({ college: { in: matched, mode: 'insensitive' } });
+  if (wantUnset) {
+    const unset: Record<string, unknown>[] = [{ college: null }, { college: '' }];
+    unset.push(
+      withAnyType.length > 0
+        ? { college: { notIn: withAnyType, mode: 'insensitive' } }
+        : { college: { not: null } },
+    );
     clauses.push({ OR: unset });
   }
 
@@ -223,6 +281,8 @@ export async function buildNonFeedbackFilters(
   // Last, and the only clause that needs a query — skipped entirely when unused.
   const sessionYears = splitCsv(q.sessionYear);
   if (sessionYears.length > 0) filters.push(await sessionYearClause(db, sessionYears));
+  const clientTypes = splitCsv(q.clientType);
+  if (clientTypes.length > 0) filters.push(await clientTypeClause(db, clientTypes));
 
   return filters;
 }

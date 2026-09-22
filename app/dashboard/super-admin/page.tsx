@@ -306,6 +306,7 @@ export default function SuperAdminPage() {
               <TableHeader>
                 <TableRow>
                   <TableHead>User ID</TableHead>
+                  <TableHead className="whitespace-nowrap">DialShree ID</TableHead>
                   <TableHead>Name</TableHead>
                   <TableHead>Email</TableHead>
                   <TableHead>Phone</TableHead>
@@ -328,6 +329,10 @@ export default function SuperAdminPage() {
                     {/* employeeCode is this app's user-facing ID — it's what the
                         team pages, activity logs and profile all display. */}
                     <TableCell className="whitespace-nowrap font-mono text-xs text-muted-foreground">{user.employeeCode}</TableCell>
+                    {/* The agent's seat in the dialer. Blank for anyone who does
+                        not make calls, and for an agent it means click-to-call
+                        cannot bridge — so an em dash here is worth noticing. */}
+                    <TableCell className="whitespace-nowrap font-mono text-xs text-muted-foreground">{user.dialshreeId || '—'}</TableCell>
                     <TableCell className="whitespace-nowrap font-medium">{user.name}</TableCell>
                     <TableCell className="whitespace-nowrap text-muted-foreground">{user.email}</TableCell>
                     <TableCell className="whitespace-nowrap text-muted-foreground tabular-nums">{user.phone || '—'}</TableCell>
@@ -378,7 +383,7 @@ export default function SuperAdminPage() {
                 ))}
                 {filteredUsers.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={12} className="text-center text-muted-foreground py-8">
+                    <TableCell colSpan={13} className="text-center text-muted-foreground py-8">
                       No users found
                     </TableCell>
                   </TableRow>

@@ -1,36 +1,7 @@
 'use client';
 
 import { cn } from '@/lib/utils';
-
-/**
- * Builds a wa.me deep link for an Indian mobile number.
- * Returns null when the number can't be normalised to a dialable form,
- * so callers can hide the button instead of sending users to a dead link.
- */
-export function buildWhatsAppUrl(phone: string, message: string): string | null {
-  const digits = phone.replace(/\D/g, '');
-  let full: string | null = null;
-  if (digits.length === 10) full = `91${digits}`;
-  else if (digits.length === 12 && digits.startsWith('91')) full = digits;
-  else if (digits.length === 11 && digits.startsWith('0')) full = `91${digits.slice(1)}`;
-  if (!full) return null;
-  return `https://wa.me/${full}?text=${encodeURIComponent(message)}`;
-}
-
-/** Pre-filled first-touch template for a lead. */
-export function leadWhatsAppMessage(opts: {
-  leadName: string;
-  agentName?: string;
-  course?: string | null;
-}): string {
-  const intro = opts.agentName
-    ? `Hi ${opts.leadName}, this is ${opts.agentName} from KollegeApply.`
-    : `Hi ${opts.leadName}, greetings from KollegeApply!`;
-  const context = opts.course
-    ? ` I'm reaching out regarding your interest in ${opts.course}.`
-    : ` I'm reaching out regarding your admission enquiry.`;
-  return `${intro}${context} Is this a good time to connect?`;
-}
+import { buildWhatsAppUrl, leadWhatsAppMessage } from '@/lib/whatsapp';
 
 /** Official WhatsApp glyph — lucide has no brand icons. */
 export function WhatsAppIcon({ className }: { className?: string }) {
@@ -43,12 +14,14 @@ export function WhatsAppIcon({ className }: { className?: string }) {
 
 /** Green pill link that opens WhatsApp with a pre-filled template. Renders nothing for undialable numbers. */
 export function WhatsAppButton({
+  leadId,
   phone,
   leadName,
   agentName,
   course,
   className,
 }: {
+  leadId: string;
   phone: string;
   leadName: string;
   agentName?: string;
@@ -56,17 +29,22 @@ export function WhatsAppButton({
   className?: string;
 }) {
   // A masked reader never receives the real number — the value here is
-  // literally "98****4460" — so there is no chat to open and the button hides
-  // itself. Call still works: the server dials from the lead id and never needs
-  // the number in the browser.
+  // literally "98****4460" — so there is nothing to build a link from in the
+  // browser. It used to hide the button for that reason, which stopped masked
+  // agents messaging leads they had been assigned to work.
   //
-  // buildWhatsAppUrl would also return null for this today, but only by
-  // accident: the asterisks strip to 8 digits and fail its length check. Change
-  // the mask to keep ten digits and that accident stops holding, so the intent
-  // is stated here rather than left to it.
-  if (phone.includes('*')) return null;
-
-  const url = buildWhatsAppUrl(phone, leadWhatsAppMessage({ leadName, agentName, course }));
+  // Instead, point at the lead id and let the server resolve the number and
+  // redirect, the same way Call already dials without the number ever reaching
+  // the page. The href is checked for the mask rather than for a role: whoever
+  // holds a real number gets the direct wa.me link with no round trip, and
+  // whoever holds asterisks gets the redirect. Nothing here needs to know which
+  // roles are masked, so it cannot fall out of step with the permission.
+  const masked = phone.includes('*');
+  const url = masked
+    ? `/api/leads/${leadId}/whatsapp`
+    : buildWhatsAppUrl(phone, leadWhatsAppMessage({ leadName, agentName, course }));
+  // Undialable stored number. The masked path can't tell in advance — the route
+  // answers 422 in that case — so this only catches the unmasked one.
   if (!url) return null;
 
   return (

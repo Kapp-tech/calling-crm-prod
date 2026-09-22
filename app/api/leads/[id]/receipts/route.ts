@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { authOptions } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import { canAccessLead } from '@/lib/lead-access';
+import { isMaskedRole } from '@/lib/permissions';
 import {
   MAX_RECEIPT_FILE_SIZE,
   isAllowedReceiptFile,
@@ -91,6 +92,39 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     ]) {
       const v = formData.get(key);
       if (typeof v === 'string') rawFields[key] = v;
+    }
+
+    /**
+     * A masked viewer submits the mask, so take those fields from the lead.
+     *
+     * The dialog prefills Student Name, Email and Mobile from the lead, and a
+     * masked role receives "ab****@gmail.com" and "98****60" — never the real
+     * values. Submitting them failed `.email()` below and the receipt could not
+     * be filed at all: the form was unusable for exactly the people who use it
+     * most.
+     *
+     * Substituting the lead's stored values keeps both halves true. The masked
+     * user still never learns the email or phone — nothing is sent back to them
+     * — and the receipt records the real contact details rather than a mask,
+     * which is what matters for an approval someone acts on later.
+     *
+     * The asterisk test is what makes this safe. A masked agent who gets a
+     * corrected email over a call can still clear the box and type it: no
+     * asterisk, so it is left exactly as typed and validated normally. Only a
+     * value the user could not have known is replaced. Alternate email and
+     * mobile need no special case for the same reason — they are never
+     * prefilled, so whatever arrives was typed.
+     */
+    if (await isMaskedRole(session.user.role)) {
+      const lead = await prisma.lead.findUnique({
+        where: { id: params.id },
+        select: { name: true, email: true, phone: true },
+      });
+      if (lead) {
+        if (rawFields.studentName?.includes('*')) rawFields.studentName = lead.name;
+        if (rawFields.email?.includes('*')) rawFields.email = lead.email;
+        if (rawFields.mobile?.includes('*')) rawFields.mobile = lead.phone;
+      }
     }
 
     const parsed = receiptSchema.safeParse(rawFields);

@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
-import { UNSET_SESSION_YEAR } from '@/lib/college-attributes';
+import { UNSET_SESSION_YEAR, UNSET_CLIENT_TYPE, COLLEGE_CLIENT_TYPES } from '@/lib/college-attributes';
 
 /**
  * The dropdown values every filter bar reads — cached in the process.
@@ -96,6 +96,14 @@ async function loadFilterOptions() {
       UNSET_SESSION_YEAR,
     ];
 
+    /**
+     * Client Type comes from the fixed list, not from the data: it is a
+     * two-value setting on the college, so offering exactly Client / Non Client
+     * / NA is right even before anyone has set one. NA is what a lead shows when
+     * its college has none, so it has to be selectable.
+     */
+    const clientTypes = [...COLLEGE_CLIENT_TYPES, UNSET_CLIENT_TYPE];
+
     return {
       campaigns:            campaigns.map((r) => r.campaign!),
       leadTypes:            leadTypes.map((r) => r.leadType!),
@@ -111,6 +119,7 @@ async function loadFilterOptions() {
       primaryAppConfirms:   primaryAppConfirms.map((r) => r.primaryApplicationConfirm!),
       primaryAdmConfirms:   primaryAdmConfirms.map((r) => r.primaryAdmissionConfirm!),
       sessionYears,
+      clientTypes,
       leadStages:           leadStages.map((r) => r.leadStage!),
       dealTypes:            dealTypes.map((r) => r.dealType!),
     };

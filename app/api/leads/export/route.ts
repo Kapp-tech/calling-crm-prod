@@ -5,7 +5,7 @@ import { getServerSession } from 'next-auth';
 import { z } from 'zod';
 import { authOptions } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
-import { hasPermission, isMaskedRole } from '@/lib/permissions';
+import { hasPermission } from '@/lib/permissions';
 import { getLeadWhereClause } from '@/lib/lead-access';
 import { IST_TIMEZONE } from '@/lib/ist-time';
 import { logActivity } from '@/lib/permissions';
@@ -82,13 +82,7 @@ export async function GET(req: NextRequest) {
     const session = await getServerSession(authOptions);
     if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-    const [canDownload, masked] = await Promise.all([
-      hasPermission(session.user.role, Feature.DOWNLOAD_DATA),
-      // Reads "does this role see masked data" — not hasPermission, which
-      // answers true for SUPER_ADMIN on every feature and would have masked
-      // their exports with no way to switch it off.
-      isMaskedRole(session.user.role),
-    ]);
+    const canDownload = await hasPermission(session.user.role, Feature.DOWNLOAD_DATA);
     if (!canDownload) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
 
     if (exportInProgress) {
@@ -122,8 +116,6 @@ export async function GET(req: NextRequest) {
     const LEAD_SELECT = {
         id:          true,
         name:        true,
-        email:       true,
-        phone:       true,
         city:        true,
         state:       true,
         course:      true,
@@ -209,9 +201,26 @@ export async function GET(req: NextRequest) {
     });
     const maxFeedbacks = deepest._max.followUpNumber ?? 0;
 
-    // Fixed columns
+    /**
+     * Email and phone are deliberately absent.
+     *
+     * A CSV leaves the system the moment it is written: it lands in Downloads,
+     * gets forwarded, sits on a laptop, and no permission in this application
+     * applies to it any more. Masking inside the CRM is undone by one export, so
+     * the contact columns were the largest leak the product had.
+     *
+     * They are dropped for every role, including Super Admin, because the risk
+     * is the file rather than the reader — an admin's download is exactly as
+     * forwardable as anyone else's. The CRM itself is still the place to read a
+     * lead's contact details, where access is checked per lead and masking
+     * applies; to reach a lead, Call and WhatsApp work without either value ever
+     * being shown.
+     *
+     * `Lead ID` is kept, so a row in a spreadsheet can still be traced back to
+     * the lead it came from.
+     */
     const fixedHeaders = [
-      'Lead ID', 'Name', 'Email', 'Phone',
+      'Lead ID', 'Name',
       'City', 'State', 'Course', 'College', 'Client Type', 'KAPP College ID', 'Session/Year',
       'Lead Code', 'Lead Type', 'Lead Origin', 'Zone',
       'Status', 'Uploaded By',
@@ -234,17 +243,6 @@ export async function GET(req: NextRequest) {
 
     const allHeaders = [...fixedHeaders, ...feedbackHeaders];
 
-    const mask = (val: string, type: 'email' | 'phone') => {
-      if (!masked) return val;
-      if (type === 'email') {
-        const at = val.indexOf('@');
-        return at > 2
-          ? `${val.slice(0, 2)}${'*'.repeat(at - 2)}${val.slice(at)}`
-          : val;
-      }
-      return `${val.slice(0, 2)}${'*'.repeat(Math.max(0, val.length - 4))}${val.slice(-2)}`;
-    };
-
     const displayId = (id: string) =>
       'L' + id.replace(/\D/g, '').slice(-9).padStart(9, '0');
 
@@ -265,8 +263,6 @@ export async function GET(req: NextRequest) {
       const fixed = [
         displayId(l.id),
         l.name,
-        mask(l.email, 'email'),
-        mask(l.phone, 'phone'),
         l.city, l.state, l.course, l.college, clientTypeOf(l.college),
         l.kappCollegeId, sessionYearOf(l.college),
         l.campaign, l.leadType, l.leadOrigin, l.leadZone,

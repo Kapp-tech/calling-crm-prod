@@ -904,7 +904,7 @@ export function LeadProfilePage({ leadId, agentName }: { leadId: string; agentNa
                   {isDialing ? 'Connecting…' : 'Call'}
                 </button>
               )}
-              <WhatsAppButton phone={lead.phone} leadName={lead.name} course={lead.course} />
+              <WhatsAppButton leadId={lead.id} phone={lead.phone} leadName={lead.name} course={lead.course} />
               <ApplicationFormButton college={lead.college} />
             </div>
 

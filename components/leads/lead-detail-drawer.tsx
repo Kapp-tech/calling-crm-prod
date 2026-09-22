@@ -1252,6 +1252,7 @@ export function LeadDetailDrawer({ leadId, onClose, canSubmitFeedback = false }:
                         </Button>
                       )}
                       <WhatsAppButton
+                        leadId={lead.id}
                         phone={lead.phone}
                         leadName={lead.name}
                         agentName={agentName}
