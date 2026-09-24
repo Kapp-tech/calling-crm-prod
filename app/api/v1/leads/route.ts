@@ -6,7 +6,7 @@ import { callingTypeForIngest } from '@/lib/lead-code';
 import { planPriorityAssignments } from '@/lib/priority-assignment';
 import { logActivity } from '@/lib/permissions';
 import { verifyApiKey } from '@/lib/api-key';
-import { fetchLmsCityNames, fetchLmsStateNames, fetchLmsCourseNames, toCanonicalMap } from '@/lib/lms-api';
+import { fetchLmsCityNames, fetchLmsStateNames, fetchLmsCourseGroupRecords, toCanonicalMap } from '@/lib/lms-api';
 import { buildDropdownValidationSets, isAllowedDropdownValue, type DropdownValidationSets } from '@/lib/dropdown-validation';
 
 // ═════════════════════════════════════════════════════════════════════════
@@ -43,8 +43,12 @@ import { buildDropdownValidationSets, isAllowedDropdownValue, type DropdownValid
 //                                    // from the same location API this CRM's UI uses
 //     state: string;                // must exactly match (case-insensitive) a state name
 //                                    // from that same location API
-//     course: string;               // must exactly match (case-insensitive) a course name
-//                                    // from that same provider's course list
+//     course: number | string;      // the KAPP Course Group ID, e.g. 24 for "B.Pharm".
+//                                    // NOT the course name — a name is rejected.
+//                                    // Sent as a JSON number or a string, either works.
+//                                    // Validated against the provider's course-group
+//                                    // list; the id is stable across renames, which
+//                                    // the name is not.
 //     kappCollegeId: string;        // must match a College's "KAPP College ID" configured
 //                                    // under Manage Colleges — resolves to that college
 //     leadCode: string;             // free text, stored as this lead's "Lead Code"
@@ -134,7 +138,12 @@ const payloadSchema = z.object({
   phone: z.string().trim().min(1, 'phone is required').regex(/^\d{10}$/, 'Phone must be exactly 10 digits'),
   city: req1('city'),
   state: req1('state'),
-  course: req1('course'),
+  /**
+   * The KAPP Course Group ID, e.g. 24 for "B.Pharm" — NOT the course name.
+   * Accepts a JSON number or a string, since an id is naturally sent either
+   * way; both are resolved identically in resolveAndValidate.
+   */
+  course: z.union([z.string().trim().min(1, 'course is required'), z.number()]),
   kappCollegeId: req1('kappCollegeId'),
   leadCode: req1('leadCode'),
   leadType: req1('leadType'),
@@ -185,7 +194,12 @@ interface ResolvedFields {
 interface CrossRefMaps {
   cityMap: Map<string, string>;
   stateMap: Map<string, string>;
-  courseMap: Map<string, string>;
+  /**
+   * KAPP Course Group ID -> canonical course name. Keyed by the *id*, not the
+   * name: `course` on this endpoint is an id, and the name is only ever an
+   * output of the lookup (see the note on the payload field).
+   */
+  courseMap: Map<number, string>;
   dropdownData: DropdownValidationSets;
 }
 
@@ -201,9 +215,31 @@ function resolveAndValidate(d: LeadPayload, maps: CrossRefMaps): { errors: Recor
   if (!canonicalState) errors.state = `"${d.state}" does not match any known state`;
   else resolved.state = canonicalState;
 
-  const canonicalCourse = maps.courseMap.get(d.course.toLowerCase());
-  if (!canonicalCourse) errors.course = `"${d.course}" does not match any known course`;
-  else resolved.course = canonicalCourse;
+  /**
+   * `course` is a KAPP Course Group ID, and a name is no longer accepted.
+   *
+   * The id is stable across renames and the name is not: LMS renamed
+   * "B.Pharma" to "B.Pharm" while course_group_id 24 stayed put, and every
+   * lead still carrying the old name was rejected. Validating on the id makes
+   * that class of failure impossible.
+   *
+   * The trade is that a wrong id usually *is* a valid id for some other
+   * course, so it resolves quietly instead of erroring — where a wrong name
+   * always 400'd. Nothing here can detect that; it is a deliberate choice made
+   * when this endpoint moved to ids.
+   *
+   * `Number.isFinite` rather than a truthiness test, because "Other" is
+   * course_group_id **0** — a falsy id that a `!id` check would silently
+   * reject, removing one real category from every ingest.
+   */
+  const courseId = Number(String(d.course).trim());
+  if (!Number.isInteger(courseId)) {
+    errors.course = `"${d.course}" is not a KAPP Course Group ID — this endpoint expects the numeric id (e.g. 24 for "B.Pharm"), not the course name`;
+  } else {
+    const canonicalCourse = maps.courseMap.get(courseId);
+    if (canonicalCourse === undefined) errors.course = `"${d.course}" does not match any known KAPP Course Group ID`;
+    else resolved.course = canonicalCourse;
+  }
 
   const canonicalCollege = maps.dropdownData.collegeIdMap.get(d.kappCollegeId.toLowerCase());
   if (!canonicalCollege) errors.kappCollegeId = `"${d.kappCollegeId}" is not a valid KAPP College ID`;
@@ -301,19 +337,19 @@ export async function POST(req: NextRequest) {
 
     // ── Cross-reference data — fetched ONCE per request, reused for every
     // lead in the array, instead of once per lead ──────────────────────────
-    const [cityNames, stateNames, courseNames, dropdownData] = await Promise.all([
+    const [cityNames, stateNames, courseGroups, dropdownData] = await Promise.all([
       fetchLmsCityNames().catch(() => null),
       fetchLmsStateNames().catch(() => null),
-      fetchLmsCourseNames().catch(() => null),
+      fetchLmsCourseGroupRecords().catch(() => null),
       buildDropdownValidationSets(),
     ]);
-    if (cityNames === null || stateNames === null || courseNames === null) {
+    if (cityNames === null || stateNames === null || courseGroups === null) {
       return fail(502, 'Could not verify city/state/course against the location provider — please retry');
     }
     const maps: CrossRefMaps = {
       cityMap: toCanonicalMap(cityNames),
       stateMap: toCanonicalMap(stateNames),
-      courseMap: toCanonicalMap(courseNames),
+      courseMap: new Map(courseGroups.map((c) => [c.course_group_id, c.name.trim()])),
       dropdownData,
     };
 
