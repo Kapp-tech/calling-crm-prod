@@ -6,6 +6,7 @@ import { useSession } from 'next-auth/react';
 import { BarChart3, Loader2, Download, Users, Info, GraduationCap, Building2, AlertTriangle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { MultiSelectFilter } from '@/components/shared/multi-select-filter';
+import { NO_COLLEGE_LABEL } from '@/lib/college-attributes';
 import { cn } from '@/lib/utils';
 import { istDayKey, formatSheetDate } from '@/lib/ist-time';
 
@@ -93,14 +94,19 @@ export default function ReportsPage() {
   const [to, setTo] = useState(today);
   const [agentIds, setAgentIds] = useState<string[]>([]);
   const [tlIds, setTlIds] = useState<string[]>([]);
+  // College names, not ids — Lead.college is free text and has none.
+  const [colleges, setColleges] = useState<string[]>([]);
 
   const { data, isLoading, isFetching } = useQuery<ReportResponse>({
-    queryKey: ['agent-report', range, from, to, agentIds, tlIds],
+    queryKey: ['agent-report', range, from, to, agentIds, tlIds, colleges],
     queryFn: () => {
       const p = new URLSearchParams({ range });
       if (range === 'DATEWISE') { p.set('from', from); p.set('to', to); }
       if (agentIds.length) p.set('agentIds', agentIds.join(','));
       if (tlIds.length) p.set('tlIds', tlIds.join(','));
+      // `~`, not a comma: "Great Lakes Institute of Management, Chennai" is a
+      // real college name and a comma would split it in half.
+      if (colleges.length) p.set('colleges', colleges.join('~'));
       return fetch(`/api/reports/agent-performance?${p}`).then((r) => r.json());
     },
     enabled: !!session?.user?.id,
@@ -113,6 +119,28 @@ export default function ReportsPage() {
   // The agent list the server sends already follows the TL filter. Anyone still
   // selected who has dropped off it is cleared, so the filter bar can never show
   // a chip for an agent the report is no longer able to include.
+  /**
+   * The college list comes from the global filter-options endpoint, not from
+   * the report's own rows. Deriving it from the response would shrink the
+   * options to whatever is currently selected, so you could narrow to one
+   * college and then be unable to switch to another without clearing first.
+   */
+  const { data: filterOptions } = useQuery<{ colleges?: string[] }>({
+    queryKey: ['report-college-options'],
+    queryFn: () => fetch('/api/leads/filter-options').then((r) => r.json()),
+    staleTime: 5 * 60_000,
+  });
+
+  const collegeOptions = useMemo(
+    () => [
+      ...(filterOptions?.colleges ?? []).map((c) => ({ value: c, label: c })),
+      // Leads with no college still appear in the table under this label, so it
+      // has to be selectable or they could never be isolated.
+      { value: NO_COLLEGE_LABEL, label: NO_COLLEGE_LABEL },
+    ],
+    [filterOptions?.colleges],
+  );
+
   const agentOptions = useMemo(
     () => (data?.choices.agents ?? []).map((a) => ({
       value: a.id,
@@ -287,6 +315,17 @@ export default function ReportsPage() {
             triggerClassName="h-9 w-full sm:w-auto sm:min-w-[180px] sm:max-w-[260px]"
           />
         )}
+
+        {/* Narrows the Feedback summary and the University/College wise table
+            below. The agent rows above are unaffected — see the note in the
+            route's query schema. */}
+        <MultiSelectFilter
+          placeholder="All Colleges"
+          options={collegeOptions}
+          selected={colleges}
+          onChange={setColleges}
+          triggerClassName="h-9 w-full sm:w-auto sm:min-w-[180px] sm:max-w-[260px]"
+        />
 
         <span className="ml-auto text-xs text-muted-foreground">
           {data?.label}{isFetching && ' · updating…'}

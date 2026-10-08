@@ -31,6 +31,24 @@ const querySchema = z.object({
   to: z.string().optional(),
   agentIds: idList,
   tlIds: idList,
+  /**
+   * College names, comma-separated. Narrows the Feedback summary and the
+   * University/College wise table only — the agent rows above them stay as
+   * they are, because an agent's Dialed Calls is a fact about the agent, not
+   * about which college the lead belonged to.
+   *
+   * Names rather than ids: `Lead.college` is free text, so there is no id to
+   * key on. Matching is trimmed and case-insensitive in collegeFilterSql.
+   *
+   * Split on `~`, not a comma, because college names contain commas —
+   * "Great Lakes Institute of Management, Chennai" is a real value in this
+   * data and a comma split would silently turn it into two colleges that match
+   * nothing. `~` does not occur in any college name.
+   */
+  colleges: z
+    .string()
+    .optional()
+    .transform((v) => (v ? v.split('~').map((s) => s.trim()).filter(Boolean) : [])),
 });
 
 /** A TL owns an agent either through `managedById` or by leading their team —
@@ -50,7 +68,7 @@ export async function GET(req: NextRequest) {
 
   const parsed = querySchema.safeParse(Object.fromEntries(new URL(req.url).searchParams));
   if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
-  const { range, from, to, agentIds, tlIds } = parsed.data;
+  const { range, from, to, agentIds, tlIds, colleges } = parsed.data;
 
   const role = session.user.role;
   const view = role === 'COUNSELLING_AGENT' ? 'agent' : role === 'COUNSELLING_TL' ? 'team' : 'manager';
@@ -119,8 +137,8 @@ export async function GET(req: NextRequest) {
     // Same scope and the same counting rule for both, so the college table's
     // Dialed column totals to exactly the feedback summary's Total.
     const [feedbackBreakdown, collegeBreakdown] = await Promise.all([
-      buildFeedbackBreakdown(prisma, breakdownWhere, range as ReportRange, from, to, now),
-      buildCollegeBreakdown(prisma, breakdownWhere, range as ReportRange, from, to, now),
+      buildFeedbackBreakdown(prisma, breakdownWhere, range as ReportRange, from, to, now, colleges),
+      buildCollegeBreakdown(prisma, breakdownWhere, range as ReportRange, from, to, now, colleges),
     ]);
 
     // Benchmarking: the KPI targets are organisation-wide, so each agent is

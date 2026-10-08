@@ -1,6 +1,7 @@
 import { Prisma, PrismaClient } from '@prisma/client';
 import { istStartOfDay, istEndOfDay, istDayKey, istShiftDays, toUtcSqlTimestamp } from './ist-time';
 import { FEEDBACK_HISTORY } from './feedback-history';
+import { NO_COLLEGE_LABEL } from './college-attributes';
 
 /**
  * Agent performance reporting.
@@ -333,6 +334,9 @@ export async function buildFeedbackBreakdown(
   from?: string | null,
   to?: string | null,
   now = new Date(),
+  // Optional and last, so the scheduled email reports keep calling this
+  // unchanged. Omitted means every college, which is what they want.
+  colleges?: string[],
 ): Promise<FeedbackBreakdown> {
   const window = reportRange(range, from, to, now);
   const agents = await db.user.findMany({ where: agentWhere, select: { id: true } });
@@ -351,6 +355,7 @@ export async function buildFeedbackBreakdown(
     WHERE f."agentId" IN (${Prisma.join(ids)})
       ${window.from ? Prisma.sql`AND f."createdAt" >= ${toUtcSqlTimestamp(window.from)}::timestamp` : Prisma.empty}
       ${window.to ? Prisma.sql`AND f."createdAt" <= ${toUtcSqlTimestamp(window.to)}::timestamp` : Prisma.empty}
+      ${collegeFilterSql(colleges)}
     ORDER BY f."leadId", f."createdAt" DESC
   `;
 
@@ -523,7 +528,49 @@ const OUTCOME_RANK = new Map(COLLEGE_OUTCOME_ORDER.map((l, i) => [outcomeKey(l),
 
 /** Leads carrying no college at all still have to appear, or this table's Dialed
  *  column would not add up to the feedback summary's Total. */
-const NO_COLLEGE = '(No college set)';
+const NO_COLLEGE = NO_COLLEGE_LABEL;
+
+/**
+ * Restrict a feedback row to particular colleges, as an EXISTS on the lead.
+ *
+ * EXISTS rather than a JOIN so it can be dropped into a CTE without changing
+ * the row shape — the CTE is DISTINCT ON (leadId) and a join risks disturbing
+ * that. A lead has exactly one college, so EXISTS cannot duplicate rows.
+ *
+ * Matched trimmed and lower-cased, the same rule collegeLeadFields uses, since
+ * `Lead.college` is free text arriving from uploads and the API: "LPU " and
+ * "lpu" must both match the curated "LPU".
+ *
+ * NO_COLLEGE is selectable and means what the report already displays for a
+ * lead with nothing set — null or blank. Without it a filtered report could
+ * never account for those leads, and the college table's Dialed total would
+ * stop reconciling with the feedback summary.
+ *
+ * An empty list is NOT "match nothing" — it is "no filter", which is what an
+ * untouched control means.
+ */
+function collegeFilterSql(colleges: string[] | undefined) {
+  if (!colleges || colleges.length === 0) return Prisma.empty;
+
+  const wantsUnset = colleges.some((c) => c === NO_COLLEGE);
+  const named = colleges.filter((c) => c !== NO_COLLEGE).map((c) => c.trim().toLowerCase());
+
+  const conds: Prisma.Sql[] = [];
+  if (named.length > 0) {
+    conds.push(Prisma.sql`lower(btrim(ld.college)) IN (${Prisma.join(named)})`);
+  }
+  if (wantsUnset) {
+    conds.push(Prisma.sql`(ld.college IS NULL OR btrim(ld.college) = '')`);
+  }
+  // Only NO_COLLEGE-less junk was passed — match nothing rather than silently
+  // widening to everything.
+  if (conds.length === 0) return Prisma.sql`AND false`;
+
+  return Prisma.sql`AND EXISTS (
+    SELECT 1 FROM "Lead" ld
+    WHERE ld.id = f."leadId" AND (${Prisma.join(conds, ' OR ')})
+  )`;
+}
 
 /**
  * The same book of work as the feedback summary, split by college instead of by
@@ -542,6 +589,9 @@ export async function buildCollegeBreakdown(
   from?: string | null,
   to?: string | null,
   now = new Date(),
+  // Same filter as buildFeedbackBreakdown, applied in the same place, so the
+  // college table's Dialed total still reconciles with the summary's Total.
+  colleges?: string[],
 ): Promise<CollegeBreakdown> {
   const window = reportRange(range, from, to, now);
   const empty: CollegeBreakdown = {
@@ -565,6 +615,7 @@ export async function buildCollegeBreakdown(
       WHERE f."agentId" IN (${Prisma.join(ids)})
         ${window.from ? Prisma.sql`AND f."createdAt" >= ${toUtcSqlTimestamp(window.from)}::timestamp` : Prisma.empty}
         ${window.to ? Prisma.sql`AND f."createdAt" <= ${toUtcSqlTimestamp(window.to)}::timestamp` : Prisma.empty}
+        ${collegeFilterSql(colleges)}
       ORDER BY f."leadId", f."createdAt" DESC
     )
     SELECT nullif(btrim(ld.college), '') AS college,

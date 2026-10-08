@@ -46,3 +46,13 @@ export const UNSET_SESSION_YEAR = 'NA';
 export type CollegeZone = (typeof COLLEGE_ZONES)[number];
 export type CollegeDealType = (typeof COLLEGE_DEAL_TYPES)[number];
 export type CollegeClientType = (typeof COLLEGE_CLIENT_TYPES)[number];
+
+/**
+ * What the reports show for a lead whose college is unset.
+ *
+ * Lives here, not in lib/reports.ts, because the Reports page needs it too as
+ * a selectable filter option — and lib/reports.ts imports PrismaClient, so a
+ * client component cannot import from it. Both sides reading one constant is
+ * what stops the filter value drifting from the label it is meant to match.
+ */
+export const NO_COLLEGE_LABEL = '(No college set)';
