@@ -5,6 +5,7 @@ import { authOptions } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import { hasPermission } from '@/lib/permissions';
 import { Feature } from '@prisma/client';
+import { unassignLeads } from '@/lib/lead-unassign';
 
 const schema = z.object({
   leadIds: z.array(z.string()).min(1).max(500),
@@ -59,19 +60,11 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Cancel any pending scheduled calls and clear assignment in one transaction
-    const [, result] = await prisma.$transaction([
-      prisma.scheduledCall.updateMany({
-        where: { leadId: { in: leadIds }, status: 'PENDING' },
-        data:  { status: 'CANCELLED' },
-      }),
-      prisma.lead.updateMany({
-        where: { id: { in: leadIds }, status: 'APPROVED', assignedToId: { not: null } },
-        data:  { assignedToId: null, teamId: null },
-      }),
-    ]);
+    // Shared with user deactivation — see lib/lead-unassign.ts for what
+    // "unassigned" has to mean for a lead to actually return to the queue.
+    const count = await prisma.$transaction((tx) => unassignLeads(tx, { id: { in: leadIds } }));
 
-    return NextResponse.json({ success: true, unassigned: result.count });
+    return NextResponse.json({ success: true, unassigned: count });
   } catch (error) {
     console.error('[leads/bulk-unassign POST]', error);
     return NextResponse.json({ success: false, error: 'Internal server error' }, { status: 500 });

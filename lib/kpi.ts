@@ -344,12 +344,22 @@ export async function computeKpiActual(
       });
 
     case 'RECEIPT_COUNT':
+      // Credited to whoever UPLOADED the receipt, not to whoever holds the lead
+      // now. Those are the same person right up until the lead is reassigned,
+      // and then they are not: the old rule read the lead's current assignee,
+      // so reassigning a lead moved an approved receipt's credit to an agent
+      // who had nothing to do with it and took it from the one who earned it.
+      // Reassignment is routine here, so this was quietly rewriting KPI history
+      // — including for periods already closed and reported on.
+      //
+      // `uploadedById` is stamped from the session at upload time and never
+      // changes afterwards, which is what makes the number stable.
       return db.leadReceipt.count({
         where: {
           status: 'APPROVED',
           ...(def.receiptType ? { type: def.receiptType } : {}),
           paidDate: inPeriod,
-          lead: { assignedToId: userId },
+          uploadedById: userId,
         },
       });
 

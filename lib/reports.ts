@@ -195,16 +195,21 @@ export async function buildAgentReport(
         GROUP BY 1
       `,
     ),
-    // Receipts belong to the agent the lead is assigned to, counted by the date
-    // the student paid rather than when it was approved — approval can lag by
-    // days and would otherwise land the credit in the wrong period.
+    // Receipts belong to the agent who UPLOADED them, counted by the date the
+    // student paid rather than when it was approved — approval can lag by days
+    // and would otherwise land the credit in the wrong period.
+    //
+    // Deliberately not the lead's current assignee: that moves the credit every
+    // time a lead is reassigned, which is routine, and rewrites past periods.
+    // Kept in step with RECEIPT_COUNT in lib/kpi.ts so the Caller-wise report
+    // and the KPI screen cannot disagree about the same agent.
     db.leadReceipt.findMany({
       where: {
         status: 'APPROVED',
         ...(period ? { paidDate: period } : {}),
-        lead: { assignedToId: { in: ids } },
+        uploadedById: { in: ids },
       },
-      select: { type: true, lead: { select: { assignedToId: true } } },
+      select: { type: true, uploadedById: true },
     }),
     // Talk time comes from the dialer's post-call webhook. Only calls the dialer
     // itself marked CONNECTED are averaged — it reports a few seconds of "talk
@@ -241,7 +246,7 @@ export async function buildAgentReport(
   const appsBy = new Map<string, number>();
   const admsBy = new Map<string, number>();
   for (const r of receipts) {
-    const aid = r.lead.assignedToId;
+    const aid = r.uploadedById;
     if (!aid) continue;
     const m = r.type === 'APPLICATION' ? appsBy : admsBy;
     m.set(aid, (m.get(aid) ?? 0) + 1);

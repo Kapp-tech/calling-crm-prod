@@ -3,7 +3,8 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import { hasPermission } from '@/lib/permissions';
-import { Feature, Prisma, ReceiptStatus, ReceiptType } from '@prisma/client';
+import { Feature, ReceiptStatus } from '@prisma/client';
+import { parseReceiptFilters, buildReceiptWhere } from '@/lib/receipt-filters';
 
 // Cross-lead receipt approval queue for Super Admin (and anyone else granted
 // APPROVE_RECEIPTS via the permission matrix). Defaults to PENDING so the
@@ -17,29 +18,13 @@ export async function GET(req: NextRequest) {
     }
 
     const { searchParams } = new URL(req.url);
-    const statusParam = (searchParams.get('status') ?? 'PENDING').toUpperCase();
-    const typeParam    = searchParams.get('type')?.toUpperCase();
-    const search       = searchParams.get('search')?.trim();
     const page  = Math.max(1, parseInt(searchParams.get('page') ?? '1', 10) || 1);
     const limit = Math.min(100, Math.max(1, parseInt(searchParams.get('limit') ?? '25', 10) || 25));
 
-    const where: Prisma.LeadReceiptWhereInput = {
-      ...(statusParam !== 'ALL' && statusParam in ReceiptStatus
-        ? { status: statusParam as ReceiptStatus }
-        : {}),
-      ...(typeParam && typeParam in ReceiptType ? { type: typeParam as ReceiptType } : {}),
-      ...(search
-        ? {
-            OR: [
-              { studentName: { contains: search, mode: 'insensitive' } },
-              { email: { contains: search, mode: 'insensitive' } },
-              { mobile: { contains: search } },
-              { receiptNumber: { contains: search, mode: 'insensitive' } },
-              { lead: { id: { contains: search, mode: 'insensitive' } } },
-            ],
-          }
-        : {}),
-    };
+    // Shared with the CSV export — see lib/receipt-filters.ts.
+    const filters = parseReceiptFilters(searchParams);
+    const statusParam = filters.status;
+    const where = buildReceiptWhere(filters);
 
     const [receipts, total, statusCounts] = await Promise.all([
       prisma.leadReceipt.findMany({

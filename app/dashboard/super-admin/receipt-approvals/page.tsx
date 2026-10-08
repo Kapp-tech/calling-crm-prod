@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
-  Receipt, Loader2, Search, CheckCircle2, XCircle, Clock, ExternalLink, UserRound,
+  Receipt, Loader2, Search, CheckCircle2, XCircle, Clock, ExternalLink, UserRound, Download,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -134,17 +134,76 @@ export default function ReceiptApprovalsPage() {
   const [statusFilter, setStatusFilter] = useState<ReceiptStatusFilter>('PENDING');
   const [typeFilter, setTypeFilter] = useState<ReceiptKind | 'ALL'>('ALL');
   const [search, setSearch] = useState('');
+  // Paid-date range. Empty means unbounded on that side, so one box alone is a
+  // valid filter ("everything from 1 Oct", "everything up to 30 Sept").
+  const [from, setFrom] = useState('');
+  const [to, setTo] = useState('');
   const [page, setPage] = useState(1);
+  const [downloading, setDownloading] = useState(false);
   const [disapproveTarget, setDisapproveTarget] = useState<ReceiptRow | null>(null);
   // Optimistically hidden while their undo toast is open
   const [hiddenIds, setHiddenIds] = useState<Set<string>>(new Set());
 
+  /**
+   * The filter params, built once and used by BOTH the table and the CSV
+   * download. Two builders is how the All Leads export drifted from its list —
+   * it downloaded 80,847 rows for a filter showing 8,145. Paging is deliberately
+   * not in here: the table takes one page, the download takes every match.
+   */
+  /**
+   * Downloads exactly what the current filters show.
+   *
+   * Fetched rather than a plain <a href>, so a failure surfaces as a toast
+   * instead of a blank tab — the All Leads download once 413'd for weeks while
+   * the client swallowed the error in an empty catch and looked like it had
+   * simply done nothing.
+   */
+  const downloadCsv = async () => {
+    setDownloading(true);
+    try {
+      const res = await fetch(`/api/receipts/export?${filterParams()}`);
+      if (!res.ok) {
+        const msg = await res.json().catch(() => null);
+        throw new Error(msg?.error ?? `Download failed (HTTP ${res.status})`);
+      }
+      const blob = await res.blob();
+      // Filename comes from the server's Content-Disposition so the file is
+      // named the same way however it was triggered.
+      const match = res.headers.get('content-disposition')?.match(/filename="(.+?)"/);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = match?.[1] ?? 'receipts.csv';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      toast({
+        title: 'Could not download',
+        description: e instanceof Error ? e.message : 'Something went wrong',
+        variant: 'destructive',
+      });
+    } finally {
+      setDownloading(false);
+    }
+  };
+
+  const filterParams = () => {
+    const p = new URLSearchParams({ status: statusFilter });
+    if (typeFilter !== 'ALL') p.set('type', typeFilter);
+    if (search.trim()) p.set('search', search.trim());
+    if (from) p.set('from', from);
+    if (to) p.set('to', to);
+    return p;
+  };
+
   const { data, isLoading, isFetching } = useQuery<ReceiptsResponse>({
-    queryKey: ['receipt-approvals', statusFilter, typeFilter, search, page],
+    queryKey: ['receipt-approvals', statusFilter, typeFilter, search, from, to, page],
     queryFn: async () => {
-      const p = new URLSearchParams({ status: statusFilter, page: String(page), limit: '25' });
-      if (typeFilter !== 'ALL') p.set('type', typeFilter);
-      if (search.trim()) p.set('search', search.trim());
+      const p = filterParams();
+      p.set('page', String(page));
+      p.set('limit', '25');
       const r = await fetch(`/api/receipts?${p}`);
       if (!r.ok) throw new Error(`Failed to load receipts (HTTP ${r.status})`);
       return r.json();
@@ -155,6 +214,7 @@ export default function ReceiptApprovalsPage() {
   const receipts = (data?.receipts ?? []).filter((r) => !hiddenIds.has(r.id));
   const counts = data?.counts ?? { PENDING: 0, APPROVED: 0, DISAPPROVED: 0 };
   const totalPages = data?.totalPages ?? 1;
+  const total = data?.total ?? 0;
 
   function review(receipt: ReceiptRow, action: 'APPROVE' | 'DISAPPROVE', reason?: string) {
     setHiddenIds((s) => new Set(s).add(receipt.id));
@@ -269,6 +329,50 @@ export default function ReceiptApprovalsPage() {
             onChange={(e) => { setSearch(e.target.value); setPage(1); }}
           />
         </div>
+        {/* Paid-date range — the date the student paid, which is what the KPI
+            and Caller-wise report count a receipt by. */}
+        <div className="flex items-center gap-1.5 shrink-0">
+          <Input
+            type="date"
+            aria-label="Paid from"
+            className="h-9 w-[150px]"
+            value={from}
+            max={to || undefined}
+            onChange={(e) => { setFrom(e.target.value); setPage(1); }}
+          />
+          <span className="text-xs text-muted-foreground">to</span>
+          <Input
+            type="date"
+            aria-label="Paid to"
+            className="h-9 w-[150px]"
+            value={to}
+            min={from || undefined}
+            onChange={(e) => { setTo(e.target.value); setPage(1); }}
+          />
+          {(from || to) && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-9 px-2 text-xs"
+              onClick={() => { setFrom(''); setTo(''); setPage(1); }}
+            >
+              Clear
+            </Button>
+          )}
+        </div>
+        <Button
+          variant="outline"
+          size="sm"
+          className="h-9 shrink-0 gap-1.5"
+          onClick={downloadCsv}
+          disabled={downloading || total === 0}
+          title={total === 0 ? 'Nothing to download for these filters' : `Download ${total} row(s) as CSV`}
+        >
+          {downloading
+            ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            : <Download className="h-3.5 w-3.5" />}
+          {downloading ? 'Preparing…' : 'Download CSV'}
+        </Button>
         {isFetching && !isLoading && (
           <span className="flex items-center gap-1 text-xs text-muted-foreground">
             <Loader2 className="h-3 w-3 animate-spin" /> Updating…

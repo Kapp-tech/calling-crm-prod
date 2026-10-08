@@ -39,7 +39,33 @@ export async function POST(req: NextRequest) {
     if (!agent) return NextResponse.json({ success: false, error: 'Agent not in your team', code: 'FORBIDDEN' }, { status: 403 });
   }
 
-  const agent = await prisma.user.findUnique({ where: { id: agentId }, select: { teamId: true, name: true } });
+  /**
+   * A deactivated agent cannot be assigned work, whoever is doing the assigning.
+   *
+   * The dropdowns no longer offer them, but a dropdown is not a guarantee: a tab
+   * opened before the agent was deactivated still holds the old list, and this
+   * route is reachable directly. Checked here so the rule holds regardless of
+   * what the browser sends.
+   *
+   * Deactivation writes `isActive = false` AND `status = 'INACTIVE'` together
+   * (see PATCH /api/users/[id]), so `isActive` alone is the whole test.
+   *
+   * Role is re-checked for the same reason — the TL branch above verifies it,
+   * but a Super Admin never passed through that branch at all.
+   */
+  const agent = await prisma.user.findUnique({
+    where: { id: agentId },
+    select: { teamId: true, name: true, isActive: true, role: true },
+  });
+  if (!agent || agent.role !== 'COUNSELLING_AGENT') {
+    return NextResponse.json({ success: false, error: 'Agent not found', code: 'NOT_FOUND' }, { status: 404 });
+  }
+  if (!agent.isActive) {
+    return NextResponse.json(
+      { success: false, error: `${agent.name} is deactivated and cannot be assigned leads`, code: 'AGENT_INACTIVE' },
+      { status: 400 },
+    );
+  }
 
   // Fetch current assignee chain for each lead so we can shift it
   const currentLeads = await prisma.lead.findMany({

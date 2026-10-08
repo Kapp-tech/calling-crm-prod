@@ -7,6 +7,7 @@ import { prisma } from '@/lib/prisma';
 import { Role, WorkType } from '@prisma/client';
 import { logActivity } from '@/lib/permissions';
 import { moveAgentToTeamLead, moveAgentToTeam } from '@/lib/team-sync';
+import { unassignLeads } from '@/lib/lead-unassign';
 
 // Optional, but must be a real 10-digit number when provided. An empty string
 // becomes NULL so clearing the field in the edit form actually clears it —
@@ -143,13 +144,38 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       }
     }
 
+    /**
+     * Deactivating someone releases the leads they were holding.
+     *
+     * Without this, their leads stay stamped with a user who can no longer log
+     * in: invisible to every active agent, absent from the Assign Leads queue,
+     * and still counted against a person who has left. It is not a small
+     * residue either — production currently has 11,344 leads held this way
+     * across nine deactivated agents, which is what prompted this.
+     *
+     * Reactivating does NOT give them back. That is deliberate: the leads have
+     * been returned to the queue and may already have been picked up by someone
+     * else, so silently pulling them back would take work off whoever is now
+     * doing it. A returning agent gets leads assigned to them again.
+     *
+     * In the same transaction as the deactivation, so there is no window where
+     * the user is switched off but still holding work.
+     */
+    let releaseNote = '';
+    if (isActive === false) {
+      const released = await unassignLeads(tx, { assignedToId: params.id });
+      if (released > 0) {
+        releaseNote = ` — ${released} assigned lead(s) returned to unassigned`;
+      }
+    }
+
     const action = isActive === false ? 'USER_DEACTIVATED' : 'USER_UPDATED';
     await logActivity({
       userId: session.user.id,
       action,
       targetId: params.id,
       targetType: 'User',
-      description: `${action.replace('_', ' ').toLowerCase()} for user "${u.name}"${moveNote}`,
+      description: `${action.replace('_', ' ').toLowerCase()} for user "${u.name}"${moveNote}${releaseNote}`,
     });
 
     return u;

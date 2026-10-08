@@ -55,6 +55,19 @@ export async function GET(req: NextRequest) {
   const tlId = searchParams.get('tlId');
   const teamId = searchParams.get('teamId');
   const status = searchParams.get('status') as UserStatus | null;
+  /**
+   * `active=true` narrows the list to users who can still be given work.
+   *
+   * Opt-in rather than the default, because the two things this endpoint feeds
+   * want opposite answers. An ASSIGNMENT picker must exclude deactivated staff —
+   * nobody should be handed leads after they have left. A FILTER must include
+   * them, or the leads a departed agent still holds become unfindable, which is
+   * exactly when you most need to find them.
+   *
+   * Defaulting to active-only would silently break the filters and User
+   * Management, where seeing a deactivated user is the point.
+   */
+  const activeOnly = searchParams.get('active') === 'true';
 
   // COUNSELLING_TL: can only fetch agents that are under their management
   if (session.user.role === Role.COUNSELLING_TL) {
@@ -90,6 +103,7 @@ export async function GET(req: NextRequest) {
       ...(tlId ? { managedById: tlId } : {}),
       ...(teamId ? { teamId } : {}),
       ...(status ? { status } : {}),
+      ...(activeOnly ? { isActive: true } : {}),
     },
     select: {
       id: true, name: true, email: true, role: true, workType: true, isActive: true, status: true,

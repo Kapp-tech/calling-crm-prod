@@ -893,7 +893,7 @@ export default function CounsellingTLPage() {
 
   const { data: agents = [], refetch: refetchAgents } = useQuery<Agent[]>({
     queryKey: ['tl-agents', session?.user?.id],
-    queryFn: () => fetch('/api/users?role=COUNSELLING_AGENT').then((r) => r.json()),
+    queryFn: () => fetch('/api/users?role=COUNSELLING_AGENT&active=true').then((r) => r.json()),
     enabled: !!session?.user?.id,
   });
 
@@ -904,7 +904,7 @@ export default function CounsellingTLPage() {
 
   const { data: tlsList = [] } = useQuery<{ id: string; name: string }[]>({
     queryKey: ['all-tls-for-assign'],
-    queryFn: () => fetch('/api/users?role=COUNSELLING_TL').then((r) => r.json()),
+    queryFn: () => fetch('/api/users?role=COUNSELLING_TL&active=true').then((r) => r.json()),
     enabled: showTlPicker && !!session?.user?.id,
     staleTime: 60_000,
   });
