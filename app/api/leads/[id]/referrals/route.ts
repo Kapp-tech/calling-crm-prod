@@ -93,15 +93,40 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     }
     const d = parsed.data;
 
-    // Block obvious duplicates so two agents don't end up calling the same
-    // person from two different lead rows.
+    /**
+     * A duplicate is the same person AT THE SAME COLLEGE — not the same person.
+     *
+     * This used to reject on phone alone, anywhere in the database, which made
+     * referrals the only intake path that refused a second college for a
+     * student the CRM already knew. The API, CSV upload and Add Lead all key on
+     * email + college and happily create the second row, because a student
+     * applying to two colleges is two separate pieces of work. Referrals were
+     * the odd one out, and they are the path where a counsellor is actually
+     * talking to the student and most likely to hear about a second interest.
+     *
+     * Phone OR email, because the form requires both and either one identifies
+     * the person; the college is what decides whether it is a duplicate. That
+     * still stops two agents working the same student at the same college,
+     * which is what the original check was for.
+     *
+     * College is compared trimmed and case-insensitively — `Lead.college` is
+     * free text from uploads and the API, so "LPU " and "lpu" must count as
+     * the same college as "LPU" or the guard is trivially sidestepped.
+     */
     const existing = await prisma.lead.findFirst({
-      where: { phone: d.phone },
-      select: { id: true, name: true },
+      where: {
+        college: { equals: d.college.trim(), mode: 'insensitive' },
+        OR: [{ phone: d.phone }, { email: { equals: d.email, mode: 'insensitive' } }],
+      },
+      select: { id: true, name: true, college: true },
     });
     if (existing) {
       return NextResponse.json(
-        { error: `A lead with this phone number already exists (${existing.name}, ${existing.id})` },
+        {
+          error:
+            `This student already has a lead for ${existing.college} ` +
+            `(${existing.name}, ${existing.id}). Refer them for a different college instead.`,
+        },
         { status: 409 }
       );
     }
