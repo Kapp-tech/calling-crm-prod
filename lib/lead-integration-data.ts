@@ -42,6 +42,24 @@ export async function buildLeadTemplateData(lead: LeadForTemplate): Promise<Reco
     courseId,
     college: lead.college,
     kappCollegeId: lead.kappCollegeId,
+    /**
+     * Every college to send for this lead, as an array — the shortlist if the
+     * student has one, otherwise the single college the lead itself carries.
+     *
+     * The fallback is the point. A referral has a college and usually no
+     * shortlist; pushing the shortlist alone would send `[]` for those and lose
+     * the college that made the referral worth sending. Pairing them in one
+     * field means `"kapp_id": {{jsonArray(kappCollegeIds)}}` is correct for
+     * both paths, so there is no second template branch to get wrong.
+     *
+     * Preferences win when present: a student who has named six colleges has
+     * said something more specific than the one the lead arrived under.
+     */
+    kappCollegeIds: (() => {
+      const prefs = profile?.preferredCollegeIds;
+      if (Array.isArray(prefs) && prefs.length > 0) return prefs;
+      return lead.kappCollegeId ? [lead.kappCollegeId] : [];
+    })(),
     campaign: lead.campaign,
     leadType: lead.leadType,
     leadOrigin: lead.leadOrigin,
@@ -81,6 +99,7 @@ export async function buildLeadTemplateData(lead: LeadForTemplate): Promise<Reco
     profile_class12Percentage: profile?.class12Percentage ?? null,
     profile_board: profile?.board ?? null,
     profile_mediumOfInstruction: profile?.mediumOfInstruction ?? null,
+    profile_preferredCollegeIds: profile?.preferredCollegeIds ?? null,
     profile_preferredCityNames: profile?.preferredCityNames ?? null,
     profile_preferredStateNames: profile?.preferredStateNames ?? null,
     profile_entranceExam: profile?.entranceExam ?? null,

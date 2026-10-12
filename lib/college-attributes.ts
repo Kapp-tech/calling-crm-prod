@@ -56,3 +56,13 @@ export type CollegeClientType = (typeof COLLEGE_CLIENT_TYPES)[number];
  * what stops the filter value drifting from the label it is meant to match.
  */
 export const NO_COLLEGE_LABEL = '(No college set)';
+
+/**
+ * How many colleges a student's shortlist may hold.
+ *
+ * Read by the picker (to disable Submit and say why) and by the API (to
+ * reject). One constant so the button cannot allow what the endpoint refuses.
+ * Generous rather than tight — a real shortlist is a handful, but the bound
+ * exists to stop a runaway "select all" over ~9,700 colleges reaching the LMS.
+ */
+export const MAX_COLLEGE_PREFERENCES = 100;

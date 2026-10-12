@@ -52,6 +52,15 @@ export const nonFeedbackQuerySchema = z.object({
   sessionYear:             z.string().optional(),
   // Client Type is the college's too — see clientTypeClause.
   clientType:              z.string().optional(),
+  /**
+   * College Preferences — LMS college_id values, matched against the student's
+   * shortlist on LeadProfile.preferredCollegeIds.
+   *
+   * Separator is `~`, not a comma, to stay consistent with the Reports college
+   * filter; ids are numeric so a comma would be safe here, but one separator
+   * across the app beats two rules to remember.
+   */
+  collegePreference:       z.string().optional(),
 });
 
 export type NonFeedbackQuery = z.infer<typeof nonFeedbackQuerySchema>;
@@ -283,6 +292,32 @@ export async function buildNonFeedbackFilters(
   if (sessionYears.length > 0) filters.push(await sessionYearClause(db, sessionYears));
   const clientTypes = splitCsv(q.clientType);
   if (clientTypes.length > 0) filters.push(await clientTypeClause(db, clientTypes));
+
+  /**
+   * College Preferences — leads whose shortlist contains ANY of the selected
+   * colleges, which is what "show me everyone interested in X" means.
+   *
+   * `array_contains` with a single-element array per college, OR'd together:
+   * Postgres JSONB containment asks "does the stored array contain this?", so a
+   * single array of all the selected ids would demand the lead has EVERY one of
+   * them. OR of singletons is any-of; one array would be all-of.
+   *
+   * Ids are coerced to numbers because that is how the profile stores them —
+   * `[7042725]` does not contain `"7042725"` in JSONB, so a string here would
+   * silently match nothing.
+   */
+  const collegePrefs = (q.collegePreference ?? '')
+    .split('~')
+    .map((v) => v.trim())
+    .filter((v) => /^\d+$/.test(v))
+    .map(Number);
+  if (collegePrefs.length > 0) {
+    filters.push({
+      OR: collegePrefs.map((id) => ({
+        profile: { preferredCollegeIds: { array_contains: [id] } },
+      })),
+    });
+  }
 
   return filters;
 }

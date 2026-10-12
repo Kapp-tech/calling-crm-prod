@@ -28,6 +28,9 @@ export const FIELD_CATALOG: FieldDef[] = [
   { key: 'course', label: 'Course (name)', group: 'Lead' },
   { key: 'college', label: 'College', group: 'Lead' },
   { key: 'kappCollegeId', label: 'KAPP College ID', group: 'Lead' },
+  // Shortlist if the student has one, else the lead's own college — send with
+  // {{jsonArray(...)}}, which the LMS kapp_id accepts for one college or many.
+  { key: 'kappCollegeIds', label: 'KAPP College IDs (preferences, else lead\'s)', group: 'Lead', isArray: true },
   { key: 'campaign', label: 'Campaign', group: 'Lead' },
   { key: 'leadType', label: 'Lead Type', group: 'Lead' },
   { key: 'leadOrigin', label: 'Lead Origin', group: 'Lead' },
@@ -71,6 +74,10 @@ export const FIELD_CATALOG: FieldDef[] = [
   { key: 'profile_class12Percentage', label: 'Class 12 %', group: 'LeadProfile' },
   { key: 'profile_board', label: 'Board', group: 'LeadProfile' },
   { key: 'profile_mediumOfInstruction', label: 'Medium of Instruction', group: 'LeadProfile' },
+  // The student's shortlist of colleges, as LMS college_id / KAPP College ID
+  // values. Send with {{jsonArray(...)}} to get a real JSON array — the LMS
+  // kapp_id accepts one college or many.
+  { key: 'profile_preferredCollegeIds', label: 'College Preferences (IDs)', group: 'LeadProfile', isArray: true },
   { key: 'profile_preferredCityNames', label: 'Preferred Cities', group: 'LeadProfile', isArray: true },
   { key: 'profile_preferredStateNames', label: 'Preferred States', group: 'LeadProfile', isArray: true },
   { key: 'profile_entranceExam', label: 'Entrance Exams', group: 'LeadProfile', isArray: true },
@@ -95,6 +102,7 @@ export const SAMPLE_LEAD_DATA: Record<string, unknown> = {
   courseId: 334, // B.Tech's real LMS course_group_id
   college: 'Sample Institute of Technology',
   kappCollegeId: '7034171',
+  kappCollegeIds: ['7009221', '7042491'],
   campaign: 'Referral',
   leadType: 'Hot',
   leadOrigin: 'Referral',
@@ -131,6 +139,7 @@ export const SAMPLE_LEAD_DATA: Record<string, unknown> = {
   profile_class12Percentage: '82',
   profile_board: 'CBSE',
   profile_mediumOfInstruction: 'English',
+  profile_preferredCollegeIds: [7009221, 7042725],
   profile_preferredCityNames: ['Patna', 'Delhi'],
   profile_preferredStateNames: ['Bihar', 'Delhi'],
   profile_entranceExam: ['JEE Main'],

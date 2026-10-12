@@ -113,6 +113,7 @@ const FILTER_GROUPS: { group: string; filters: FilterDef[] }[] = [
       { key: 'dataCallingType',   label: 'Data Calling Type'     },
       { key: 'dealType',          label: 'Deal Type'             },
       { key: 'sessionYear',       label: 'Session/Year'          },
+      { key: 'collegePreference', label: 'College Preferences'   },
     ],
   },
 ];
@@ -226,6 +227,8 @@ export default function AllLeadsPage() {
   const [dataCallingTypes,     setDataCallingTypes]     = useState<string[]>([]);
   const [dealTypes,            setDealTypes]            = useState<string[]>([]);
   const [sessionYears,         setSessionYears]         = useState<string[]>([]);
+  // LMS college ids the student shortlisted — see collegePreference in lib/lead-query-filters.
+  const [collegePreferences,   setCollegePreferences]   = useState<string[]>([]);
 
   // Dialog state — which filter keys are "active" (shown below basic filters)
   // Seeded so a filter arriving on the URL is visible in the Advanced panel.
@@ -266,7 +269,7 @@ export default function AllLeadsPage() {
     primaryAppConfirms.length > 0, primaryAdmConfirms.length > 0,
     leadConfirmations.length > 0, leadStages.length > 0,
     leadVerifications.length > 0, dataCallingTypes.length > 0,
-    dealTypes.length > 0, sessionYears.length > 0,
+    dealTypes.length > 0, sessionYears.length > 0, collegePreferences.length > 0,
   ].filter(Boolean).length;
 
   function openFilterDialog() {
@@ -302,6 +305,7 @@ export default function AllLeadsPage() {
       case 'dataCallingType':   setDataCallingTypes([]);     break;
       case 'dealType':          setDealTypes([]);            break;
       case 'sessionYear':       setSessionYears([]);         break;
+      case 'collegePreference': setCollegePreferences([]);   break;
     }
   }
 
@@ -398,6 +402,9 @@ export default function AllLeadsPage() {
     if (dataCallingTypes.length)    p.set('dataCallingType',     joinCsvFilterValues(dataCallingTypes));
     if (dealTypes.length)           p.set('dealType',            joinCsvFilterValues(dealTypes));
     if (sessionYears.length)        p.set('sessionYear',         joinCsvFilterValues(sessionYears));
+    // `~` to match the clause builder — ids are numeric, but one separator rule
+    // across the app beats two.
+    if (collegePreferences.length)  p.set('collegePreference',   collegePreferences.join('~'));
     return p;
   }
 
@@ -406,7 +413,7 @@ export default function AllLeadsPage() {
     updatedDateFrom, updatedDateTo,
     campaigns, leadTypes, leadOrigins, zones, tlIds, agentIds,
     primaryAppConfirms, primaryAdmConfirms, leadConfirmations,
-    leadStages, leadVerifications, dataCallingTypes, dealTypes, sessionYears,
+    leadStages, leadVerifications, dataCallingTypes, dealTypes, sessionYears, collegePreferences,
   ];
 
   const { data: categoryCounts = {} } = useQuery<Record<string, number>>({
@@ -446,6 +453,28 @@ export default function AllLeadsPage() {
     staleTime: 2 * 60 * 1000,
     enabled: !!session?.user?.id,
   });
+
+  /**
+   * The LMS college list, for the College Preferences filter.
+   *
+   * Fetched only when that filter is on screen: it is ~9,700 rows and 2.6 MB,
+   * which is not worth loading for everyone who opens All Leads. Cached
+   * indefinitely once fetched — it does not change within a session, and the
+   * picker renders 250 at a time until you search.
+   */
+  const { data: collegeList = [], isLoading: collegesLoading } = useQuery<{ id: number | string; name: string }[]>({
+    queryKey: ['colleges'],
+    queryFn: () => fetch('/api/colleges').then((r) => r.json()).then((d) => (Array.isArray(d) ? d : [])),
+    staleTime: Infinity,
+    enabled: activeFilters.includes('collegePreference'),
+  });
+  // Distinct from `collegeOptions` below, which lists the colleges present on
+  // leads (filtering Lead.college by NAME). These are LMS ids for the student's
+  // own shortlist — different source, different values, different question.
+  const collegePrefOptions = useMemo(
+    () => collegeList.map((c) => ({ value: String(c.id), label: c.name })),
+    [collegeList],
+  );
 
   const str2opt  = (arr: string[] = []): MultiSelectOption[] => arr.map((v) => ({ value: v, label: v }));
 
@@ -972,6 +1001,22 @@ export default function AllLeadsPage() {
               {/* The years an admin has configured on colleges, plus NA for a
                   college with none — matching what the column shows. */}
               <MultiSelectFilter placeholder="Any" options={sessionYearOptions} selected={sessionYears} onChange={(v) => filterChange(() => setSessionYears(v))} loading={optsLoading} />
+            </div>
+          )}
+
+          {activeFilters.includes('collegePreference') && (
+            <div className="flex flex-col gap-1">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">College Preferences</span>
+              {/* The student's own shortlist, not the lead's college. Selecting
+                  several is ANY-of: a lead matches if its shortlist contains any
+                  one of them. */}
+              <MultiSelectFilter
+                placeholder="Any"
+                options={collegePrefOptions}
+                selected={collegePreferences}
+                onChange={(v) => filterChange(() => setCollegePreferences(v))}
+                loading={collegesLoading}
+              />
             </div>
           )}
         </div>

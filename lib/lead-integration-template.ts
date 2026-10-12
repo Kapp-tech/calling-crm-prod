@@ -25,7 +25,36 @@ export const TEMPLATE_HELPERS: HelperDoc[] = [
   { syntax: '{{digits(field)}}', description: 'Keeps only the digits — turns an employee code like EMP-1005 into 1005.' },
   { syntax: '{{join(field)}}', description: 'Joins a list field (e.g. Preferred Cities) into a comma-separated string.' },
   { syntax: '{{default(field, "fallback")}}', description: 'Uses "fallback" when the field is empty/missing.' },
+  {
+    syntax: '{{jsonArray(field)}}',
+    description:
+      'Inserts a list field as a real JSON array, e.g. ["7009221","7042725"]. Write it WITHOUT quotes — "kapp_id": {{jsonArray(profile_preferredCollegeIds)}} — because the token supplies its own brackets. Empty gives [].',
+  },
 ];
+
+/**
+ * The one helper that emits raw JSON rather than text.
+ *
+ * Every other token lands INSIDE a quoted JSON string, so it is escaped and
+ * comes out as text — `{{join(field)}}` on two colleges gives "7009221, 7042725",
+ * one string. An endpoint that wants `"kapp_id": ["7009221","7042725"]` cannot
+ * be satisfied that way at all, which is why this exists.
+ *
+ * It is safe despite bypassing the escaping because the value is serialised by
+ * JSON.stringify here, not pasted: an element containing a quote or a bracket
+ * is escaped by stringify like any other string, so a lead's data can never
+ * break out and alter the shape of the request. renderTemplate still parses the
+ * finished body, so a template that misuses this (leaving the quotes on, say)
+ * fails loudly as invalid JSON instead of sending something malformed.
+ *
+ * Elements are stringified because that is the shape the LMS expects —
+ * ["7009221"], not [7009221] — and a mixed array would be worse than either.
+ */
+function jsonArrayLiteral(value: unknown): string {
+  if (value === null || value === undefined) return '[]';
+  const arr = Array.isArray(value) ? value : [value];
+  return JSON.stringify(arr.filter((v) => v !== null && v !== undefined).map((v) => String(v)));
+}
 
 function toDisplayString(value: unknown): string {
   if (value === null || value === undefined) return '';
@@ -80,6 +109,15 @@ function tokenValue(tokenRaw: string, data: Record<string, unknown>): string {
 }
 
 function resolveToken(tokenRaw: string, data: Record<string, unknown>): string {
+  // jsonArray is the exception: it writes its own brackets and quotes, so it
+  // must NOT be escaped as if it sat inside a string. Handled before the
+  // escaping below rather than inside applyHelper, because applyHelper returns
+  // text and everything it returns gets escaped.
+  const helperMatch = tokenRaw.trim().match(HELPER_CALL_REGEX);
+  if (helperMatch && helperMatch[1] === 'jsonArray') {
+    return jsonArrayLiteral(data[helperMatch[2]]);
+  }
+
   // The token sits inside a JSON string literal already opened/closed by the
   // template itself, so escape for JSON-string-safety without adding
   // surrounding quotes of our own.
