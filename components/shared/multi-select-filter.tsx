@@ -9,6 +9,12 @@ export interface MultiSelectOption {
   label: string;
 }
 
+/**
+ * How many options are rendered at once. Matching is not capped — see `matches`
+ * — only the rows put in the DOM, so a 9,700-entry college list stays usable.
+ */
+const DISPLAY_LIMIT = 250;
+
 /** Searchable, multi-select dropdown filter — button trigger + popover with a
  * search box, checkbox list, and selected-chips footer. Shared by any filter
  * bar that needs to match the All Leads page's city/state/course/college/etc.
@@ -58,11 +64,26 @@ export function MultiSelectFilter({
   // Reset search when closed
   useEffect(() => { if (!open) setQuery(''); }, [open]);
 
-  const filtered = useMemo(() => {
-    if (!query.trim()) return options.slice(0, 250);
-    const q = query.toLowerCase();
-    return options.filter((o) => o.label.toLowerCase().includes(q)).slice(0, 250);
+  /**
+   * Matching is split from displaying, because they need different answers.
+   *
+   * `matches` is every option the search matches, uncapped — that is what
+   * "Select all matching (312)" has to act on and count. `filtered` is only
+   * what gets rendered, capped so a 9,700-row college list does not put
+   * thousands of nodes in the DOM.
+   *
+   * They used to be the same truncated list, which made Select all quietly
+   * wrong: a search with 400 hits selected the first 250 and labelled itself
+   * "(250)", so the number looked right and the result was not.
+   */
+  const matches = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return options;
+    return options.filter((o) => o.label.toLowerCase().includes(q));
   }, [options, query]);
+
+  const filtered = useMemo(() => matches.slice(0, DISPLAY_LIMIT), [matches]);
+  const truncated = matches.length > DISPLAY_LIMIT;
 
   function toggle(value: string) {
     onChange(selected.includes(value) ? selected.filter((v) => v !== value) : [...selected, value]);
@@ -73,7 +94,7 @@ export function MultiSelectFilter({
    * everything otherwise. Acting on the whole list while the reader is looking
    * at four matches would select things they cannot see.
    */
-  const bulkTarget = query.trim() ? filtered : options;
+  const bulkTarget = matches;
   const allBulkSelected =
     bulkTarget.length > 0 && bulkTarget.every((o) => selected.includes(o.value));
   const someBulkSelected = bulkTarget.some((o) => selected.includes(o.value));
@@ -150,7 +171,7 @@ export function MultiSelectFilter({
           </div>
 
           {/* Select all */}
-          {selectAll && !loading && bulkTarget.length > 0 && (
+          {(selectAll || query.trim().length > 0) && !loading && bulkTarget.length > 0 && (
             <button
               type="button"
               onClick={toggleAll}
@@ -185,6 +206,14 @@ export function MultiSelectFilter({
             )}
             {!loading && filtered.length === 0 && (
               <li className="px-3 py-2 text-xs text-muted-foreground">No results</li>
+            )}
+            {/* Said out loud, because Select all acts on all {matches.length}
+                while only the first {DISPLAY_LIMIT} are listed — without this the
+                counts would appear to disagree. */}
+            {!loading && truncated && (
+              <li className="border-b border-border/40 bg-muted/20 px-2.5 py-1.5 text-[11px] text-muted-foreground">
+                Showing first {DISPLAY_LIMIT} of {matches.length}. Select all still applies to all {matches.length}.
+              </li>
             )}
             {!loading && filtered.map((opt) => {
               const checked = selected.includes(opt.value);
