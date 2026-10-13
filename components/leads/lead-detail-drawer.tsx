@@ -8,11 +8,13 @@ import { failIfAttendanceBlock, isAttendanceError } from '@/lib/attendance-requi
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
+import { MultiSelectFilter } from '@/components/shared/multi-select-filter';
+import { MAX_COLLEGE_PREFERENCES } from '@/lib/college-attributes';
 import {
   X, Phone, PhoneOff, Mail, PhoneCall, CalendarClock, PhoneIncoming,
   LayoutList, CheckCircle2, Loader2, PlusCircle, UserCheck,
   UserCircle2, ChevronDown, Search, Check, ExternalLink,
-  GitBranch, UserPlus, FileCheck, Receipt, Clock3, PlayCircle,
+  GitBranch, UserPlus, FileCheck, Receipt, Clock3, PlayCircle, GraduationCap, Send,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/components/ui/use-toast';
@@ -144,6 +146,7 @@ const TABS = [
   { key: 'followups', label: 'Follow-Ups',   Icon: CalendarClock },
   { key: 'calls',     label: 'Calls',        Icon: PhoneIncoming },
   { key: 'timeline',  label: 'Timeline',     Icon: GitBranch     },
+  { key: 'preferences', label: 'Preferences', Icon: GraduationCap },
 ] as const;
 type TabKey = typeof TABS[number]['key'];
 
@@ -1406,6 +1409,10 @@ export function LeadDetailDrawer({ leadId, onClose, canSubmitFeedback = false }:
                 <TimelineTab leadId={lead.id} />
               )}
 
+              {activeTab === 'preferences' && (
+                <CollegePreferencesTab leadId={lead.id} profile={lead.profile ?? null} />
+              )}
+
             </>
           )}
         </div>
@@ -1578,6 +1585,216 @@ function InfoRow({ label, value, valueClassName }: { label: string; value?: stri
     <div className="flex items-baseline justify-between gap-4 py-1.5 border-b border-border/40 last:border-0">
       <dt className="text-xs text-muted-foreground shrink-0">{label}</dt>
       <dd className={cn('text-sm font-medium text-right', value ? valueClassName : '')}>{value || '—'}</dd>
+    </div>
+  );
+}
+
+// ─── College Preferences ──────────────────────────────────────────────────────
+
+interface CollegeOption { id: number | string; name: string }
+
+/**
+ * The student's college shortlist, captured mid-call.
+ *
+ * Saving and pushing are one action deliberately. The counsellor's mental model
+ * is "these are the colleges he wants" — a save that did not reach the LMS, or
+ * a push of a shortlist that was not stored, would both be worse than useless.
+ * The endpoint does them in that order and reports the push's outcome.
+ *
+ * The ids ARE the KAPP College IDs the LMS expects (LPU is 7042725 in both the
+ * college list and kapp_id), so nothing is translated on the way out.
+ */
+function CollegePreferencesTab({ leadId, profile }: { leadId: string; profile: LeadProfile | null }) {
+  const { toast } = useToast();
+  const qc = useQueryClient();
+
+  const savedRaw = profile?.preferredCollegeIds;
+  const saved = useMemo(
+    () => (Array.isArray(savedRaw) ? savedRaw.map(String) : []),
+    [savedRaw],
+  );
+  const [selected, setSelected] = useState<string[]>(saved);
+  // Re-sync when the drawer is pointed at a different lead, but never while the
+  // counsellor is mid-edit on this one.
+  useEffect(() => { setSelected(saved); }, [leadId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ~9,700 colleges, cached hard: a 2.6 MB list that does not change within a
+  // session, and the picker renders only the first 250 until you search.
+  const { data: colleges = [], isLoading } = useQuery<CollegeOption[]>({
+    queryKey: ['colleges'],
+    queryFn: () => fetch('/api/colleges').then((r) => r.json()).then((d) => (Array.isArray(d) ? d : [])),
+    staleTime: Infinity,
+  });
+
+  const options = useMemo(
+    () => colleges.map((c) => ({ value: String(c.id), label: c.name })),
+    [colleges],
+  );
+  const nameOf = useMemo(() => new Map(options.map((o) => [o.value, o.label])), [options]);
+
+  const savedSet = useMemo(() => new Set(saved), [saved]);
+  const added = selected.filter((v) => !savedSet.has(v));
+  const removed = saved.filter((v) => !selected.includes(v));
+  const dirty = added.length > 0 || removed.length > 0;
+  const tooMany = selected.length > MAX_COLLEGE_PREFERENCES;
+
+  const submit = useMutation({
+    mutationFn: async () => {
+      const res = await fetch(`/api/leads/${leadId}/college-preferences`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ collegeIds: selected }),
+      });
+      const json = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(json?.error?.collegeIds?.[0] ?? json?.error ?? `Failed (HTTP ${res.status})`);
+      return json;
+    },
+    onSuccess: (d: { collegeIds: number[] }) => {
+      toast({
+        title: 'Preferences saved',
+        description: `${d.collegeIds.length} college${d.collegeIds.length === 1 ? '' : 's'} saved and pushed to the LMS.`,
+      });
+      qc.invalidateQueries({ queryKey: ['lead-detail', leadId] });
+    },
+    onError: (e: Error) =>
+      toast({ variant: 'destructive', title: 'Could not save preferences', description: e.message }),
+  });
+
+  const disabledReason =
+    tooMany ? `At most ${MAX_COLLEGE_PREFERENCES} colleges`
+    : selected.length === 0 && saved.length === 0 ? 'Select at least one college'
+    : !dirty ? 'No changes to submit'
+    : undefined;
+
+  return (
+    // Same wrapper every other tab uses, so the Preferences tab sits on the
+    // drawer's grid rather than flush against its edge.
+    <div className="px-5 py-4 space-y-5">
+      <div className="space-y-1">
+        <div className="flex items-center gap-2">
+          <GraduationCap className="h-4 w-4 text-muted-foreground" />
+          <h3 className="text-sm font-semibold">College Preferences</h3>
+        </div>
+        <p className="text-xs leading-relaxed text-muted-foreground">
+          Colleges this student is interested in. Submitting saves the shortlist and pushes the
+          lead to the LMS with every selected college in a single request.
+        </p>
+      </div>
+
+      {/* Picker and action, as a panel — a bare row of controls reads as
+          unfinished next to the cards the other tabs use. */}
+      <div className="rounded-xl border bg-muted/10 p-3 space-y-2.5">
+        <div className="flex items-center gap-2">
+          {/*
+            MultiSelectFilter's own root is `sm:flex-none`, so it sizes to its
+            content and ignores a flex-1 passed to the trigger — which left the
+            picker stranded beside a wide gap. Growing this wrapper instead and
+            forcing the component's root to fill it keeps the shared component
+            untouched, where `sm:flex-none` is wanted: the All Leads filter bar
+            packs a dozen of these and needs them compact.
+          */}
+          <div className="min-w-0 flex-1 [&>div]:w-full">
+            <MultiSelectFilter
+              placeholder={isLoading ? 'Loading colleges…' : 'Search and select colleges…'}
+              options={options}
+              selected={selected}
+              onChange={setSelected}
+              loading={isLoading}
+              triggerClassName="h-9 w-full"
+            />
+          </div>
+          <Button
+            size="sm"
+            className="h-9 shrink-0 gap-1.5"
+            onClick={() => submit.mutate()}
+            disabled={submit.isPending || !!disabledReason}
+            title={disabledReason}
+          >
+            {submit.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
+            {submit.isPending ? 'Submitting…' : 'Submit'}
+          </Button>
+        </div>
+
+        {/* Says what WILL change, not just how many are ticked — the difference
+            between the shortlist and what is stored is the thing Submit acts on. */}
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+          {tooMany && (
+            <span className="font-medium text-destructive">
+              {selected.length} selected — {MAX_COLLEGE_PREFERENCES} maximum
+            </span>
+          )}
+          {added.length > 0 && (
+            <span className="text-emerald-600 dark:text-emerald-400">+{added.length} to add</span>
+          )}
+          {removed.length > 0 && (
+            <span className="text-amber-600 dark:text-amber-400">−{removed.length} to remove</span>
+          )}
+          {!dirty && saved.length > 0 && (
+            <span className="inline-flex items-center gap-1 text-muted-foreground">
+              <CheckCircle2 className="h-3 w-3" /> Up to date
+            </span>
+          )}
+          {!dirty && saved.length === 0 && (
+            <span className="text-muted-foreground">Select colleges to build this student&rsquo;s shortlist.</span>
+          )}
+        </div>
+      </div>
+
+      <div>
+        <div className="mb-2 flex items-center justify-between">
+          <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
+            Interested In
+          </p>
+          {saved.length > 0 && (
+            <span className="rounded-full bg-muted/40 px-2 py-0.5 text-[10px] font-bold text-muted-foreground">
+              {saved.length}
+            </span>
+          )}
+        </div>
+
+        {saved.length === 0 ? (
+          // A centred, bordered empty state rather than a sentence floating in a
+          // box — the tab is tall and mostly empty until a shortlist exists.
+          <div className="flex flex-col items-center justify-center rounded-xl border border-dashed py-10 text-center">
+            <GraduationCap className="mb-2 h-7 w-7 text-muted-foreground/40" />
+            <p className="text-sm font-medium text-muted-foreground">No preferences saved yet</p>
+            <p className="mt-0.5 max-w-[260px] text-xs text-muted-foreground/70">
+              Select the colleges this student is considering, then press Submit.
+            </p>
+          </div>
+        ) : (
+          <ul className="space-y-1.5">
+            {saved.map((id, i) => {
+              const pending = !selected.includes(id);
+              return (
+                <li
+                  key={id}
+                  className={cn(
+                    'flex items-center gap-2.5 rounded-lg border px-3 py-2 text-sm transition-colors',
+                    pending ? 'border-amber-300/50 bg-amber-500/5' : 'bg-background',
+                  )}
+                >
+                  <span className="w-5 shrink-0 text-center text-[11px] font-semibold tabular-nums text-muted-foreground">
+                    {i + 1}
+                  </span>
+                  <span className="min-w-0 flex-1 truncate">
+                    {/* Falls back to the id when the list has not loaded, or when
+                        a saved college is no longer in the LMS list — better than
+                        a blank row that reads as data loss. */}
+                    {nameOf.get(id) ?? `College ${id}`}
+                  </span>
+                  <span className="shrink-0 font-mono text-[11px] text-muted-foreground">{id}</span>
+                  {pending && (
+                    <span className="shrink-0 rounded-full border border-amber-300/50 bg-amber-500/10 px-2 py-0.5 text-[10px] font-medium text-amber-600">
+                      removing
+                    </span>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </div>
     </div>
   );
 }
