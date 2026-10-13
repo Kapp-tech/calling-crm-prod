@@ -161,14 +161,23 @@ export function LeadIntegrationBuilder({ integrationId }: { integrationId?: stri
   const activeData = dataSource === 'lead' && previewData ? previewData : SAMPLE_LEAD_DATA;
 
   const rendered = useMemo(() => renderTemplate(bodyTemplate, activeData), [bodyTemplate, activeData]);
-  const rawValid = useMemo(() => {
-    try {
-      JSON.parse(bodyTemplate);
-      return true;
-    } catch {
-      return false;
-    }
-  }, [bodyTemplate]);
+  /**
+   * Validity is judged on the RENDERED body, not the raw template.
+   *
+   * It used to JSON.parse the template text itself, which worked only because
+   * every token happened to sit inside quotes — `"name": "{{name}}"` is
+   * parseable JSON before substitution. {{jsonArray(field)}} cannot be quoted:
+   * it supplies its own brackets so the body can carry a real array, which
+   * makes the raw template unparseable by construction. The old check called
+   * that invalid and blocked Save, so the one token that needed the editor's
+   * help was the one it refused.
+   *
+   * The rendered output is also the better test regardless: it is exactly what
+   * lib/lead-integration-engine.ts parses before sending, so the badge now
+   * agrees with what the send will do rather than approximating it. A missing
+   * comma still fails, because substitution preserves structure.
+   */
+  const bodyValid = rendered.valid;
   const fieldsUsedCount = useMemo(() => (bodyTemplate.match(/\{\{[^}]+\}\}/g) ?? []).length, [bodyTemplate]);
 
   useEffect(() => {
@@ -253,8 +262,12 @@ export function LeadIntegrationBuilder({ integrationId }: { integrationId?: stri
       setTab('setup');
       return;
     }
-    if (!rawValid) {
-      toast({ variant: 'destructive', title: 'Body template is not valid JSON' });
+    if (!bodyValid) {
+      toast({
+        variant: 'destructive',
+        title: 'Body template does not render to valid JSON',
+        description: rendered.error,
+      });
       setTab('body');
       return;
     }
@@ -694,12 +707,12 @@ export function LeadIntegrationBuilder({ integrationId }: { integrationId?: stri
                   className="h-64 w-full resize-y rounded-lg border border-border bg-muted/20 p-3 font-mono text-xs leading-relaxed focus:bg-background focus:outline-none focus:ring-2 focus:ring-ring"
                 />
                 <div className="flex flex-wrap items-center gap-2 text-xs">
-                  {rawValid ? (
+                  {bodyValid ? (
                     <span className="flex items-center gap-1 font-medium text-emerald-600">
                       <CheckCircle2 className="h-3.5 w-3.5" /> Valid JSON
                     </span>
                   ) : (
-                    <span className="flex items-center gap-1 font-medium text-red-600">
+                    <span className="flex items-center gap-1 font-medium text-red-600" title={rendered.error}>
                       <XCircle className="h-3.5 w-3.5" /> Invalid JSON
                     </span>
                   )}
