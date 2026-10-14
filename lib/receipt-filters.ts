@@ -57,6 +57,9 @@ export function buildReceiptWhere(f: ReceiptFilters): Prisma.LeadReceiptWhereInp
             { mobile: { contains: f.search } },
             { receiptNumber: { contains: f.search, mode: 'insensitive' as const } },
             { lead: { id: { contains: f.search, mode: 'insensitive' as const } } },
+            // The lead's own code — searchable now that the table shows it.
+            // Shared builder, so the CSV narrows identically.
+            { lead: { campaign: { contains: f.search, mode: 'insensitive' as const } } },
           ],
         }
       : {}),

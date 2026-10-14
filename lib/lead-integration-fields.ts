@@ -5,7 +5,7 @@
 // buildLeadTemplateData()'s output keys below — the picker only makes sense
 // if what you click actually resolves to a value at send time.
 
-export type FieldGroup = 'Lead' | 'Agent' | 'LeadProfile' | 'System';
+export type FieldGroup = 'Lead' | 'Agent' | 'LeadProfile' | 'System' | 'Recording' | 'Call' | 'CallAgent';
 
 export interface FieldDef {
   key: string;
@@ -13,6 +13,83 @@ export interface FieldDef {
   group: FieldGroup;
   isArray?: boolean; // JSON array column — use {{join(field)}} to flatten to a string
 }
+
+/**
+ * Fields that only resolve on a RECORDING_RECEIVED push.
+ *
+ * Kept as their own list so the Body Builder can show the groups that apply to
+ * the integration being edited — a referral webhook offering call_talk_time
+ * would render it empty, which is worse than not offering it.
+ */
+export const RECORDING_FIELD_CATALOG: FieldDef[] = [
+  { key: 'recording_url', label: 'Recording URL', group: 'Recording' },
+  { key: 'recording_id', label: 'Recording ID', group: 'Recording' },
+  { key: 'recording_available', label: 'Recording Available (true/false)', group: 'Recording' },
+
+  { key: 'call_id', label: 'Call ID', group: 'Call' },
+  { key: 'call_unique_id', label: "Call ID (dialer's)", group: 'Call' },
+  { key: 'call_status', label: 'Call Status', group: 'Call' },
+  { key: 'call_connected', label: 'Connected (true/false)', group: 'Call' },
+  { key: 'call_type', label: 'Call Type (inbound/outbound)', group: 'Call' },
+  { key: 'call_term_reason', label: 'Termination Reason', group: 'Call' },
+  { key: 'call_disposition', label: 'Disposition', group: 'Call' },
+  { key: 'call_duration_seconds', label: 'Duration (seconds)', group: 'Call' },
+  { key: 'call_talk_time_seconds', label: 'Talk Time (seconds)', group: 'Call' },
+  { key: 'call_ring_time_seconds', label: 'Ring Time (seconds)', group: 'Call' },
+  { key: 'call_started_at', label: 'Call Started At (ISO)', group: 'Call' },
+  { key: 'call_ended_at', label: 'Call Ended At (ISO)', group: 'Call' },
+  { key: 'call_phone_number', label: 'Phone Number Dialled', group: 'Call' },
+  { key: 'call_campaign', label: 'Dialer Campaign', group: 'Call' },
+  { key: 'lead_matched', label: 'Lead Matched (true/false)', group: 'Call' },
+  { key: 'lead_id', label: 'Lead ID (null if unmatched)', group: 'Call' },
+
+  { key: 'agent_id', label: 'Agent ID', group: 'CallAgent' },
+  { key: 'agent_name', label: 'Agent Name', group: 'CallAgent' },
+  { key: 'agent_email', label: 'Agent Email', group: 'CallAgent' },
+  { key: 'agent_employee_code', label: 'Agent Employee Code', group: 'CallAgent' },
+  { key: 'agent_team_id', label: 'Agent Team ID', group: 'CallAgent' },
+  { key: 'agent_seat', label: 'Dialer Seat', group: 'CallAgent' },
+  { key: 'agent_dialshree_id', label: 'DialShree Agent ID', group: 'CallAgent' },
+
+  { key: 'event_id', label: 'Event ID (stable per call)', group: 'System' },
+  { key: 'event_type', label: 'Event Type', group: 'System' },
+  { key: 'event_timestamp', label: 'Event Timestamp (ISO)', group: 'System' },
+  { key: 'call_received_at', label: 'Recording Received At (ISO)', group: 'System' },
+];
+
+/** Sample values for the Live Preview of a recording webhook. */
+export const SAMPLE_RECORDING_DATA: Record<string, unknown> = {
+  recording_url: 'https://dialer5.elisiontec.com/RECORDINGS/MP3/.../sample-a',
+  recording_id: 'cmv6dsm1700412nydy5l8s63z',
+  recording_available: true,
+  call_id: 'cmv6dsm1700412nydy5l8s63z',
+  call_unique_id: '1760000000.12345',
+  call_status: 'CONNECTED',
+  call_connected: true,
+  call_type: 'outbound',
+  call_term_reason: 'CALLER',
+  call_disposition: 'Interested',
+  call_duration_seconds: 214,
+  call_talk_time_seconds: 198,
+  call_ring_time_seconds: 16,
+  call_started_at: '2026-10-14T06:12:04.000Z',
+  call_ended_at: '2026-10-14T06:15:38.000Z',
+  call_phone_number: '9835737485',
+  call_campaign: 'MBA_Outbound',
+  lead_matched: true,
+  lead_id: 'LID1000000',
+  agent_id: 'cmrol6p7k000jzq7oldd7vd1v',
+  agent_name: 'Sohit Rajput',
+  agent_email: 'sohit.rajput@kollegeapply.com',
+  agent_employee_code: 'EMP-1005',
+  agent_team_id: 'team_alpha',
+  agent_seat: 'VDCL',
+  agent_dialshree_id: '100096',
+  event_id: 'rec_cmv6dsm1700412nydy5l8s63z',
+  event_type: 'RECORDING_RECEIVED',
+  event_timestamp: '2026-10-14T06:15:40.000Z',
+  call_received_at: '2026-10-14T06:15:39.000Z',
+};
 
 export const FIELD_CATALOG: FieldDef[] = [
   // Lead — core
@@ -32,6 +109,11 @@ export const FIELD_CATALOG: FieldDef[] = [
   // {{jsonArray(...)}}, which the LMS kapp_id accepts for one college or many.
   { key: 'kappCollegeIds', label: 'KAPP College IDs (preferences, else lead\'s)', group: 'Lead', isArray: true },
   { key: 'campaign', label: 'Campaign', group: 'Lead' },
+  // Already decided per push: the lead's own code for a college-preferences
+  // update, the CRM's code for a referral. Use this for lead_code rather than
+  // a literal, or both paths send the same value.
+  { key: 'pushLeadCode', label: 'Lead Code to send (referral vs preferences)', group: 'System' },
+  { key: 'pushSource', label: 'Push Source (REFERRAL / COLLEGE_PREFERENCES)', group: 'System' },
   { key: 'leadType', label: 'Lead Type', group: 'Lead' },
   { key: 'leadOrigin', label: 'Lead Origin', group: 'Lead' },
   { key: 'leadZone', label: 'Lead Zone', group: 'Lead' },
@@ -104,6 +186,8 @@ export const SAMPLE_LEAD_DATA: Record<string, unknown> = {
   kappCollegeId: '7034171',
   kappCollegeIds: ['7009221', '7042491'],
   campaign: 'Referral',
+  pushLeadCode: 'CRM100',
+  pushSource: 'REFERRAL',
   leadType: 'Hot',
   leadOrigin: 'Referral',
   leadZone: 'East',

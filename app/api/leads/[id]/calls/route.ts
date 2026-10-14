@@ -50,6 +50,11 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
         agentSeat: true,
         receivedAt: true,
         agent: { select: { id: true, name: true } },
+        // Whatever the call-analytics tool returned for this recording. Null
+        // until it calls back, which is the normal state for a fresh call.
+        analysis: {
+          select: { score: true, maxScore: true, summary: true, feedback: true, metrics: true, receivedAt: true },
+        },
       },
     });
 

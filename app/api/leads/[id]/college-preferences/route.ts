@@ -79,7 +79,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
      * the drawer shows, so a failure here is visible rather than silent — and
      * the save is not rolled back because the far end was down.
      */
-    await pushLeadToIntegrations(params.id, 'REFERRAL_CREATED');
+    await pushLeadToIntegrations(params.id, 'REFERRAL_CREATED', 'COLLEGE_PREFERENCES');
 
     return NextResponse.json({ success: true, collegeIds });
   } catch (error) {

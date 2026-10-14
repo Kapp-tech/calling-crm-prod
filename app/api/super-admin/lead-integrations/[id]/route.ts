@@ -61,6 +61,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       data: {
         name: d.name,
         isActive: d.isActive ?? existing.isActive,
+        trigger: d.trigger,
         method: d.method,
         url: d.url,
         headers: prepareHeadersForStorage(d.headers, existingHeaders) as unknown as Prisma.InputJsonValue,

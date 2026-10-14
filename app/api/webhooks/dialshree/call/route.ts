@@ -3,6 +3,7 @@ import { timingSafeEqual } from 'crypto';
 import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { parseDialerCall, DialerWebhookError } from '@/lib/dialshree-webhook';
+import { pushRecordingToIntegrations } from '@/lib/lead-integration-engine';
 
 /**
  * DialShree's post-call webhook.
@@ -177,6 +178,24 @@ export async function POST(req: NextRequest) {
         `[dialshree webhook] stored call ${saved.id} unmatched:` +
           `${lead ? '' : ` no lead for ${facts.phoneKey};`}${agent ? '' : ` no user for seat ${facts.agentSeat ?? '(none)'};`}`,
       );
+    }
+
+    /**
+     * Hand the recording to any analytics webhook, without waiting for it.
+     *
+     * Deliberately not awaited. The dialer treats a non-200 — or a slow
+     * response — as a failed delivery and retries, which would duplicate the
+     * call record; the recording push must never be able to cause that. PM2
+     * runs a persistent Node process, so work started here finishes after the
+     * response is sent. The function swallows its own errors and logs every
+     * attempt to LeadIntegrationLog, so a failure is visible without being
+     * able to reach back into this request.
+     *
+     * Fires on every stored recording, matched to a lead or not: an inbound
+     * call from a number the CRM does not know is still a call worth scoring.
+     */
+    if (saved.recordingUrl) {
+      void pushRecordingToIntegrations(saved.id);
     }
 
     return NextResponse.json({ status: true });

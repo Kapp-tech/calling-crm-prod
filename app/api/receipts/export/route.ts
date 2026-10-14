@@ -51,7 +51,7 @@ export async function GET(req: NextRequest) {
         actualAmount: true, amountPaid: true, couponCodeApplied: true, referralCode: true,
         receiptNumber: true, paidDate: true, status: true, disapprovalReason: true,
         city: true, state: true, createdAt: true, reviewedAt: true,
-        lead: { select: { id: true, name: true, college: true, assignedTo: { select: { name: true } } } },
+        lead: { select: { id: true, name: true, campaign: true, college: true, assignedTo: { select: { name: true } } } },
         uploadedBy: { select: { name: true } },
         reviewedBy: { select: { name: true } },
       },
@@ -66,7 +66,7 @@ export async function GET(req: NextRequest) {
      * The receipt number and Lead ID are the keys for tracing a row back.
      */
     const headers = [
-      'Type', 'Lead ID', 'Student Name', 'Lead Name', 'College', 'Campus', 'Course',
+      'Type', 'Lead ID', 'Lead Code', 'Student Name', 'Lead Name', 'College', 'Campus', 'Course',
       'Actual Amount', 'Amount Paid', 'Coupon Applied', 'Referral Code',
       'Receipt No', 'Paid Date', 'City', 'State',
       'Status', 'Disapproval Reason',
@@ -75,7 +75,7 @@ export async function GET(req: NextRequest) {
 
     const body = rows.map((r) => [
       r.type,
-      r.lead?.id, r.studentName, r.lead?.name, r.lead?.college, r.campusName, r.courseName,
+      r.lead?.id, r.lead?.campaign, r.studentName, r.lead?.name, r.lead?.college, r.campusName, r.courseName,
       r.actualAmount, r.amountPaid, r.couponCodeApplied ? 'Yes' : 'No', r.referralCode,
       // Date only — paidDate is a calendar date, and a time on it invites a
       // timezone question the value cannot answer.

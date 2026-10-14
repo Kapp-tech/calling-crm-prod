@@ -16,7 +16,11 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { useToast } from '@/components/ui/use-toast';
 import { PaginationBar } from '@/components/shared/pagination-bar';
 import { cn, formatDateTime } from '@/lib/utils';
-import { FIELD_CATALOG, SAMPLE_LEAD_DATA, type FieldGroup } from '@/lib/lead-integration-fields';
+import {
+  FIELD_CATALOG, SAMPLE_LEAD_DATA,
+  RECORDING_FIELD_CATALOG, SAMPLE_RECORDING_DATA,
+  type FieldGroup,
+} from '@/lib/lead-integration-fields';
 import { renderTemplate, TEMPLATE_HELPERS } from '@/lib/lead-integration-template';
 import { SECRET_UNCHANGED_SENTINEL } from '@/lib/lead-integration-constants';
 import { HTTP_METHODS } from '@/lib/lead-integration-validation';
@@ -37,6 +41,7 @@ interface IntegrationDetail {
   id: string;
   name: string;
   isActive: boolean;
+  trigger: string;
   method: string;
   url: string;
   headers: HeaderRow[];
@@ -83,10 +88,37 @@ const TABS = [
 ] as const;
 type TabKey = (typeof TABS)[number]['key'];
 
-const FIELD_GROUPS: FieldGroup[] = ['Lead', 'Agent', 'LeadProfile', 'System'];
-const GROUP_LABEL: Record<FieldGroup, string> = { Lead: 'Lead', Agent: 'Assigned Agent', LeadProfile: 'Lead Profile', System: 'System' };
+/**
+ * Which field groups an integration offers, and in what order.
+ *
+ * Split by trigger because a field that cannot resolve is worse than a field
+ * that is absent: offering call_talk_time on a referral webhook would render
+ * it empty every time, and the admin would reasonably conclude the CRM is
+ * broken rather than that they picked the wrong field.
+ */
+const LEAD_FIELD_GROUPS: FieldGroup[] = ['Lead', 'Agent', 'LeadProfile', 'System'];
+const RECORDING_FIELD_GROUPS: FieldGroup[] = ['Recording', 'Call', 'CallAgent', 'Lead', 'LeadProfile', 'System'];
+const GROUP_LABEL: Record<FieldGroup, string> = {
+  Lead: 'Lead',
+  Agent: 'Assigned Agent',
+  LeadProfile: 'Lead Profile',
+  System: 'System',
+  Recording: 'Recording',
+  Call: 'Call',
+  CallAgent: 'Agent (on the call)',
+};
 
-export function LeadIntegrationBuilder({ integrationId }: { integrationId?: string }) {
+export function LeadIntegrationBuilder({
+  integrationId,
+  // Which trigger a NEW integration starts on. Comes from the list page the
+  // user clicked "Add" on, so arriving from Webhooks does not silently create
+  // a referral integration that never fires on a recording. Ignored when
+  // editing — the stored trigger wins.
+  defaultTrigger = 'REFERRAL_CREATED',
+}: {
+  integrationId?: string;
+  defaultTrigger?: 'REFERRAL_CREATED' | 'RECORDING_RECEIVED';
+}) {
   const isEdit = !!integrationId;
   const router = useRouter();
   const qc = useQueryClient();
@@ -95,6 +127,7 @@ export function LeadIntegrationBuilder({ integrationId }: { integrationId?: stri
   const [tab, setTab] = useState<TabKey>('setup');
   const [name, setName] = useState('');
   const [isActive, setIsActive] = useState(false);
+  const [trigger, setTrigger] = useState<'REFERRAL_CREATED' | 'RECORDING_RECEIVED'>(defaultTrigger);
   const [method, setMethod] = useState<string>('POST');
   const [url, setUrl] = useState('');
   const [headers, setHeaders] = useState<HeaderRow[]>([
@@ -134,6 +167,7 @@ export function LeadIntegrationBuilder({ integrationId }: { integrationId?: stri
   useEffect(() => {
     if (!integration) return;
     setName(integration.name);
+    setTrigger((integration.trigger as 'REFERRAL_CREATED' | 'RECORDING_RECEIVED') ?? 'REFERRAL_CREATED');
     setIsActive(integration.isActive);
     setMethod(integration.method);
     setUrl(integration.url);
@@ -158,7 +192,21 @@ export function LeadIntegrationBuilder({ integrationId }: { integrationId?: stri
     enabled: dataSource === 'lead' && !!selectedLead,
   });
 
-  const activeData = dataSource === 'lead' && previewData ? previewData : SAMPLE_LEAD_DATA;
+  const isRecording = trigger === 'RECORDING_RECEIVED';
+  /**
+   * Catalog, groups and preview data all follow the trigger, so what the picker
+   * offers is exactly what will resolve at send time. A recording webhook also
+   * keeps the Lead groups: a matched call carries its lead, and the analytics
+   * tool wants the student's name beside the audio.
+   */
+  const fieldCatalog = isRecording ? [...RECORDING_FIELD_CATALOG, ...FIELD_CATALOG] : FIELD_CATALOG;
+  const fieldGroups = isRecording ? RECORDING_FIELD_GROUPS : LEAD_FIELD_GROUPS;
+  const sampleData = isRecording ? { ...SAMPLE_LEAD_DATA, ...SAMPLE_RECORDING_DATA } : SAMPLE_LEAD_DATA;
+
+  // Previewing against a real LEAD makes no sense for a recording webhook —
+  // the fields that matter come from a call — so it falls back to the sample.
+  const activeData =
+    !isRecording && dataSource === 'lead' && previewData ? previewData : sampleData;
 
   const rendered = useMemo(() => renderTemplate(bodyTemplate, activeData), [bodyTemplate, activeData]);
   /**
@@ -236,6 +284,7 @@ export function LeadIntegrationBuilder({ integrationId }: { integrationId?: stri
     return {
       name: name.trim(),
       isActive,
+      trigger,
       method,
       url: url.trim(),
       headers: headers
@@ -478,7 +527,19 @@ export function LeadIntegrationBuilder({ integrationId }: { integrationId?: stri
               </div>
               <div className="space-y-1.5">
                 <Label>Trigger</Label>
-                <Input value="Referral Lead Created" disabled className="bg-muted/40 text-muted-foreground" />
+                <select
+                  value={trigger}
+                  onChange={(e) => setTrigger(e.target.value as 'REFERRAL_CREATED' | 'RECORDING_RECEIVED')}
+                  className="flex h-9 w-full rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
+                >
+                  <option value="REFERRAL_CREATED">Referral Lead Created</option>
+                  <option value="RECORDING_RECEIVED">Call Recording Received</option>
+                </select>
+                <p className="text-[11px] text-muted-foreground">
+                  {isRecording
+                    ? 'Fires for every stored recording, including calls that match no lead.'
+                    : 'Fires when a counsellor captures a referral, or submits college preferences.'}
+                </p>
               </div>
             </div>
 
@@ -633,13 +694,13 @@ export function LeadIntegrationBuilder({ integrationId }: { integrationId?: stri
               <CardDescription>Click to insert at cursor.</CardDescription>
             </CardHeader>
             <CardContent className="max-h-[460px] space-y-4 overflow-y-auto p-3">
-              {FIELD_GROUPS.map((group) => (
+              {fieldGroups.map((group) => (
                 <div key={group}>
                   <p className="mb-1.5 px-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
                     {GROUP_LABEL[group]}
                   </p>
                   <div className="space-y-0.5">
-                    {FIELD_CATALOG.filter((f) => f.group === group).map((f) => (
+                    {fieldCatalog.filter((f) => f.group === group).map((f) => (
                       <button
                         key={f.key}
                         type="button"

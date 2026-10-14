@@ -20,8 +20,30 @@ export type LeadForTemplate = Lead & {
   } | null;
 };
 
+/**
+ * Why a push is happening. The same integration serves both, and the LMS wants
+ * a different lead_code for each, so the template has to be able to tell them
+ * apart — see `pushLeadCode`.
+ */
+export type PushSource = 'REFERRAL' | 'COLLEGE_PREFERENCES';
+
+/**
+ * The lead_code a REFERRAL pushes.
+ *
+ * It lived as a literal in the body template, which was fine while every push
+ * was a referral. Now that college preferences push through the same
+ * integration and must send the lead's real code, one of the two has to be
+ * decided somewhere the template can't — the template engine has no
+ * conditionals, deliberately, since it renders admin-authored text and must
+ * never become a place to run logic.
+ */
+export const REFERRAL_LEAD_CODE = 'CRM100';
+
 /** Flattens a fetched lead (+ relations) into the flat key/value shape FIELD_CATALOG describes. */
-export async function buildLeadTemplateData(lead: LeadForTemplate): Promise<Record<string, unknown>> {
+export async function buildLeadTemplateData(
+  lead: LeadForTemplate,
+  source: PushSource = 'REFERRAL',
+): Promise<Record<string, unknown>> {
   const profile = lead.profile;
   const [cityId, stateId, courseId] = await Promise.all([
     resolveCityId(lead.city),
@@ -61,6 +83,22 @@ export async function buildLeadTemplateData(lead: LeadForTemplate): Promise<Reco
       return lead.kappCollegeId ? [lead.kappCollegeId] : [];
     })(),
     campaign: lead.campaign,
+    pushSource: source,
+    /**
+     * The lead_code to send, already decided.
+     *
+     * A referral is a new name the CRM introduced, so it carries the CRM's own
+     * code. A college-preferences push is an existing lead being updated, and
+     * it has to keep the code it arrived with or the LMS cannot reconcile it
+     * with the lead it already holds.
+     *
+     * Falls back for a preferences push on a lead with no code of its own —
+     * sending an empty lead_code would be worse than sending the CRM's.
+     */
+    pushLeadCode:
+      source === 'COLLEGE_PREFERENCES'
+        ? (lead.campaign?.trim() || REFERRAL_LEAD_CODE)
+        : REFERRAL_LEAD_CODE,
     leadType: lead.leadType,
     leadOrigin: lead.leadOrigin,
     leadZone: lead.leadZone,

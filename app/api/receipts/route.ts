@@ -34,7 +34,7 @@ export async function GET(req: NextRequest) {
         skip: (page - 1) * limit,
         take: limit,
         include: {
-          lead: { select: { id: true, name: true, phone: true, assignedTo: { select: { id: true, name: true } } } },
+          lead: { select: { id: true, name: true, phone: true, campaign: true, assignedTo: { select: { id: true, name: true } } } },
           uploadedBy: { select: { id: true, name: true } },
           reviewedBy: { select: { id: true, name: true } },
         },

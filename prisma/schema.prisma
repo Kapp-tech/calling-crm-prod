@@ -156,6 +156,9 @@ enum ActivityAction {
 // enum later without touching the LeadIntegration table shape.
 enum LeadIntegrationTrigger {
   REFERRAL_CREATED
+  /// Fires when the dialer's post-call webhook stores a CallLog carrying a
+  /// recording. Drives the outbound half of the call-analytics integration.
+  RECORDING_RECEIVED
 }
 
 /// Where a KPI's number comes from. A KPI is defined by picking one of these
@@ -1106,6 +1109,42 @@ model LeadIntegration {
 
 // One row per push attempt (automatic, test, or retry) — kept even on
 // success so admins can audit exactly what was sent to a third party.
+/// What the external call-analytics tool returned for one recording.
+///
+/// One row per call, replaced on re-analysis rather than appended: the question
+/// the CRM asks is "how did this call score", and a history of revisions would
+/// make every reader pick a row. The untouched callback body is kept in `raw`
+/// so nothing the tool sends is lost to the columns modelled here.
+///
+/// Deliberately not carrying leadId or agentId of its own — CallLog already has
+/// both, and duplicating them is how the two end up disagreeing after a call is
+/// re-attributed.
+model CallAnalysis {
+  id        String  @id @default(cuid())
+  callLogId String  @unique
+  callLog   CallLog @relation(fields: [callLogId], references: [id], onDelete: Cascade)
+
+  /// Overall score as the tool reported it, with its own scale alongside — a
+  /// bare 7 means nothing without knowing whether the scale was 10 or 100.
+  score    Float?
+  maxScore Float?
+
+  summary  String? @db.Text
+  feedback String? @db.Text
+
+  /// Per-criterion scores and any other structured metrics, exactly as sent.
+  metrics Json?
+
+  /// The whole callback body. The tool's shape will change before ours does.
+  raw Json
+
+  receivedAt DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([score])
+  @@index([receivedAt])
+}
+
 model LeadIntegrationLog {
   id            String          @id @default(cuid())
   integrationId String
@@ -1115,8 +1154,20 @@ model LeadIntegrationLog {
   leadId String?
   lead   Lead?   @relation(fields: [leadId], references: [id], onDelete: SetNull)
 
+  /// Set for RECORDING_RECEIVED deliveries. A lead is not enough on its own —
+  /// one lead has many calls, and a redelivery has to name the call it is for.
+  callLogId String?
+  callLog   CallLog? @relation(fields: [callLogId], references: [id], onDelete: SetNull)
+
   isTest       Boolean @default(false)
   retryOfLogId String? // set when this row is a manual retry of an earlier failed attempt
+
+  /// Which automatic attempt this was, counting from 1. Separate from
+  /// retryOfLogId, which records a human pressing Retry.
+  attempt     Int       @default(1)
+  /// When the scheduler should try again; null once it has succeeded or given
+  /// up. Indexed because the sweeper's only query is "what is due now".
+  nextRetryAt DateTime?
 
   requestUrl     String
   requestMethod  String
@@ -1132,6 +1183,8 @@ model LeadIntegrationLog {
   @@index([integrationId])
   @@index([leadId])
   @@index([success])
+  @@index([callLogId])
+  @@index([nextRetryAt])
 }
 
 /// One completed call, as reported by the DialShree dialer's post-call webhook.
@@ -1202,6 +1255,11 @@ model CallLog {
 
   /// The untouched webhook body. Anything not modelled above is still here.
   payload Json
+
+  /// Outbound deliveries of this recording, and whatever the analytics tool
+  /// sent back about it.
+  integrationLogs LeadIntegrationLog[]
+  analysis        CallAnalysis?
 
   receivedAt DateTime @default(now())
 

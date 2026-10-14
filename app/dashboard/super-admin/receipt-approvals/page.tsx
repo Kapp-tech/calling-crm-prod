@@ -30,7 +30,7 @@ interface ReceiptRow {
   createdAt: string;
   reviewedAt: string | null;
   disapprovalReason: string | null;
-  lead: { id: string; name: string; phone: string; assignedTo: { id: string; name: string } | null } | null;
+  lead: { id: string; name: string; phone: string; campaign: string | null; assignedTo: { id: string; name: string } | null } | null;
   uploadedBy: { id: string; name: string };
   reviewedBy: { id: string; name: string } | null;
 }
@@ -323,7 +323,7 @@ export default function ReceiptApprovalsPage() {
         <div className="relative min-w-[200px] flex-1">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input
-            placeholder="Search student, email, phone, receipt #, LID…"
+            placeholder="Search student, email, phone, receipt #, LID, lead code…"
             className="pl-9"
             value={search}
             onChange={(e) => { setSearch(e.target.value); setPage(1); }}
@@ -402,6 +402,7 @@ export default function ReceiptApprovalsPage() {
               <tr className="border-b border-border/60 bg-muted">
                 <th className="whitespace-nowrap px-3 py-2.5 text-left text-[10px] font-bold uppercase tracking-wider text-muted-foreground min-w-[110px]">Type</th>
                 <th className="sticky left-0 z-30 bg-muted border-r border-border/60 whitespace-nowrap px-3 py-2.5 text-left text-[10px] font-bold uppercase tracking-wider text-muted-foreground min-w-[190px]">Student</th>
+                <th className="whitespace-nowrap px-3 py-2.5 text-left text-[10px] font-bold uppercase tracking-wider text-muted-foreground min-w-[130px]">Lead Code</th>
                 <th className="whitespace-nowrap px-3 py-2.5 text-left text-[10px] font-bold uppercase tracking-wider text-muted-foreground min-w-[160px]">Campus</th>
                 <th className="whitespace-nowrap px-3 py-2.5 text-left text-[10px] font-bold uppercase tracking-wider text-muted-foreground min-w-[160px]">Course</th>
                 <th className="whitespace-nowrap px-3 py-2.5 text-right text-[10px] font-bold uppercase tracking-wider text-muted-foreground min-w-[100px]">Amount</th>
@@ -447,6 +448,12 @@ export default function ReceiptApprovalsPage() {
                       <p className="font-mono text-[10px] text-muted-foreground">{r.lead?.id}</p>
                     </td>
 
+                    {/* The lead's own code, not the receipt's — it is what the
+                        LMS reconciles a preferences push against, so finance
+                        needs it beside the receipt number. */}
+                    <td className="px-3 py-2.5 whitespace-nowrap font-mono text-xs text-muted-foreground">
+                      {r.lead?.campaign || '—'}
+                    </td>
                     <td className="px-3 py-2.5 whitespace-nowrap text-xs text-muted-foreground">{r.campusName}</td>
                     <td className="px-3 py-2.5 whitespace-nowrap text-xs text-muted-foreground">{r.courseName}</td>
                     <td className="px-3 py-2.5 whitespace-nowrap text-right text-xs font-semibold tabular-nums">₹{r.amountPaid}</td>

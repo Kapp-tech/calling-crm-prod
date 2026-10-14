@@ -12,7 +12,7 @@ import {
   UserCircle, UserCheck, ClipboardList, LogOut, ChevronRight, ChevronDown,
   GitBranch, CalendarClock, X, ChevronsLeft, ChevronsRight,
   GraduationCap, Tag, Globe2, CheckSquare, ShieldCheck, Phone,
-  Megaphone, Gauge, Receipt, Layers, KeyRound, Settings, Trash2, Webhook, Search, Target, FileBarChart, Mail, Link2, Hash, Zap,} from 'lucide-react';
+  Megaphone, Gauge, Receipt, Layers, KeyRound, Settings, Trash2, Webhook, Search, Target, FileBarChart, Mail, Link2, Hash, Zap, Radio,} from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
@@ -378,6 +378,17 @@ const NAV: NavEntry[] = [
         href: '/dashboard/super-admin/configurations/lead-integrations',
         label: 'Lead Integrations',
         icon: Webhook,
+        roles: ['SUPER_ADMIN'],
+      },
+      {
+        // Same builder and same engine as Lead Integrations, rendered at its own
+        // path so the sidebar highlight and the page title follow it — the
+        // active entry is matched on pathname, which drops a query string. A
+        // separate module would have meant a second template renderer, log
+        // viewer and retry path to keep in step.
+        href: '/dashboard/super-admin/configurations/webhooks',
+        label: 'Webhooks',
+        icon: Radio,
         roles: ['SUPER_ADMIN'],
       },
       {

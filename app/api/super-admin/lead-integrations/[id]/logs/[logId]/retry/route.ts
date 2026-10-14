@@ -2,8 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
-import { executeIntegration } from '@/lib/lead-integration-engine';
-import { buildLeadTemplateData } from '@/lib/lead-integration-data';
+import { redeliverLog } from '@/lib/integration-redelivery';
 import { isActionUnlocked } from '@/lib/security-pin';
 import { PIN_GATED_ACTIONS } from '@/lib/pin-gated-actions';
 
@@ -20,32 +19,20 @@ export async function POST(_req: NextRequest, { params }: { params: { id: string
       return NextResponse.json({ error: 'This tool is PIN-locked — verify your security PIN first', code: 'PIN_LOCKED' }, { status: 423 });
     }
 
-    const [integration, log] = await Promise.all([
-      prisma.leadIntegration.findUnique({ where: { id: params.id } }),
-      prisma.leadIntegrationLog.findUnique({ where: { id: params.logId } }),
-    ]);
-    if (!integration) return NextResponse.json({ error: 'Integration not found' }, { status: 404 });
+    // Ownership is checked here; rebuilding and sending is shared with the
+    // automatic sweeper (lib/integration-redelivery) so a recording delivery
+    // retries the same way whether a human or the cron asked.
+    const log = await prisma.leadIntegrationLog.findUnique({ where: { id: params.logId } });
     if (!log || log.integrationId !== params.id) {
       return NextResponse.json({ error: 'Log entry not found' }, { status: 404 });
     }
-    if (!log.leadId) {
-      return NextResponse.json({ error: 'This attempt used synthetic sample data and cannot be retried' }, { status: 400 });
+
+    const outcome = await redeliverLog(log.id);
+    if (!outcome.ok) {
+      return NextResponse.json({ error: outcome.reason }, { status: 400 });
     }
 
-    const lead = await prisma.lead.findUnique({
-      where: { id: log.leadId },
-      include: { profile: true, referredBy: { select: { name: true } }, assignedTo: { select: { id: true, name: true, email: true, employeeCode: true, dialshreeId: true } } },
-    });
-    if (!lead) return NextResponse.json({ error: 'The original lead no longer exists' }, { status: 404 });
-
-    const data = await buildLeadTemplateData(lead);
-    const result = await executeIntegration(integration, data, {
-      leadId: lead.id,
-      isTest: log.isTest,
-      retryOfLogId: log.id,
-    });
-
-    return NextResponse.json(result);
+    return NextResponse.json(outcome.result);
   } catch (error) {
     console.error('[super-admin/lead-integrations/[id]/logs/[logId]/retry POST]', error);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });

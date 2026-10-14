@@ -68,6 +68,7 @@ export async function POST(req: NextRequest) {
       data: {
         name: d.name,
         isActive: false,
+        trigger: d.trigger,
         method: d.method,
         url: d.url,
         headers: prepareHeadersForStorage(d.headers) as unknown as Prisma.InputJsonValue,

@@ -14,7 +14,7 @@ import {
   X, Phone, PhoneOff, Mail, PhoneCall, CalendarClock, PhoneIncoming,
   LayoutList, CheckCircle2, Loader2, PlusCircle, UserCheck,
   UserCircle2, ChevronDown, Search, Check, ExternalLink,
-  GitBranch, UserPlus, FileCheck, Receipt, Clock3, PlayCircle, GraduationCap, Send,
+  GitBranch, UserPlus, FileCheck, Receipt, Clock3, PlayCircle, GraduationCap, Send, Sparkles,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/components/ui/use-toast';
@@ -796,6 +796,16 @@ interface DialerCall {
   connected: boolean | null;
   calledCount: number | null;
   hasRecording: boolean;
+  /** Null until the call-analytics tool calls back — the normal state for a
+   *  fresh call, so every reader of this must treat absence as "not yet". */
+  analysis?: {
+    score: number | null;
+    maxScore: number | null;
+    summary: string | null;
+    feedback: string | null;
+    metrics: unknown;
+    receivedAt: string;
+  } | null;
   agentFullName: string | null;
   agentSeat: string | null;
   receivedAt: string;
@@ -878,8 +888,56 @@ function CallRow({ leadId, call }: { leadId: string; call: DialerCall }) {
           Your browser cannot play this recording.
         </audio>
       )}
+
+      {/* Analysis, when the tool has returned one. Absent rather than "pending"
+          for calls it has not scored: most calls will never be scored, and a
+          permanent "pending" on all of them would read as a broken pipeline. */}
+      {call.analysis && (
+        <div className="mt-1.5 rounded-lg border border-border/60 bg-muted/20 px-2.5 py-2">
+          <div className="flex items-center gap-2">
+            <Sparkles className="h-3 w-3 shrink-0 text-muted-foreground" />
+            <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
+              Call Analysis
+            </span>
+            {call.analysis.score != null && (
+              <span
+                className={cn(
+                  'ml-auto rounded-full px-2 py-0.5 text-[11px] font-bold tabular-nums',
+                  scoreTone(call.analysis.score, call.analysis.maxScore),
+                )}
+              >
+                {call.analysis.score}
+                {/* The scale, always — a bare 7 means nothing without knowing
+                    whether the tool scored out of 10 or out of 100. */}
+                {call.analysis.maxScore != null && (
+                  <span className="font-medium opacity-70">/{call.analysis.maxScore}</span>
+                )}
+              </span>
+            )}
+          </div>
+          {call.analysis.summary && (
+            <p className="mt-1.5 text-[11px] leading-relaxed text-foreground">{call.analysis.summary}</p>
+          )}
+          {call.analysis.feedback && (
+            <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">{call.analysis.feedback}</p>
+          )}
+        </div>
+      )}
     </div>
   );
+}
+
+/**
+ * Colour by proportion of the scale, not by raw number — 7 is good out of 10
+ * and poor out of 100. Falls back to neutral when the tool sent no maxScore,
+ * since there is then no way to know which end of the range 7 sits at.
+ */
+function scoreTone(score: number, maxScore: number | null): string {
+  if (maxScore == null || maxScore <= 0) return 'bg-muted text-foreground';
+  const pct = (score / maxScore) * 100;
+  if (pct >= 75) return 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400';
+  if (pct >= 50) return 'bg-amber-500/15 text-amber-600 dark:text-amber-400';
+  return 'bg-red-500/15 text-red-600 dark:text-red-400';
 }
 
 /**
