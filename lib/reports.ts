@@ -854,7 +854,52 @@ export interface CallingBlock {
    * same arithmetic, just with a different number of days per person.
    */
   agentDays: number;
+  /**
+   * Average number of agents absent per day in this window.
+   *
+   * Absent means no day of real work recorded — the same test
+   * `activeDaysByAgent` applies, so an agent who logged in and did nothing
+   * still counts as absent. That is deliberate: this column sits beside
+   * figures the floor is judged on, and a trial login is not a shift.
+   *
+   * An AVERAGE, not a headcount, because a week is six days and a person can
+   * be out for two of them. The arithmetic is total agent-days available minus
+   * agent-days actually worked, over the number of days:
+   *
+   *     (employees x days - sum(workedDays)) / days
+   *
+   * For Daily that reduces to a plain count of who did not turn up, which is
+   * what a one-day window should read as.
+   *
+   * Null for Overall. It is unbounded, so it has no day count to average over,
+   * and inventing one — the span of recorded work, say — would put a number in
+   * the column that no one could reproduce.
+   */
+  avgAbsentAgents: number | null;
   totals: { dialed: number; connected: number; talktimeMin: number };
+}
+
+/**
+ * The per-agent-per-day KPI targets the reports measure against.
+ *
+ * Read from KPI Targets rather than stored again, and exported so every report
+ * that needs them reads the same row — a second copy of this matching would be
+ * a second place for "Dialled Calls" to stop being found after a rename.
+ */
+export async function dailyMandates(
+  db: PrismaClient,
+): Promise<{ dialed: number | null; connected: number | null; talktime: number | null }> {
+  const defs = await db.kpiDefinition.findMany({
+    select: { name: true, source: true, targets: { where: { period: 'DAILY' }, select: { target: true } } },
+  });
+  const byName = (re: RegExp) => defs.find((d) => re.test(d.name))?.targets[0]?.target ?? null;
+  return {
+    dialed: byName(/dial+ed/i) ?? byName(/dial/i),
+    connected: byName(/connect/i),
+    // Matched by source first: it is unambiguous where a name is not.
+    talktime:
+      defs.find((d) => d.source === 'CALL_TALKTIME_MINUTES')?.targets[0]?.target ?? byName(/talk/i),
+  };
 }
 
 export interface OverallCallingReport {
@@ -892,17 +937,7 @@ export async function buildOverallCallingReport(
   const monthFirst = `${todayKey.slice(0, 8)}01`;
   const dayOfMonth = Number(todayKey.slice(8, 10));
 
-  const defs = await db.kpiDefinition.findMany({
-    select: { name: true, source: true, targets: { where: { period: 'DAILY' }, select: { target: true } } },
-  });
-  const byName = (re: RegExp) => defs.find((d) => re.test(d.name))?.targets[0]?.target ?? null;
-  const mandates = {
-    dialed: byName(/dial+ed/i) ?? byName(/dial/i),
-    connected: byName(/connect/i),
-    // Matched by source first: it is unambiguous where a name is not.
-    talktime:
-      defs.find((d) => d.source === 'CALL_TALKTIME_MINUTES')?.targets[0]?.target ?? byName(/talk/i),
-  };
+  const mandates = await dailyMandates(db);
 
   /**
    * Weekly is the WHOLE OF LAST WEEK, Monday to Saturday — not this week so
@@ -917,7 +952,10 @@ export async function buildOverallCallingReport(
   const lastMonday = istShiftDays(monday, -7);
   const lastSaturday = istShiftDays(lastMonday, 5);
 
-  const spec: Omit<CallingBlock, 'rows' | 'totals' | 'employees' | 'activeEmployees' | 'agentDays'>[] = [
+  const spec: Omit<
+    CallingBlock,
+    'rows' | 'totals' | 'employees' | 'activeEmployees' | 'agentDays' | 'avgAbsentAgents'
+  >[] = [
     { key: 'DAILY', label: 'Daily', letter: 'A', from: todayKey, to: todayKey, days: 1 },
     { key: 'WEEKLY', label: 'Weekly', letter: 'B', from: lastMonday, to: lastSaturday, days: 6 },
     { key: 'MONTHLY', label: 'Monthly', letter: 'C', from: monthFirst, to: todayKey, days: dayOfMonth },
@@ -969,11 +1007,22 @@ export async function buildOverallCallingReport(
       talktimeMin: talkBy.get(r.id) ?? 0,
     }));
     const activeEmployees = rows.filter((r) => r.dialed > 0).length;
+    // Worked agent-days actually recorded, which is what presence means here.
+    const workedAgentDays = rows.reduce((n, r) => n + r.workingDays, 0);
+    const avgAbsentAgents =
+      s.days === null || s.days <= 0
+        ? null
+        // Clamped at zero: an agent can record work on a day outside the window
+        // the report counts — a Monthly block on the 1st has days = 1 — and a
+        // negative absence would be nonsense on the page.
+        : Math.max(0, (rows.length * s.days - workedAgentDays) / s.days);
+
     blocks.push({
       ...s,
       rows,
       employees: rows.length,
       activeEmployees,
+      avgAbsentAgents,
       // Overall's people worked different numbers of days, so its total target
       // is the sum of theirs rather than one day count times a headcount.
       agentDays: s.days === null

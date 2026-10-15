@@ -1,7 +1,7 @@
 import { EmailFrequency, PrismaClient, Prisma, EmailReportType, KpiPeriod } from '@prisma/client';
 import {
   buildAgentReport, buildFeedbackBreakdown, buildCollegeBreakdown, AgentReportRow,
-  buildOverallCallingReport, activeDaysByAgent,
+  buildOverallCallingReport, activeDaysByAgent, dailyMandates,
 } from './reports';
 import { kpiScoreboardFor, computeKpiActual, kpiScore, kpiPeriodRange, KPI_PERIODS } from './kpi';
 import { gradeFor, gradeColour } from './kpi-grade';
@@ -671,22 +671,61 @@ export async function buildFeedbackSummaryEmail(
   const w = reportWindowFor(frequency, now);
   const fb = await buildFeedbackBreakdown(db, scope, 'DATEWISE', w.from, w.to, now);
 
+  /**
+   * Two different percentages share this column, because two different
+   * questions are being asked of it.
+   *
+   * An OUTCOME row answers "how much of the work ended this way" — RNR as a
+   * share of every lead worked. Those sum to 100%.
+   *
+   * The TOTAL row answers "did the floor hit its number", measured exactly as
+   * the Overall Calling Summary's Achieved % is: actual over
+   * mandate x agent-days, using the same Dialled Calls daily target. Both
+   * tables therefore agree about the floor rather than offering two figures
+   * that look comparable and are not.
+   */
+  const mandates = await dailyMandates(db);
+  // Inclusive day count for the window — a Monday-to-Sunday week is 7.
+  const windowDays =
+    Math.round(
+      (Date.parse(`${w.to}T00:00:00Z`) - Date.parse(`${w.from}T00:00:00Z`)) / 86_400_000,
+    ) + 1;
+  /**
+   * Agent-days to measure against: the agents who actually logged work, times
+   * the days in the window. Team Members is this table's own "who worked"
+   * figure, so the denominator is built from the number the reader can already
+   * see rather than a headcount from somewhere else.
+   */
+  const agentDays = fb.teamMembers * windowDays;
+  const target = mandates.dialed !== null ? mandates.dialed * agentDays : null;
+  const totalPct =
+    target === null || target === 0 ? null : Math.round((fb.total / target) * 100);
+
+  /** Share of all leads worked. One decimal, because 6650 of 11388 is 58.4%. */
+  const sharePct = (n: number): string =>
+    fb.total === 0 ? '—' : `${((n / fb.total) * 100).toFixed(1)}%`;
+
   const inner = fb.rows.length === 0
     ? `<p style="font-size:13px;color:${MUTED}">No follow-ups were logged in this period.</p>`
     : `<table role="presentation" cellpadding="0" cellspacing="0" style="border-collapse:collapse;min-width:420px">
-<tr>${cellBox('Calling Summary Report', { bold: true, bg: MANDATE_BG, span: 2 })}</tr>
-<tr>${cell('Total', { bold: true, bg: MATRIX_BG })}${cell(fb.total, { bold: true, bg: MATRIX_BG })}</tr>
-<tr>${cell('Count of Team Members', { bold: true, bg: STRIPE })}${cell(fb.teamMembers, { bold: true, bg: STRIPE })}</tr>
-<tr>${cell('University/Institution Count', { bold: true, bg: MATRIX_BG })}${cell(fb.universities, { bold: true, bg: MATRIX_BG })}</tr>
-${fb.rows.map((r) => `<tr>${cell(r.feedback)}${cell(r.leads)}</tr>`).join('\n')}
+<tr>${cellBox('Calling Summary Report', { bold: true, bg: MANDATE_BG, span: 3 })}</tr>
+<tr>${cell('Total', { bold: true, bg: MATRIX_BG })}${cell(fb.total, { bold: true, bg: MATRIX_BG })}${
+    cell(totalPct === null ? '—' : `${totalPct}%`, { bold: true, bg: MATRIX_BG })}</tr>
+<tr>${cell('Count of Team Members', { bold: true, bg: STRIPE })}${cell(fb.teamMembers, { bold: true, bg: STRIPE })}${
+    // Headcounts, not outcomes — a share of the feedback total would be
+    // arithmetic on unrelated quantities.
+    cell('', { bg: STRIPE })}</tr>
+<tr>${cell('University/Institution Count', { bold: true, bg: MATRIX_BG })}${cell(fb.universities, { bold: true, bg: MATRIX_BG })}${
+    cell('', { bg: MATRIX_BG })}</tr>
+${fb.rows.map((r) => `<tr>${cell(r.feedback)}${cell(r.leads)}${cell(sharePct(r.leads))}</tr>`).join('\n')}
 </table>`;
 
   const csv = [
-    ['Calling Summary Report', ''],
-    ['Total', fb.total],
-    ['Count of Team Members', fb.teamMembers],
-    ['University/Institution Count', fb.universities],
-    ...fb.rows.map((r) => [r.feedback, r.leads]),
+    ['Calling Summary Report', '', ''],
+    ['Total', fb.total, totalPct === null ? '—' : `${totalPct}%`],
+    ['Count of Team Members', fb.teamMembers, ''],
+    ['University/Institution Count', fb.universities, ''],
+    ...fb.rows.map((r) => [r.feedback, r.leads, sharePct(r.leads)]),
   ].map((cells) => cells.map(q).join(',')).join('\n');
 
   return {
@@ -704,7 +743,10 @@ const FEEDBACK_FOOTER =
   'agents who logged at least one follow-up in the window, not the size of the roster. ' +
   'Every lead is counted once, ' +
   'under its latest follow-up in the period, so the Total is leads worked rather than ' +
-  'follow-ups logged. Outcomes nobody used are not listed.';
+  'follow-ups logged. Outcomes nobody used are not listed. The % against an ' +
+  'outcome is its share of that Total; the % against Total itself is the ' +
+  "floor's achievement against the daily Dialled Calls target, the same " +
+  'measure the Overall Calling Summary reports.';
 
 export async function buildCollegeWiseEmail(
   db: PrismaClient,
@@ -1108,6 +1150,18 @@ export async function buildOverallCallingEmail(
   const t = (v: unknown, o: Parameters<typeof cellBox>[1] = {}) => cell(v, { ...o, tight: true });
 
   /**
+   * Absent agents, rendered.
+   *
+   * One decimal for a multi-day window and a whole number for a single day:
+   * "3" reads as three people absent today, while "2.5" over a week correctly
+   * reads as an average rather than half a person. Overall has no day count to
+   * average over, so it shows an em dash rather than a number nobody could
+   * reproduce.
+   */
+  const absentText = (v: number | null): string =>
+    v === null ? '—' : Number.isInteger(v) ? String(v) : v.toFixed(1);
+
+  /**
    * The eight metric cells, with Overall Scoring and Grade filled by their
    * band colour. The tint overrides whatever the row is painted — on the black
    * total rows the band colour wins and the text flips back to dark, because a
@@ -1162,8 +1216,12 @@ export async function buildOverallCallingEmail(
   // Date of Joining and is two columns narrower than the detail table. Each
   // table spans its own width rather than being padded to match the other,
   // which left two empty columns sitting in the summary.
-  const SUMMARY_COLS = ['Matrix', 'No of Active Employee', 'Dialled Calls', 'Achieved %',
-    'Connected Calls', 'Achieved %', 'Talktime', 'Achieved %', 'Overall Scoring', 'Grade'];
+  // Total Agents on Floor sits immediately after Matrix, before No of Active
+  // Employee, so the pair reads as "how many there are" then "how many worked".
+  // Absent Agents closes the row after Grade: it explains a weak score rather
+  // than being part of it, so it belongs after the verdict, not before.
+  const SUMMARY_COLS = ['Matrix', 'Total Agents on Floor', 'No of Active Employee', 'Dialled Calls', 'Achieved %',
+    'Connected Calls', 'Achieved %', 'Talktime', 'Achieved %', 'Overall Scoring', 'Grade', 'Absent Agents'];
   const DETAIL_COLS = ['Matrix', 'Employee Name', 'Working Days', 'Date of Joining',
     'Dialled Calls', 'Achieved %', 'Connected Calls', 'Achieved %', 'Talktime', 'Achieved %',
     'Overall Scoring', 'Grade'];
@@ -1179,7 +1237,7 @@ export async function buildOverallCallingEmail(
     cellBox('', { tight: true, bg: TOTAL_BG, fg: ON_DARK, span: SUM_COLS - 1 })}</tr>
 ${r.blocks.map((b) => `<tr>${
     t(b.label, { bold: true })
-  }${t(b.activeEmployees)}${metrics(b.totals, b.agentDays)}</tr>`).join('')}
+  }${t(b.employees)}${t(b.activeEmployees)}${metrics(b.totals, b.agentDays)}${t(absentText(b.avgAbsentAgents))}</tr>`).join('')}
 </table>`;
 
   // width:auto, not min-width:100% — with a dozen columns the browser stretched
@@ -1206,7 +1264,11 @@ ${blockRows}
   const summaryCsvRows: unknown[][] = [
     SUMMARY_COLS,
     ['TOTAL', ...Array(SUM_COLS - 1).fill('')],
-    ...r.blocks.map((b) => [b.label, b.activeEmployees, ...line(b.totals, b.agentDays).cells]),
+    ...r.blocks.map((b) => [
+      b.label, b.employees, b.activeEmployees,
+      ...line(b.totals, b.agentDays).cells,
+      absentText(b.avgAbsentAgents),
+    ]),
   ];
   const detailCsvRows: unknown[][] = [
     // Two blanks sit under Working Days / Date of Joining so each mandate lands
