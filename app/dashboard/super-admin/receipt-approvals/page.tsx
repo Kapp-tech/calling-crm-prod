@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Receipt, Loader2, Search, CheckCircle2, XCircle, Clock, ExternalLink, UserRound, Download,
+  Users, Copy as CopyIcon,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -40,6 +41,7 @@ interface ReceiptsResponse {
   total: number;
   totalPages: number;
   counts: { PENDING: number; APPROVED: number; DISAPPROVED: number };
+  dupCounts: { unique: number; duplicate: number };
 }
 
 const TYPE_META: Record<ReceiptKind, { label: string; chip: string; badge: string }> = {
@@ -136,6 +138,15 @@ export default function ReceiptApprovalsPage() {
   const [search, setSearch] = useState('');
   // Paid-date range. Empty means unbounded on that side, so one box alone is a
   // valid filter ("everything from 1 Oct", "everything up to 30 Sept").
+  /**
+   * Repeat-student scope, separate from status.
+   *
+   * Both cards show students on more than one receipt; they differ on whether
+   * the college differs too. Selecting one also resets status to ALL, because
+   * the question "which of these repeat" is rarely meant as "…and are also
+   * still pending" — and a card reading 6 that then lists 0 looks broken.
+   */
+  const [dup, setDup] = useState<'unique' | 'duplicate' | null>(null);
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
   const [page, setPage] = useState(1);
@@ -195,11 +206,12 @@ export default function ReceiptApprovalsPage() {
     if (search.trim()) p.set('search', search.trim());
     if (from) p.set('from', from);
     if (to) p.set('to', to);
+    if (dup) p.set('dup', dup);
     return p;
   };
 
   const { data, isLoading, isFetching } = useQuery<ReceiptsResponse>({
-    queryKey: ['receipt-approvals', statusFilter, typeFilter, search, from, to, page],
+    queryKey: ['receipt-approvals', statusFilter, typeFilter, search, from, to, dup, page],
     queryFn: async () => {
       const p = filterParams();
       p.set('page', String(page));
@@ -213,6 +225,7 @@ export default function ReceiptApprovalsPage() {
 
   const receipts = (data?.receipts ?? []).filter((r) => !hiddenIds.has(r.id));
   const counts = data?.counts ?? { PENDING: 0, APPROVED: 0, DISAPPROVED: 0 };
+  const dupCounts = data?.dupCounts ?? { unique: 0, duplicate: 0 };
   const totalPages = data?.totalPages ?? 1;
   const total = data?.total ?? 0;
 
@@ -264,7 +277,7 @@ export default function ReceiptApprovalsPage() {
       </div>
 
       {/* Summary cards */}
-      <div className="grid grid-cols-3 gap-3">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
         {(['PENDING', 'APPROVED', 'DISAPPROVED'] as const).map((key) => {
           const meta = key === 'PENDING'
             ? { label: 'Pending', color: 'text-amber-600', Icon: Clock }
@@ -288,6 +301,36 @@ export default function ReceiptApprovalsPage() {
             </button>
           );
         })}
+
+        {/* Repeat-student scopes. Separate from status, so selecting one clears
+            the status filter rather than intersecting with it. */}
+        {([
+          { key: 'unique' as const, label: 'Unique', color: 'text-sky-600', Icon: Users,
+            hint: 'Same student, different colleges — a legitimate second application' },
+          { key: 'duplicate' as const, label: 'Duplicate', color: 'text-orange-600', Icon: CopyIcon,
+            hint: 'Same student, same college — likely entered twice' },
+        ]).map((c) => (
+          <button
+            key={c.key}
+            title={c.hint}
+            onClick={() => {
+              const next = dup === c.key ? null : c.key;
+              setDup(next);
+              if (next) setStatusFilter('ALL');
+              setPage(1);
+            }}
+            className={cn(
+              'rounded-xl border p-3 sm:p-4 text-left transition-all hover:-translate-y-0.5 hover:shadow-sm',
+              dup === c.key ? 'border-primary/50 bg-primary/5 ring-1 ring-primary/20' : 'border-border/60 bg-card',
+            )}
+          >
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-medium text-muted-foreground">{c.label}</span>
+              <c.Icon className={cn('h-4 w-4', c.color)} />
+            </div>
+            <p className={cn('mt-1 text-2xl font-bold tabular-nums', c.color)}>{dupCounts[c.key]}</p>
+          </button>
+        ))}
       </div>
 
       {/* Filters */}
@@ -296,7 +339,7 @@ export default function ReceiptApprovalsPage() {
           {STATUS_TABS.map((t) => (
             <button
               key={t.key}
-              onClick={() => { setStatusFilter(t.key); setPage(1); }}
+              onClick={() => { setStatusFilter(t.key); setDup(null); setPage(1); }}
               className={cn(
                 'px-3 py-1.5 font-medium transition-colors',
                 statusFilter === t.key ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-muted/50',

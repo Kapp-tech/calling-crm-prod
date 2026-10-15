@@ -4,7 +4,7 @@ import { authOptions } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import { hasPermission } from '@/lib/permissions';
 import { Feature } from '@prisma/client';
-import { parseReceiptFilters, buildReceiptWhere } from '@/lib/receipt-filters';
+import { parseReceiptFilters, buildReceiptWhereAsync } from '@/lib/receipt-filters';
 import { formatIstDateTime, istDayKey } from '@/lib/ist-time';
 
 /**
@@ -40,7 +40,7 @@ export async function GET(req: NextRequest) {
 
     const { searchParams } = new URL(req.url);
     const filters = parseReceiptFilters(searchParams);
-    const where = buildReceiptWhere(filters);
+    const where = await buildReceiptWhereAsync(prisma, filters);
 
     const rows = await prisma.leadReceipt.findMany({
       where,

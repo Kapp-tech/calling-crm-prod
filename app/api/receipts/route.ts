@@ -4,7 +4,7 @@ import { authOptions } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import { hasPermission } from '@/lib/permissions';
 import { Feature, ReceiptStatus } from '@prisma/client';
-import { parseReceiptFilters, buildReceiptWhere } from '@/lib/receipt-filters';
+import { parseReceiptFilters, buildReceiptWhereAsync, resolveDupScopeIds } from '@/lib/receipt-filters';
 
 // Cross-lead receipt approval queue for Super Admin (and anyone else granted
 // APPROVE_RECEIPTS via the permission matrix). Defaults to PENDING so the
@@ -24,7 +24,7 @@ export async function GET(req: NextRequest) {
     // Shared with the CSV export — see lib/receipt-filters.ts.
     const filters = parseReceiptFilters(searchParams);
     const statusParam = filters.status;
-    const where = buildReceiptWhere(filters);
+    const where = await buildReceiptWhereAsync(prisma, filters);
 
     const [receipts, total, statusCounts] = await Promise.all([
       prisma.leadReceipt.findMany({
@@ -50,11 +50,25 @@ export async function GET(req: NextRequest) {
     const counts = { PENDING: 0, APPROVED: 0, DISAPPROVED: 0 } as Record<ReceiptStatus, number>;
     for (const c of statusCounts) counts[c.status] = c._count.id;
 
+    /**
+     * Repeat-student counts for the two cards.
+     *
+     * Unfiltered on purpose, exactly like the status counts above: a card says
+     * how many exist, not how many survive whatever is currently selected.
+     * Scoping them to the active filter would make the number move every time
+     * someone typed in the search box.
+     */
+    const [uniqueIds, duplicateIds] = await Promise.all([
+      resolveDupScopeIds(prisma, 'unique'),
+      resolveDupScopeIds(prisma, 'duplicate'),
+    ]);
+
     return NextResponse.json({
       receipts: sanitized,
       total,
       totalPages: Math.max(1, Math.ceil(total / limit)),
       counts,
+      dupCounts: { unique: uniqueIds.length, duplicate: duplicateIds.length },
     });
   } catch (error) {
     console.error('[receipts GET]', error);
