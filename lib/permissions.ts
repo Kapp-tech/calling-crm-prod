@@ -30,29 +30,65 @@ export async function hasPermission(role: Role, feature: Feature): Promise<boole
 }
 
 /**
+ * Masking is the ONE permission Super Admin does not get by default.
+ *
+ * DEFAULT_PERMISSIONS gives SUPER_ADMIN every feature, which is right for all
+ * of them except this one — MASK_UNMASK_DATA means "sees masked data", so
+ * granting it by default would hide contact details from the role that exists
+ * to see everything, the moment the carve-out below was removed.
+ *
+ * So Super Admin starts unmasked and can be masked deliberately; every other
+ * role keeps whatever DEFAULT_PERMISSIONS says.
+ */
+function defaultFor(role: Role, feature: Feature): boolean {
+  // The one exception to "Super Admin gets everything".
+  if (role === Role.SUPER_ADMIN && feature === Feature.MASK_UNMASK_DATA) return false;
+  return DEFAULT_PERMISSIONS[role]?.includes(feature) ?? false;
+}
+
+function defaultMaskedFor(role: Role): boolean {
+  return defaultFor(role, Feature.MASK_UNMASK_DATA);
+}
+
+/**
  * Whether this role's lead contact details should be hidden.
  *
  * `MASK_UNMASK_DATA` means "this role sees masked data". The enum keeps its old
  * name because renaming costs an ALTER TYPE and a data migration for no gain;
  * Manage Permissions labels it "Mask Data".
  *
- * Super Admin is never masked, and that is a carve-out rather than an oversight:
- * `hasPermission` answers true for SUPER_ADMIN on *every* feature, so reading
- * this one through it would mask the one role that must see everything — and
- * leave them no toggle to undo it.
+ * Super Admin used to be excluded outright. That carve-out existed because
+ * `hasPermission` answers true for SUPER_ADMIN on every feature, so a Super
+ * Admin would have been permanently masked with no way to undo it. The fix is
+ * not to exclude the role but to stop its answer coming from that blanket
+ * yes — this function reads the stored row directly, and defaultMaskedFor
+ * supplies "no" when there is none. Masking a Super Admin is now a deliberate
+ * switch, and reversible, because the Manage Permissions page is not itself
+ * masked.
  */
 export async function isMaskedRole(role: Role): Promise<boolean> {
-  if (role === Role.SUPER_ADMIN) return false;
   const p = await prisma.permission.findUnique({
     where: { role_feature: { role, feature: Feature.MASK_UNMASK_DATA } },
   });
-  if (p === null) return DEFAULT_PERMISSIONS[role]?.includes(Feature.MASK_UNMASK_DATA) ?? false;
+  if (p === null) return defaultMaskedFor(role);
   return p.canAccess;
 }
 
 export async function getRolePermissions(role: Role): Promise<Record<Feature, boolean>> {
   if (role === Role.SUPER_ADMIN) {
-    return Object.values(Feature).reduce((acc, f) => ({ ...acc, [f]: true }), {} as Record<Feature, boolean>);
+    /**
+     * Every feature yes, except masking, which is read like any other role's.
+     *
+     * This map drives the Manage Permissions grid AND the reports page's mask
+     * toggle, so a blanket yes here would show the switch permanently ON while
+     * isMaskedRole said otherwise — the screen and the data disagreeing about
+     * the same setting.
+     */
+    const masked = await isMaskedRole(Role.SUPER_ADMIN);
+    return Object.values(Feature).reduce(
+      (acc, f) => ({ ...acc, [f]: f === Feature.MASK_UNMASK_DATA ? masked : true }),
+      {} as Record<Feature, boolean>,
+    );
   }
   const perms = await prisma.permission.findMany({ where: { role } });
   return Object.values(Feature).reduce(
@@ -72,11 +108,15 @@ export async function getAllPermissions(): Promise<Record<Role, Record<Feature, 
     result[role] = Object.values(Feature).reduce(
       (acc, f) => ({
         ...acc,
-        [f]: role === Role.SUPER_ADMIN
+        // Super Admin is true for everything EXCEPT masking, which is read
+        // from its stored row like any other role's. This map backs the
+        // Manage Permissions grid, so a blanket true here renders the Mask
+        // Data switch permanently on: the save succeeds, the grid refetches,
+        // and the toggle springs back as though nothing happened.
+        [f]: role === Role.SUPER_ADMIN && f !== Feature.MASK_UNMASK_DATA
           ? true
           : (perms.find((p) => p.role === role && p.feature === f)?.canAccess
-             ?? DEFAULT_PERMISSIONS[role]?.includes(f)
-             ?? false),
+             ?? defaultFor(role, f)),
       }),
       {} as Record<Feature, boolean>
     );

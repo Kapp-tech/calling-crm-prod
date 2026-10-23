@@ -80,8 +80,20 @@ function PermissionsContent() {
     },
   });
 
+  /**
+   * Super Admin keeps every permission except Mask Data.
+   *
+   * Masking only hides lead contact details — it cannot hide this page, so the
+   * switch is always reachable to turn back off. Every other feature stays
+   * locked: a Super Admin revoking their own Manage Permissions would be a
+   * real lockout with no route back through the UI. The server enforces the
+   * same rule, so this is a disabled control rather than the whole guard.
+   */
+  const isLockedCell = (role: RoleKey, feature: FeatureKey) =>
+    role === 'SUPER_ADMIN' && feature !== 'MASK_UNMASK_DATA';
+
   const handleToggle = (role: RoleKey, feature: FeatureKey, current: boolean) => {
-    if (role === 'SUPER_ADMIN') return; // locked
+    if (isLockedCell(role, feature)) return;
     updateMutation.mutate({ role, feature, canAccess: !current });
   };
 
@@ -112,8 +124,11 @@ function PermissionsContent() {
                         <div className="flex flex-col items-center gap-1">
                           <span>{role.label}</span>
                           {role.key === 'SUPER_ADMIN' && (
+                            // "except Mask Data", not "Locked": the column is no
+                            // longer uniformly locked, and a badge that says it
+                            // is would contradict the switch beside it.
                             <Badge variant="secondary" className="text-xs">
-                              <Lock className="mr-1 h-2.5 w-2.5" /> Locked
+                              <Lock className="mr-1 h-2.5 w-2.5" /> Except Mask Data
                             </Badge>
                           )}
                         </div>
@@ -127,7 +142,7 @@ function PermissionsContent() {
                       <td className="py-3 px-4 font-medium">{feature.label}</td>
                       {ROLES.map((role) => {
                         const hasAccess = permissions?.[role.key]?.[feature.key] ?? false;
-                        const isLocked = role.key === 'SUPER_ADMIN';
+                        const isLocked = isLockedCell(role.key, feature.key);
                         return (
                           <td key={role.key} className="py-3 px-4 text-center">
                             {isLocked ? (

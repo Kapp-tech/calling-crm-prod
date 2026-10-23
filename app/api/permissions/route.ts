@@ -50,9 +50,20 @@ export async function PATCH(req: NextRequest) {
 
   const { role, feature, canAccess } = parsed.data;
 
-  // Super admin always has all permissions — prevent modification
-  if (role === Role.SUPER_ADMIN) {
-    return NextResponse.json({ error: 'Cannot modify Super Admin permissions' }, { status: 400 });
+  /**
+   * Super Admin keeps every permission except masking, which is theirs to set.
+   *
+   * Masking only hides lead contact details; it cannot hide this page, so a
+   * Super Admin who masks themselves can always come back and unmask. Every
+   * OTHER feature stays locked, and that is the part that matters — letting
+   * Super Admin revoke, say, their own MANAGE_PERMISSIONS would be a genuine
+   * lockout with no way back through the UI.
+   */
+  if (role === Role.SUPER_ADMIN && feature !== Feature.MASK_UNMASK_DATA) {
+    return NextResponse.json(
+      { error: 'Super Admin keeps every permission except Mask Data' },
+      { status: 400 },
+    );
   }
 
   const permission = await prisma.permission.upsert({
