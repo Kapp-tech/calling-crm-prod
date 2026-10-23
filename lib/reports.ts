@@ -1,6 +1,7 @@
 import { Prisma, PrismaClient } from '@prisma/client';
 import { istStartOfDay, istEndOfDay, istDayKey, istShiftDays, toUtcSqlTimestamp } from './ist-time';
 import { FEEDBACK_HISTORY } from './feedback-history';
+import { netTalkMinutesByAgent, avgNetTalkMinutesByAgent } from './talktime';
 import { NO_COLLEGE_LABEL } from './college-attributes';
 
 /**
@@ -216,27 +217,11 @@ export async function buildAgentReport(
     // itself marked CONNECTED are averaged — it reports a few seconds of "talk
     // time" on calls that never got through, so averaging everything would drag
     // each agent toward zero and make a busy day look like a quiet one.
-    db.callLog.groupBy({
-      by: ['agentId'],
-      where: {
-        agentId: { in: ids },
-        connected: true,
-        talkTimeSeconds: { gt: 0 },
-        ...(period ? { startedAt: period } : {}),
-      },
-      _avg: { talkTimeSeconds: true },
-    }),
+    avgNetTalkMinutesByAgent(db, ids, period?.gte ?? null, period?.lte ?? null),
   ]);
 
-  // One decimal is enough to compare agents without implying second-level
-  // precision the dialer's MM:SS strings do not carry.
-  const talktimeBy = new Map<string, number>();
-  for (const row of talktime as { agentId: string | null; _avg: { talkTimeSeconds: number | null } }[]) {
-    const seconds = row._avg.talkTimeSeconds;
-    if (row.agentId && seconds != null) {
-      talktimeBy.set(row.agentId, Math.round((seconds / 60) * 10) / 10);
-    }
-  }
+  // Already minutes to one decimal — see avgNetTalkMinutesByAgent.
+  const talktimeBy = talktime;
 
   // count() comes back as bigint over the wire; Number is safe here because a
   // lead count cannot approach 2^53.
@@ -977,20 +962,11 @@ export async function buildOverallCallingReport(
       db, agentWhere, s.from ? 'DATEWISE' : 'OVERALL', s.from, s.to, now,
     );
     const window = reportRange(s.from ? 'DATEWISE' : 'OVERALL', s.from, s.to, now);
-    const talk =
-      ids.length === 0
-        ? []
-        : await db.callLog.groupBy({
-            by: ['agentId'],
-            where: { agentId: { in: ids }, ...(within(window.from, window.to) ? { startedAt: within(window.from, window.to) } : {}) },
-            _sum: { talkTimeSeconds: true },
-          });
-    const talkBy = new Map<string, number>();
-    for (const t of talk as { agentId: string | null; _sum: { talkTimeSeconds: number | null } }[]) {
-      // Floored, exactly as the Talktime KPI does it: a 180-minute mandate
-      // should not be met by 179m40s.
-      if (t.agentId) talkBy.set(t.agentId, Math.floor((t._sum.talkTimeSeconds ?? 0) / 60));
-    }
+    // Net of ringing and floored, by the same helper the Talktime KPI uses —
+    // both are scored against the same daily mandate, so computing them
+    // separately is how one screen comes to say the target was met and the
+    // other that it was missed.
+    const talkBy = await netTalkMinutesByAgent(db, ids, window.from, window.to);
 
     // Days each agent actually worked in this window. Overall passes a null
     // window, so it counts every day they have ever recorded work on — which

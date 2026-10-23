@@ -1,6 +1,7 @@
 import { KpiPeriod, KpiSource, Prisma, PrismaClient, ReceiptType } from '@prisma/client';
 import { istStartOfDay, istEndOfDay, istDayKey, istShiftDays, toUtcSqlTimestamp } from './ist-time';
 import { FEEDBACK_HISTORY, feedbackNarrowingSql } from './feedback-history';
+import { netTalkMinutesForAgent } from './talktime';
 
 /**
  * KPI evaluation.
@@ -68,7 +69,7 @@ export const KPI_SOURCES: {
   {
     key: 'CALL_TALKTIME_MINUTES',
     label: 'Talk time (minutes)',
-    help: 'Total minutes the agent actually spent talking in the period, from the dialer’s post-call webhook. Rounded down to whole minutes.',
+    help: 'Minutes the agent actually spent talking in the period, from the dialer’s post-call webhook — ring time subtracted from each call. Rounded down to whole minutes.',
     needs: [],
     measurable: true,
   },
@@ -369,14 +370,10 @@ export async function computeKpiActual(
     // The three dialer sources below are only as complete as the post-call
     // webhook. A call whose seat is not mapped to a CRM user is stored but
     // attributed to nobody, so it counts for no one rather than for everyone.
-    case 'CALL_TALKTIME_MINUTES': {
-      const agg = await db.callLog.aggregate({
-        where: { agentId: userId, startedAt: inPeriod },
-        _sum: { talkTimeSeconds: true },
-      });
-      // Floor, not round: a target of "60 min" should not be met by 59m31s.
-      return Math.floor((agg._sum.talkTimeSeconds ?? 0) / 60);
-    }
+    case 'CALL_TALKTIME_MINUTES':
+      // Net of ringing — see lib/talktime.ts for why, and for the per-row
+      // clamp that stops a ring longer than the talk going negative.
+      return netTalkMinutesForAgent(db as PrismaClient, userId, from, to);
 
     case 'CALL_COUNT':
       return db.callLog.count({ where: { agentId: userId, startedAt: inPeriod } });
