@@ -243,8 +243,6 @@ export async function GET(req: NextRequest) {
 
     const allHeaders = [...fixedHeaders, ...feedbackHeaders];
 
-    const displayId = (id: string) =>
-      'L' + id.replace(/\D/g, '').slice(-9).padStart(9, '0');
 
     // Same live lookup the All Leads list uses, so the column downloads exactly
     // as it reads on screen.
@@ -261,7 +259,11 @@ export async function GET(req: NextRequest) {
       const lastFb = l.feedbacks.length > 0 ? l.feedbacks[l.feedbacks.length - 1] : null;
 
       const fixed = [
-        displayId(l.id),
+        // The lead's real id, exactly as the CRM shows it — LID1302, not a
+        // zero-padded L000001302. This used to be reformatted here and nowhere
+        // else, so a Lead ID copied from the CSV matched nothing in search and
+        // could not be pasted back into the product that produced it.
+        l.id,
         l.name,
         l.city, l.state, l.course, l.college, clientTypeOf(l.college),
         l.kappCollegeId, sessionYearOf(l.college),
