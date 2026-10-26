@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { authOptions } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import { isMaskedRole } from '@/lib/permissions';
+import { callScoresForLeads } from '@/lib/call-scores';
 import { maskContact } from '@/lib/data-masking';
 import { hasPermission } from '@/lib/permissions';
 import { getLeadWhereClause } from '@/lib/lead-access';
@@ -175,11 +176,33 @@ export async function GET(req: NextRequest) {
     // than stored on the lead — so setting it on a college updates all of that
     // college's existing leads, which is the point of it.
     const { clientTypeOf, sessionYearOf } = await collegeLeadFields(prisma);
-    const withClientType = leads.map((l) => ({
-      ...l,
-      clientType: clientTypeOf(l.college),
-      sessionYear: sessionYearOf(l.college),
-    }));
+
+    // QA scores for this page of leads, in one statement rather than one per
+    // row. `callScore` is the most recent SCORED call; `average` covers all of
+    // them, which is what the drawer calls the overall score.
+    // A counsellor's circle shows their own calls only, matching the Call
+    // Analysis page it links to — otherwise they would click a score and
+    // arrive at an empty list.
+    const scores = await callScoresForLeads(
+      leads.map((l) => ({ id: l.id, phone: l.phone })),
+      session.user.role === 'COUNSELLING_AGENT' ? session.user.id : null,
+    );
+
+    const withClientType = leads.map((l) => {
+      const s = scores.get(l.id) ?? null;
+      return {
+        ...l,
+        clientType: clientTypeOf(l.college),
+        sessionYear: sessionYearOf(l.college),
+        callScore: s && {
+          score: s.score,
+          maxScore: s.maxScore,
+          grade: s.grade,
+          average: s.average,
+          scoredCalls: s.scoredCalls,
+        },
+      };
+    });
 
     return NextResponse.json({
       leads: masked ? withClientType.map((l) => maskContact(l, true)) : withClientType,

@@ -1129,11 +1129,41 @@ model CallAnalysis {
   score    Float?
   maxScore Float?
 
+  /// The analyser's own run state, e.g. "scored". A row that exists with a
+  /// non-scored status is a call it looked at and could not grade, which is
+  /// different from one it never saw.
+  qaStatus String?
+  /// The banded verdict — "Excellent", and so on. Stored as the tool sent it
+  /// rather than derived from the score: the bands are the analyser's to
+  /// define, and re-deriving them here would drift the day they are retuned.
+  qaGrade  String?
+  /// What the analyser judged the caller wanted, e.g. "Interested". Free text
+  /// deliberately; it is the tool's vocabulary, not the CRM's feedback list.
+  intent   String?
+
+  /// A call that breached something non-negotiable. Kept as its own column
+  /// rather than inferred from red_flags: a fatal error is a verdict, and the
+  /// flags are the evidence, which may be empty even when one fired.
+  fatalError  Boolean @default(false)
+  /// The analyser asking for a human to look. Independent of the score — a
+  /// high-scoring call can still need review.
+  needsReview Boolean @default(false)
+  /// string[] — the specific breaches found, often empty.
+  redFlags    Json?
+
   summary  String? @db.Text
   feedback String? @db.Text
 
   /// Per-criterion scores and any other structured metrics, exactly as sent.
+  /// Individual criteria may be null when the call gave nothing to judge —
+  /// objection_handling on a call where no objection was raised, say — which
+  /// is NOT the same as scoring zero, and the UI must not average it in.
   metrics Json?
+
+  /// When the analyser scored it, as the tool reported. Distinct from
+  /// receivedAt: a backfill can deliver last week's verdicts today, and the
+  /// listing should sort by when the call was judged.
+  scoredAt DateTime?
 
   /// The whole callback body. The tool's shape will change before ours does.
   raw Json
@@ -1143,6 +1173,10 @@ model CallAnalysis {
 
   @@index([score])
   @@index([receivedAt])
+  @@index([scoredAt])
+  @@index([qaGrade])
+  @@index([needsReview])
+  @@index([fatalError])
 }
 
 model LeadIntegrationLog {

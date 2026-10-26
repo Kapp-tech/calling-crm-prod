@@ -20,8 +20,95 @@ cause and is still unfixed.
 
 ## 1. What is waiting to go out
 
-*Nothing. Everything below shipped on 2026-09-22 (`b2480a0`) — old server only;
-the new server still needs a pull.*
+### Call Analysis — QA scores for recorded calls  *(DDL FIRST, then code)*
+
+Built 2026-10-26, **not deployed, not committed.** The analyser posts a verdict
+per call; the CRM stores it, matches it to the recording and shows it under
+**Reports & Performance → Call Analysis**.
+
+**Order matters — the DDL goes first.** The regenerated Prisma client selects
+the seven new columns, so deploying code first produces live query errors. This
+exact mistake took recordings offline on the new server in October.
+
+1. `prisma/migrations/20261016000000_call_analytics_webhooks` — creates
+   `CallAnalysis`. **Not yet run on the new server.** Its ownership block copies
+   `CallLog`'s owner rather than naming a role, because the app connects as
+   `crm` on the old box and `crm_user` on the new one.
+2. `prisma/migrations/20261026000000_call_analysis_qa_fields` — adds
+   `qaStatus`, `qaGrade`, `intent`, `fatalError`, `needsReview`, `redFlags`,
+   `scoredAt` and four indexes. Guarded with `ADD COLUMN IF NOT EXISTS`, so it
+   is safe to re-run. Applied locally only.
+3. Then the code.
+
+3b. `prisma/migrations/20261026120000_call_log_phone_tail_index` — a partial
+   expression index on `RIGHT("phoneNumber", 10) WHERE "leadId" IS NULL`.
+   **Run this one before the code too.** The Call Score column on All Leads
+   matches a lead's calls by trailing digits when the dialer never attributed
+   them, and without the index that is a scan of `CallLog` on every page of
+   the busiest screen in the CRM.
+
+   **This index will show as drift.** Prisma's schema language cannot express
+   an expression index, so `migrate diff` reports it as an extra object and
+   would offer to drop it. Do not let it — the index is deliberate. This is
+   the one known drift on the database; anything else `migrate diff` reports
+   is real.
+
+**Who can read it.** SUPER_ADMIN, REPORTS and COUNSELLING_TL see every scored
+call and need `VIEW_REPORTS`. A COUNSELLING_AGENT sees **only calls the dialer
+attributed to them** and does not need `VIEW_REPORTS` — that permission means
+"org-wide reports", which is exactly what their scope excludes. The scope comes
+from the session in `lib/call-analysis-scope.ts`; request filters are ANDed on
+top so they can only narrow it, and the `agentId` parameter is ignored outright
+for an agent. The recording proxy applies the same scope to the single row, so
+an agent cannot fetch another agent's audio by id. A TL is deliberately NOT
+pinned to their own team here, unlike the agent-performance report — unchanged
+behaviour, and one line to change if wanted.
+
+**`CALL_ANALYSIS_WEBHOOK_SECRET` must be set on the server** or the webhook
+answers 503 and the analyser's deliveries are rejected. It lives in
+`/home/ubuntu/app/.env.local`; the analyser sends it as `?token=` or an
+`x-webhook-secret` header, and it is compared in constant time.
+
+The production webhook URL, once this is deployed and the secret is set:
+`https://calling-crm.kollegeapply.com/api/webhooks/call-analysis?token=<secret>`
+(or the same path with an `x-webhook-secret` header). A GET on that path
+returns a liveness message, which is the quickest way to confirm a deploy.
+
+Files: `app/api/webhooks/call-analysis/route.ts`, `app/api/call-analysis/`
+(list + recording proxy), `app/dashboard/super-admin/call-analysis/page.tsx`,
+`components/call-analysis/score-views.tsx`, `lib/call-analysis-criteria.ts`,
+`lib/recording-proxy.ts`, plus the sidebar and middleware entries.
+
+Three things worth knowing before changing any of it:
+
+- **Verdicts with no score are not stored.** The analyser reports on every
+  recording, including ones it declines to judge — a 21-second call arrives as
+  `qa_status: "not_scored"` with score, grade and `qa_scores` all null. The
+  webhook answers 200 (so the analyser does not retry) and keeps nothing. A
+  later empty report never clears a real verdict already on file.
+
+- **A criterion of `null` means "did not apply", not zero.** The page shows N/A
+  and leaves it out; rendering it as a zero bar would libel the agent.
+- **`qa_score` is weighted and is not the mean of the criteria** — a real
+  verdict scored 86.14 where the plain mean is 83.1. Nothing recomputes it.
+
+A lead's score appears in three places, all from `lib/call-scores.ts`: the
+**Call Score** column on All Leads (most recent scored call), the **Overall
+Call Score** in the lead drawer's Calls tab (average of its scored calls), and
+the Call Analysis page itself, which accepts `?leadId=` and scopes its summary
+cards to that lead. All three use the same lead-to-call matching rule as the
+drawer's call list (`lib/call-log-matching.ts`), so the score and the calls
+underneath it can never disagree.
+
+Also changed: `tailwind.config.ts` now scans `./lib/**`. It did not, so any
+class name defined in `lib/` was purged — which is why the score ring rendered
+empty while its badge was correctly coloured. Verified no other styling moves
+as a result: every class in `lib/lead-profiling.ts` was already being emitted
+by a file under `app/` or `components/`.
+
+`lib/recording-proxy.ts` is an extraction, not a rewrite: the lead-scoped
+recording route now calls it too, so there is one definition of the dialer
+allow-list and the `audio/mpeg` relabelling. Verified both routes still behave.
 
 ## 1a. Shipped on 2026-09-22 (`b2480a0`) — old server
 

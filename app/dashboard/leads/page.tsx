@@ -9,6 +9,7 @@ import { usePermissions } from '@/lib/usePermissions';
 import { Search, SlidersHorizontal, X, ChevronDown, Check, Minus, Download, Loader2, ListFilter } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { LeadDetailDrawer } from '@/components/leads/lead-detail-drawer';
+import { LeadScoreLink } from '@/components/call-analysis/score-views';
 import { PaginationBar } from '@/components/shared/pagination-bar';
 import { MultiSelectFilter, type MultiSelectOption } from '@/components/shared/multi-select-filter';
 import { cn } from '@/lib/utils';
@@ -21,6 +22,15 @@ import { useToast } from '@/components/ui/use-toast';
 
 interface Lead {
   id: string; name: string; email: string; phone: string;
+  /**
+   * QA score for this lead's calls, or null when the analyser has not scored
+   * any of them — which is the normal state for most leads. `score` is the
+   * most recent scored call; `average` spans all of them.
+   */
+  callScore?: {
+    score: number; maxScore: number; grade: string | null;
+    average: number; scoredCalls: number;
+  } | null;
   city?: string | null; state?: string | null; course?: string | null;
   college?: string | null; kappCollegeId?: string | null; campaign?: string | null;
   /**
@@ -1052,6 +1062,7 @@ export default function AllLeadsPage() {
               <th className="whitespace-nowrap px-3 py-2.5 text-left text-[10px] font-bold uppercase tracking-wider text-muted-foreground min-w-[110px]">Session/Year</th>
               <th className="whitespace-nowrap px-3 py-2.5 text-left text-[10px] font-bold uppercase tracking-wider text-muted-foreground min-w-[140px]">Agent</th>
               <th className="whitespace-nowrap px-3 py-2.5 text-left text-[10px] font-bold uppercase tracking-wider text-muted-foreground min-w-[160px]">Feedback</th>
+              <th className="whitespace-nowrap px-3 py-2.5 text-center text-[10px] font-bold uppercase tracking-wider text-muted-foreground min-w-[110px]">Call Score</th>
               <th className="whitespace-nowrap px-3 py-2.5 text-left text-[10px] font-bold uppercase tracking-wider text-muted-foreground min-w-[130px]">Profile %</th>
               <th className="whitespace-nowrap px-3 py-2.5 text-left text-[10px] font-bold uppercase tracking-wider text-muted-foreground min-w-[130px]">Lead Code</th>
               {showLeadType && <th className="whitespace-nowrap px-3 py-2.5 text-left text-[10px] font-bold uppercase tracking-wider text-muted-foreground min-w-[120px]">Lead Type</th>}
@@ -1165,6 +1176,22 @@ export default function AllLeadsPage() {
                           : <span className="inline-flex items-center rounded-full border border-border/50 bg-muted/40 px-2.5 py-0.5 text-[10px] font-medium text-muted-foreground">
                               Fresh
                             </span>}
+                      </td>
+
+                      {/* Call Score — the most recent SCORED call. Opens that
+                          lead's call analysis; stopPropagation on the link
+                          keeps the click off the row's own drawer handler. */}
+                      <td className="whitespace-nowrap px-3 py-2.5 text-center">
+                        <div className="flex justify-center">
+                          <LeadScoreLink
+                            leadId={lead.id}
+                            score={lead.callScore?.score ?? null}
+                            maxScore={lead.callScore?.maxScore ?? null}
+                            grade={lead.callScore?.grade ?? null}
+                            scoredCalls={lead.callScore?.scoredCalls}
+                            label="Last call score"
+                          />
+                        </div>
                       </td>
 
                       {/* Profile completeness */}

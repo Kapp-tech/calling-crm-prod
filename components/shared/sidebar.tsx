@@ -12,7 +12,7 @@ import {
   UserCircle, UserCheck, ClipboardList, LogOut, ChevronRight, ChevronDown,
   GitBranch, CalendarClock, X, ChevronsLeft, ChevronsRight,
   GraduationCap, Tag, Globe2, CheckSquare, ShieldCheck, Phone,
-  Megaphone, Gauge, Receipt, Layers, KeyRound, Settings, Trash2, Webhook, Search, Target, FileBarChart, Mail, Link2, Hash, Zap, Radio,} from 'lucide-react';
+  Megaphone, Gauge, Receipt, Layers, KeyRound, Settings, Trash2, Webhook, Search, Target, FileBarChart, Mail, Link2, Hash, Zap, Radio, AudioLines,} from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
@@ -32,6 +32,11 @@ interface NavChild {
   // menus — `roles` alone decides which role's page variant an entry points
   // at, `features` decides whether the feature is currently granted.
   features?: string[];
+  // Roles that reach the entry without holding any of `features`, because the
+  // server hard-scopes them to their own data. An agent reads Call Analysis
+  // without VIEW_REPORTS — that permission means "org-wide reports", which is
+  // precisely what their scope excludes.
+  featureExemptRoles?: Role[];
 }
 
 interface NavLeaf {
@@ -42,6 +47,8 @@ interface NavLeaf {
   roles: Role[];
   exact?: boolean;
   features?: string[];
+  /** See NavChild.featureExemptRoles. */
+  featureExemptRoles?: Role[];
 }
 
 interface NavGroup {
@@ -272,6 +279,24 @@ const NAV: NavEntry[] = [
     exact: true,
   },
   {
+    type: 'leaf',
+    href: '/dashboard/super-admin/call-analysis',
+    label: 'Call Analysis',
+    icon: AudioLines,
+    // Sits under KPI Targets: a call's QA score is a measure of how an agent
+    // performed against target, which is the question that page asks. Shares
+    // the VIEW_REPORTS gate the API enforces, so this entry being visible
+    // cannot widen anyone's view. Needs the matching, more-specific rule in
+    // middleware.ts, or the blanket '/dashboard/super-admin' rule bounces
+    // REPORTS and TLs.
+    roles: ['SUPER_ADMIN', 'REPORTS', 'COUNSELLING_TL', 'COUNSELLING_AGENT'],
+    exact: true,
+    features: ['VIEW_REPORTS'],
+    // An agent sees only their own scored calls, pinned server-side, so they
+    // reach this without the org-wide reporting grant.
+    featureExemptRoles: ['COUNSELLING_AGENT'],
+  },
+  {
     type: 'group',
     key: 'reports-performance',
     label: 'Reports & Performance',
@@ -453,8 +478,11 @@ export function Sidebar({ onClose, collapsed = false, onCollapse }: SidebarProps
   // are still loading, show entries optimistically (role-gated as before) so
   // the menu doesn't flash — the server enforces real access regardless.
   const { can, isLoading: permsLoading } = usePermissions();
-  const featureAllowed = (features?: string[]): boolean =>
-    !features || permsLoading || features.some((f) => can(f));
+  const featureAllowed = (features?: string[], exempt?: Role[]): boolean =>
+    !features ||
+    permsLoading ||
+    (!!userRole && !!exempt && exempt.includes(userRole)) ||
+    features.some((f) => can(f));
 
   // True when sidebar should visually show expanded state
   const isExpanded = !collapsed || hovered;
@@ -572,7 +600,7 @@ export function Sidebar({ onClose, collapsed = false, onCollapse }: SidebarProps
             // ── Leaf ──
             if (entry.type === 'leaf') {
               if (!entry.roles.includes(userRole)) return null;
-              if (!featureAllowed(entry.features)) return null;
+              if (!featureAllowed(entry.features, entry.featureExemptRoles)) return null;
               const active = checkActive(entry.href, entry.exact);
               const hasUnread = showUnread && entry.href === UNREAD_HREF && unreadCount > 0 && !active;
               return (
@@ -626,7 +654,7 @@ export function Sidebar({ onClose, collapsed = false, onCollapse }: SidebarProps
             // ── Group ──
             if (entry.type === 'group') {
               const visibleChildren = entry.children.filter((c) =>
-                c.roles.includes(userRole) && featureAllowed(c.features)
+                c.roles.includes(userRole) && featureAllowed(c.features, c.featureExemptRoles)
               );
               if (visibleChildren.length === 0) return null;
 

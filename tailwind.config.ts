@@ -6,6 +6,12 @@ const config: Config = {
     './pages/**/*.{ts,tsx}',
     './components/**/*.{ts,tsx}',
     './app/**/*.{ts,tsx}',
+    // lib/ too: several modules there own a class map (call-analysis
+    // criteria, lead profiling). Without this glob those class names are
+    // purged, and the bug is invisible wherever the same string happens to
+    // appear in a scanned file — which is why a blank score ring sat next to
+    // a correctly coloured badge.
+    './lib/**/*.{ts,tsx}',
     './src/**/*.{ts,tsx}',
   ],
   prefix: '',

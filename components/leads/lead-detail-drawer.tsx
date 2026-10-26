@@ -4,6 +4,7 @@ import { useState, useMemo, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useSession } from 'next-auth/react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { LeadScoreLink } from '@/components/call-analysis/score-views';
 import { failIfAttendanceBlock, isAttendanceError } from '@/lib/attendance-required';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -962,8 +963,45 @@ function DialerCallHistory({ leadId }: { leadId: string }) {
 
   const talked = calls.filter((c) => c.connected).length;
 
+  /**
+   * The lead's overall QA score: the mean of every call the analyser scored.
+   *
+   * Calls it declined to score contribute nothing — they are not zeros, and
+   * averaging them in would punish a lead for having had a short call. Scored
+   * out of each call's own scale, so a mixed set still averages correctly.
+   */
+  const scored = calls
+    .map((c) => c.analysis)
+    .filter((a): a is NonNullable<DialerCall['analysis']> => Boolean(a) && a!.score !== null);
+  const overall = scored.length
+    ? scored.reduce((sum, a) => sum + (a.score! / (a.maxScore && a.maxScore > 0 ? a.maxScore : 100)) * 100, 0) / scored.length
+    : null;
+
   return (
     <div>
+      {overall !== null && (
+        <div className="mb-3 flex items-center justify-between gap-3 rounded-lg border border-border/60 bg-muted/30 p-3">
+          <div className="min-w-0">
+            <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+              Overall Call Score
+            </p>
+            <p className="mt-0.5 text-[11px] text-muted-foreground">
+              Average of {scored.length} scored call{scored.length === 1 ? '' : 's'}
+              {scored.length < calls.length && ` of ${calls.length}`} · tap to open the analysis
+            </p>
+          </div>
+          <LeadScoreLink
+            leadId={leadId}
+            score={Math.round(overall * 10) / 10}
+            maxScore={100}
+            grade={null}
+            scoredCalls={scored.length}
+            size={46}
+            label="Overall call score"
+          />
+        </div>
+      )}
+
       <div className="mb-2 flex flex-wrap items-baseline gap-x-2">
         <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Dialer Calls</p>
         {calls.length > 0 && (

@@ -43,6 +43,11 @@ const ROLE_ROUTES: Record<string, Role[]> = {
   // decides the scope from the session, so opening the page cannot reveal
   // anyone else's numbers.
   '/dashboard/super-admin/reports': ['SUPER_ADMIN', 'REPORTS', 'COUNSELLING_TL', 'COUNSELLING_AGENT'],
+  // Same exception again: Call Analysis sits under /dashboard/super-admin/*
+  // but reads only /api/call-analysis, which resolves the viewer's scope from
+  // the session. Agents are included and see only their own calls — the API
+  // pins them server-side, so reaching the page cannot widen that.
+  '/dashboard/super-admin/call-analysis': ['SUPER_ADMIN', 'REPORTS', 'COUNSELLING_TL', 'COUNSELLING_AGENT'],
 };
 
 export default withAuth(
